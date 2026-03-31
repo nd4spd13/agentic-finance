@@ -139,6 +139,50 @@ export class ApprovalQueue {
     return record
   }
 
+  listPending(): ApprovalRecord[] {
+    return this.list({ status: 'pending' })
+  }
+
+  list(filters?: { status?: string; agent_id?: string }): ApprovalRecord[] {
+    let query = 'SELECT * FROM approvals WHERE 1=1'
+    const params: string[] = []
+
+    if (filters?.status) {
+      query += ' AND status = ?'
+      params.push(filters.status)
+    }
+    if (filters?.agent_id) {
+      query += ' AND agent_id = ?'
+      params.push(filters.agent_id)
+    }
+
+    query += ' ORDER BY created_at DESC'
+
+    const stmt = this.db.prepare(query)
+    const rows = stmt.all(...params) as any[]
+
+    // Auto-expire pending records that are past their expiry
+    const now = new Date()
+    return rows.map(row => {
+      const record: ApprovalRecord = {
+        id: row.id,
+        agent_id: row.agent_id,
+        tool_name: row.tool_name,
+        trigger_reason: row.trigger_reason,
+        status: row.status as ApprovalRecord['status'],
+        created_at: row.created_at,
+        expires_at: row.expires_at,
+        resolved_at: row.resolved_at,
+      }
+      if (record.status === 'pending' && now > new Date(record.expires_at)) {
+        const updateStmt = this.db.prepare('UPDATE approvals SET status = ? WHERE id = ?')
+        updateStmt.run('expired', row.id)
+        record.status = 'expired'
+      }
+      return record
+    })
+  }
+
   private addTimeout(baseTime: string, timeoutStr: string): string {
     const now = new Date(baseTime)
 
