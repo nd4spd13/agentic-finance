@@ -28,7 +28,7 @@ features:
 
   - icon: 🔌
     title: MCP Protocol
-    details: Drop-in Claude Desktop integration. Works seamlessly with AI agents through the Model Context Protocol.
+    details: Works with any MCP-compatible agent — Claude, GPT-based agents, or custom toolchains. Drop-in integration via the Model Context Protocol.
 
   - icon: ⚡
     title: Fine-Grained Control
@@ -36,7 +36,7 @@ features:
 
   - icon: 🏗️
     title: Standards-Aligned
-    details: Built on AP2 spending constraints, Nekuda temporal rules, and Novel escalation frameworks. Industry-standard security.
+    details: Spending constraints aligned with Google's Agent Payments Protocol (AP2). Time-window controls and escalation routing built on established agentic permission patterns.
 ---
 
 ## What is Guardian Layer?
@@ -95,7 +95,7 @@ agents:
         timeout: 300
 ```
 
-Connect Claude Desktop to Guardian Layer:
+Connect any MCP-compatible agent (e.g. Claude Desktop):
 
 ```json
 {
@@ -126,18 +126,18 @@ Every decision is recorded with timestamp, decision, agent, account, and reason.
 Automatically escalate transactions above thresholds to humans. Approve or deny via CLI, webhook, or HTTP API.
 
 ### MCP Protocol
-Native support for Claude Desktop and any MCP-compatible client. Zero integration code required.
+Works with any MCP-compatible agent — Claude Desktop, OpenAI-based agents, or custom toolchains. Zero integration code required.
 
 ### Standards-Aligned
-- **AP2**: Spending constraint framework
-- **Nekuda**: Temporal scheduling and active hours
-- **Novel**: Escalation triggers and approval routing
+- **[AP2](https://github.com/google-agentic-commerce/AP2)**: Spending constraints aligned with Google's Agent Payments Protocol (Apache 2.0)
+- **Time-window controls**: Active hours, active days, timezone, and blackout date enforcement
+- **Escalation framework**: Configurable triggers, approval routing, and timeout logic
 
 ## Next Steps
 
 - **[Getting Started Guide](/getting-started)**: Step-by-step setup instructions
 - **[Policy Reference](/policy-reference)**: Complete reference for all policy fields
 - **[MCP Tools](/mcp-tools)**: Reference for all available MCP tools
-- **[Integration Guides](/integration-guides)**: Set up Claude Desktop integration
+- **[Integration Guides](/integration-guides)**: Connect Claude Desktop, OpenAI agents, or custom MCP clients
 - **[Starter Policies](/starter-policies)**: Ready-to-use policy templates
 - **[Architecture](/architecture)**: Deep dive into the design and security model

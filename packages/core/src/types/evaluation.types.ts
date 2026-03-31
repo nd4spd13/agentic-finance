@@ -12,5 +12,5 @@ export interface PolicyEvaluation {
 export interface ConstraintRecord {
   field: string
   value: unknown
-  source: 'ap2' | 'nekuda' | 'mcp-oauth' | 'ack' | 'novel'
+  source: 'ap2' | 'schedule' | 'escalation' | 'mcp-oauth' | 'ack'
 }

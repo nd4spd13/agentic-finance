@@ -61,7 +61,7 @@ export async function evaluate(
     return result
   }
 
-  // 3. Schedule check (Nekuda-derived)
+  // 3. Schedule check (time-window constraints)
   checks_performed.push('schedule')
   if (permissions.schedule) {
     const schedule_result = checkSchedule(permissions.schedule, context)
@@ -78,7 +78,7 @@ export async function evaluate(
     constraints_applied.push({
       field: 'schedule',
       value: permissions.schedule,
-      source: 'nekuda',
+      source: 'schedule',
     })
   }
 
@@ -129,7 +129,7 @@ export async function evaluate(
     })
   }
 
-  // 6. Spending authorization (AP2-derived)
+  // 6. Spending authorization (AP2-aligned: per-transaction, daily, weekly, monthly limits)
   checks_performed.push('spending_limits')
   const spending_check = checkSpendingLimits(request, permissions, context)
   if (spending_check) {
@@ -160,7 +160,7 @@ export async function evaluate(
     }
   }
 
-  // 7. Escalation triggers (Novel-derived) - ONLY if not already denied
+  // 7. Escalation triggers - ONLY if not already denied
   checks_performed.push('escalation_triggers')
   let should_escalate = false
   if (permissions.escalation?.triggers) {
@@ -169,7 +169,7 @@ export async function evaluate(
       constraints_applied.push({
         field: 'escalation',
         value: permissions.escalation.triggers,
-        source: 'novel',
+        source: 'escalation',
       })
     }
   }
@@ -180,7 +180,7 @@ export async function evaluate(
       decision: 'escalate',
       reason: 'escalation trigger matched',
       policy_rule: 'agents.*.permissions.escalation.triggers',
-      standards_ref: 'Novel:escalation_triggers',
+      standards_ref: 'clad:escalation_triggers',
       checks_performed,
       constraints_applied,
     }
@@ -190,7 +190,7 @@ export async function evaluate(
     decision: 'allow',
     reason: 'all policy checks passed',
     policy_rule: 'default_allow',
-    standards_ref: 'AP2:default_allow',
+    standards_ref: 'ap2:default_allow',
     checks_performed,
     constraints_applied,
   }

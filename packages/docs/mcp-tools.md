@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Guardian Layer exposes 5 MCP tools that Claude can use to interact with financial data. All tools are subject to the policies defined in your `guardian.yaml`.
+Guardian Layer exposes 5 MCP tools that any MCP-compatible agent can use to interact with financial data. All tools are subject to the policies defined in your `guardian.yaml`.
 
 ## Tool Overview
 
@@ -449,28 +449,32 @@ Common error codes:
 
 ---
 
-## Usage in Claude
+## Example Usage
 
-Example Claude prompt:
+Example agent prompt:
 
 > "What's my available spending budget for today?"
 
-Claude internally uses:
+The agent internally uses:
 1. `guardian_safe_to_spend` to check limits
 2. `guardian_get_balances` to show account balance
 3. Returns the result to the user
 
-Example Claude prompt with escalation:
+Example agent prompt with escalation:
 
 > "Send $3,000 to my new vendor, TechCorp Solutions"
 
-Claude uses:
+The agent uses:
 1. `guardian_request_action` with the amount and merchant
 2. Policy returns `escalate` (new merchant trigger)
-3. Claude informs the user: "This requires human approval. Escalation ID: esc-00042"
+3. Agent informs the user: "This requires human approval. Escalation ID: esc-00042"
+
+::: tip Works with any MCP-compatible agent
+These tools are available to any agent that speaks MCP — Claude Desktop, OpenAI-based agents, or custom toolchains. The agent identity is determined by the `agent_id` in the request, which is matched against your policy.
+:::
 
 ## Next Steps
 
 - **[Policy Reference](/policy-reference)**: Understand what each policy field does
-- **[Integration Guide](/integration-guides)**: Set up Claude Desktop
+- **[Integration Guide](/integration-guides)**: Connect your MCP agent
 - **[Starter Policies](/starter-policies)**: Copy ready-to-use policy templates
