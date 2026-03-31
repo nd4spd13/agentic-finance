@@ -104,19 +104,19 @@
       "properties": {
         "max_per_transaction": {
           "type": "number",
-          "description": "Maximum amount allowed per transaction (AP2-derived)"
+          "description": "Maximum amount allowed per transaction (AP2-aligned)"
         },
         "max_daily": {
           "type": "number",
-          "description": "Maximum daily spending limit (AP2-derived)"
+          "description": "Maximum daily spending limit (AP2-aligned)"
         },
         "max_weekly": {
           "type": "number",
-          "description": "Maximum weekly spending limit (AP2-derived)"
+          "description": "Maximum weekly spending limit (AP2-aligned)"
         },
         "max_monthly": {
           "type": "number",
-          "description": "Maximum monthly spending limit (AP2-derived)"
+          "description": "Maximum monthly spending limit (AP2-aligned)"
         },
         "merchants": {
           "type": "object",
@@ -163,7 +163,7 @@
           "items": {
             "$ref": "#/definitions/EscalationTrigger"
           },
-          "description": "Conditions that trigger escalation approval (Novel-derived)"
+          "description": "Conditions that trigger escalation approval (Clad escalation framework)"
         },
         "channel": {
           "type": "string",
@@ -270,7 +270,7 @@
             "type": "string",
             "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
           },
-          "description": "Days of week when agent is active (Nekuda-derived)"
+          "description": "Days of week when agent is active (time-window constraint)"
         },
         "timezone": {
           "type": "string",
