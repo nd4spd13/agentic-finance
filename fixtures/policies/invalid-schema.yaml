@@ -1,0 +1,8 @@
+agents:
+  bad-agent:
+    permissions:
+      accounts:
+        visible: "not-an-array"
+        balance: "yes-string-not-bool"
+      spending:
+        max_per_transaction: "fifty"

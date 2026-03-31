@@ -1,0 +1,29 @@
+[
+  {
+    "id": "acc_checking_001",
+    "name": "Primary Checking",
+    "type": "checking",
+    "mask": "1234",
+    "balance_current": 3247.89,
+    "balance_available": 3200.00,
+    "currency": "USD"
+  },
+  {
+    "id": "acc_savings_001",
+    "name": "Emergency Savings",
+    "type": "savings",
+    "mask": "5678",
+    "balance_current": 12500.00,
+    "balance_available": 12500.00,
+    "currency": "USD"
+  },
+  {
+    "id": "acc_credit_001",
+    "name": "Rewards Credit Card",
+    "type": "credit",
+    "mask": "9012",
+    "balance_current": -1823.45,
+    "balance_available": 8176.55,
+    "currency": "USD"
+  }
+]

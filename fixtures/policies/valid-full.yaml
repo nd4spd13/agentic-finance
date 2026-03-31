@@ -1,0 +1,64 @@
+agents:
+  spending-agent:
+    description: "Full-featured spending control agent"
+    permissions:
+      accounts:
+        visible: [checking, savings, credit]
+        balance: true
+        account_number: false
+        routing_number: false
+      transactions:
+        read: true
+        amount_visibility_cap: 5000
+        description_visibility: true
+        lookback_days: 90
+      spending:
+        max_per_transaction: 500
+        max_daily: 2000
+        max_weekly: 5000
+        max_monthly: 15000
+        merchants:
+          allow: [Whole Foods, Trader Joe's, Amazon, Netflix, Shell, Chevron]
+        categories:
+          block: [gambling, adult]
+        require_itemization: true
+      escalation:
+        triggers:
+          - amount_exceeds: 1000
+          - new_merchant: true
+          - new_category: true
+          - category: [travel, entertainment]
+          - merchant: [new_establishment]
+          - daily_spend_exceeds_pct: 80
+        channel: cli
+        timeout: "5m"
+        default_on_timeout: deny
+      schedule:
+        active_hours: "09:00-22:00"
+        active_days: [monday, tuesday, wednesday, thursday, friday, saturday]
+        timezone: "America/New_York"
+        blackout_dates: ["2026-12-25", "2026-12-31"]
+        behavior_outside_schedule: escalate
+      audit:
+        log_all_queries: true
+        log_policy_evaluations: true
+        retention: "90d"
+
+  viewer-agent:
+    description: "Read-only viewer agent"
+    permissions:
+      accounts:
+        visible: [checking]
+        balance: true
+      transactions:
+        read: true
+        lookback_days: 30
+
+global:
+  max_total_daily_spend: 5000
+  max_total_weekly_spend: 20000
+  max_total_monthly_spend: 50000
+  max_concurrent_agents: 5
+  max_pending_escalations: 10
+  global_blocked_categories: [illegal]
+  global_blocked_merchants: [blacklisted_vendor]

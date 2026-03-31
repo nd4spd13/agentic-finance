@@ -1,0 +1,350 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Guardian Layer Policy Configuration",
+  "description": "Schema for financial permissions middleware policies",
+  "type": "object",
+  "required": ["agents"],
+  "properties": {
+    "agents": {
+      "type": "object",
+      "description": "Mapping of agent IDs to their policies",
+      "additionalProperties": {
+        "$ref": "#/definitions/AgentPolicy"
+      }
+    },
+    "global": {
+      "$ref": "#/definitions/GlobalPolicy"
+    }
+  },
+  "definitions": {
+    "AgentPolicy": {
+      "type": "object",
+      "required": ["description", "permissions"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the agent's purpose"
+        },
+        "permissions": {
+          "$ref": "#/definitions/AgentPermissions"
+        }
+      }
+    },
+    "AgentPermissions": {
+      "type": "object",
+      "properties": {
+        "accounts": {
+          "$ref": "#/definitions/AccountPermissions"
+        },
+        "transactions": {
+          "$ref": "#/definitions/TransactionPermissions"
+        },
+        "spending": {
+          "$ref": "#/definitions/SpendingPermissions"
+        },
+        "escalation": {
+          "$ref": "#/definitions/EscalationConfig"
+        },
+        "schedule": {
+          "$ref": "#/definitions/ScheduleConfig"
+        },
+        "audit": {
+          "$ref": "#/definitions/AuditConfig"
+        }
+      }
+    },
+    "AccountPermissions": {
+      "type": "object",
+      "required": ["visible"],
+      "properties": {
+        "visible": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of account IDs or types the agent can see"
+        },
+        "balance": {
+          "type": "boolean",
+          "description": "Whether agent can see account balances"
+        },
+        "account_number": {
+          "type": "boolean",
+          "description": "Whether agent can see full account numbers"
+        },
+        "routing_number": {
+          "type": "boolean",
+          "description": "Whether agent can see routing numbers"
+        }
+      }
+    },
+    "TransactionPermissions": {
+      "type": "object",
+      "required": ["read"],
+      "properties": {
+        "read": {
+          "type": "boolean",
+          "description": "Whether agent can read transaction history"
+        },
+        "amount_visibility_cap": {
+          "type": "number",
+          "description": "Redact transaction amounts above this threshold"
+        },
+        "description_visibility": {
+          "type": "boolean",
+          "description": "Whether agent can see transaction descriptions"
+        },
+        "lookback_days": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Only show transactions from the last N days"
+        }
+      }
+    },
+    "SpendingPermissions": {
+      "type": "object",
+      "properties": {
+        "max_per_transaction": {
+          "type": "number",
+          "description": "Maximum amount allowed per transaction (AP2-derived)"
+        },
+        "max_daily": {
+          "type": "number",
+          "description": "Maximum daily spending limit (AP2-derived)"
+        },
+        "max_weekly": {
+          "type": "number",
+          "description": "Maximum weekly spending limit (AP2-derived)"
+        },
+        "max_monthly": {
+          "type": "number",
+          "description": "Maximum monthly spending limit (AP2-derived)"
+        },
+        "merchants": {
+          "type": "object",
+          "properties": {
+            "allow": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Whitelist of allowed merchants"
+            },
+            "block": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Blacklist of blocked merchants"
+            }
+          }
+        },
+        "categories": {
+          "type": "object",
+          "properties": {
+            "allow": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Whitelist of allowed categories"
+            },
+            "block": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Blacklist of blocked categories"
+            }
+          }
+        },
+        "require_itemization": {
+          "type": "boolean",
+          "description": "Whether itemized receipts are required for transactions"
+        }
+      }
+    },
+    "EscalationConfig": {
+      "type": "object",
+      "required": ["triggers", "channel", "timeout", "default_on_timeout"],
+      "properties": {
+        "triggers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/EscalationTrigger"
+          },
+          "description": "Conditions that trigger escalation approval (Novel-derived)"
+        },
+        "channel": {
+          "type": "string",
+          "enum": ["cli", "webhook"],
+          "description": "How escalations are communicated"
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^\\d+[smhd]$",
+          "description": "How long to wait for approval (e.g., 5m, 1h)"
+        },
+        "default_on_timeout": {
+          "type": "string",
+          "enum": ["deny", "allow"],
+          "description": "Action to take if escalation times out"
+        }
+      }
+    },
+    "EscalationTrigger": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["amount_exceeds"],
+          "properties": {
+            "amount_exceeds": {
+              "type": "number",
+              "description": "Escalate if transaction exceeds this amount"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["new_merchant"],
+          "properties": {
+            "new_merchant": {
+              "type": "boolean",
+              "description": "Escalate on first transaction with new merchant"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["new_category"],
+          "properties": {
+            "new_category": {
+              "type": "boolean",
+              "description": "Escalate on first transaction in new category"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["category"],
+          "properties": {
+            "category": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Escalate on transactions in these categories"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["merchant"],
+          "properties": {
+            "merchant": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Escalate on transactions with these merchants"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["daily_spend_exceeds_pct"],
+          "properties": {
+            "daily_spend_exceeds_pct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Escalate if daily spend exceeds N% of limit"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ScheduleConfig": {
+      "type": "object",
+      "properties": {
+        "active_hours": {
+          "type": "string",
+          "pattern": "^\\d{2}:\\d{2}-\\d{2}:\\d{2}$",
+          "description": "Time window when agent is active (HH:MM-HH:MM in local timezone, Nekuda-derived)"
+        },
+        "active_days": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+          },
+          "description": "Days of week when agent is active (Nekuda-derived)"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "Timezone for schedule evaluation (e.g., America/New_York)"
+        },
+        "blackout_dates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "description": "Dates (YYYY-MM-DD) when agent is completely inactive"
+        },
+        "behavior_outside_schedule": {
+          "type": "string",
+          "enum": ["deny", "escalate"],
+          "description": "Action to take for requests outside active schedule"
+        }
+      }
+    },
+    "AuditConfig": {
+      "type": "object",
+      "properties": {
+        "log_all_queries": {
+          "type": "boolean",
+          "description": "Log every data access by this agent"
+        },
+        "log_policy_evaluations": {
+          "type": "boolean",
+          "description": "Log detailed policy evaluation results"
+        },
+        "retention": {
+          "type": "string",
+          "pattern": "^\\d+[dhmy]$",
+          "description": "How long to retain audit logs (e.g., 90d, 1y)"
+        }
+      }
+    },
+    "GlobalPolicy": {
+      "type": "object",
+      "properties": {
+        "max_total_daily_spend": {
+          "type": "number",
+          "description": "Global maximum daily spending across all agents"
+        },
+        "max_total_weekly_spend": {
+          "type": "number",
+          "description": "Global maximum weekly spending across all agents"
+        },
+        "max_total_monthly_spend": {
+          "type": "number",
+          "description": "Global maximum monthly spending across all agents"
+        },
+        "max_concurrent_agents": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of agents allowed to act simultaneously"
+        },
+        "max_pending_escalations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum pending approvals before new requests are denied"
+        },
+        "global_blocked_categories": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Categories blocked globally regardless of agent policy"
+        },
+        "global_blocked_merchants": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Merchants blocked globally regardless of agent policy"
+        }
+      }
+    }
+  }
+}

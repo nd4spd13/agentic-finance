@@ -1,0 +1,7 @@
+agents:
+  test-agent:
+    description: "Basic test agent"
+    permissions:
+      accounts:
+        visible: [checking]
+        balance: true

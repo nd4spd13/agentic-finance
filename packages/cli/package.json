@@ -1,0 +1,18 @@
+{
+  "name": "@guardian-layer/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "guardian": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@guardian-layer/core": "workspace:*",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0"
+  }
+}
