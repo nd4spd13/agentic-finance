@@ -1,10 +1,10 @@
-# Guardian Layer
+# Clad
 
 Consumer financial permissions middleware monorepo.
 
 ## Overview
 
-Guardian Layer is a TypeScript-based financial permissions system that implements the default-deny principle. It provides policy-based access control for financial data across multiple agents, with support for spending limits, merchant/category restrictions, temporal scheduling, and escalation workflows.
+Clad is a TypeScript-based financial permissions system that implements the default-deny principle. It provides policy-based access control for financial data across multiple agents, with support for spending limits, merchant/category restrictions, temporal scheduling, and escalation workflows.
 
 ## Structure
 

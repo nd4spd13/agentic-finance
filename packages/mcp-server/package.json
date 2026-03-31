@@ -1,5 +1,5 @@
 {
-  "name": "@guardian-layer/mcp-server",
+  "name": "@clad/mcp-server",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/server.js",
@@ -9,7 +9,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@guardian-layer/core": "workspace:*",
+    "@clad/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {

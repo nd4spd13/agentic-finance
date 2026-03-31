@@ -1,6 +1,6 @@
-import { evaluate, type PolicyConfig, type DataProvider } from '@guardian-layer/core'
+import { evaluate, type PolicyConfig, type DataProvider } from '@clad/core'
 
-export const name = 'guardian_safe_to_spend'
+export const name = 'clad_safe_to_spend'
 export const description = 'Compute safe-to-spend amount using balance and recurring charges'
 export const inputSchema = {
   type: 'object' as const,

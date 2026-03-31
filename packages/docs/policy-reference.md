@@ -1,10 +1,10 @@
 # Policy Reference
 
-Guardian Layer policies are written in YAML. This reference documents every field available in a Guardian Layer policy.
+Clad policies are written in YAML. This reference documents every field available in a Clad policy.
 
 ## Policy Structure
 
-A Guardian Layer policy has two top-level sections:
+A Clad policy has two top-level sections:
 
 ```yaml
 agents:
@@ -22,7 +22,7 @@ global:
 Here are the TypeScript interfaces that define the policy structure:
 
 ```typescript
-interface GuardianPolicy {
+interface CladPolicy {
   agents: Record<string, AgentPolicy>;
   global?: GlobalPolicy;
 }
@@ -119,7 +119,7 @@ interface GlobalPolicy {
 
 ## Agents Section
 
-The `agents` section defines all agents that can use Guardian Layer. Each agent has a unique name.
+The `agents` section defines all agents that can use Clad. Each agent has a unique name.
 
 ### AgentPolicy
 
@@ -290,7 +290,7 @@ Escalate if today's spending exceeds this percentage of the daily limit. For exa
 **`channel`** (required, 'cli' | 'webhook')
 How escalations are delivered.
 
-- `cli`: Escalation appears in `guardian escalate` and requires human approval via CLI
+- `cli`: Escalation appears in `clad escalate` and requires human approval via CLI
 - `webhook`: HTTP POST to `webhook_url` with escalation details
 
 **`webhook_url`** (string, required if channel is 'webhook')
@@ -511,7 +511,7 @@ global:
 
 4. **Monitor the audit log**: Regularly review audit logs to detect unusual patterns.
 
-5. **Version your policies**: Keep `guardian.yaml` in version control and review policy changes like code reviews.
+5. **Version your policies**: Keep `clad.yaml` in version control and review policy changes like code reviews.
 
 6. **Set reasonable timeouts**: Long timeouts delay decisions; short timeouts might auto-deny important requests.
 
@@ -521,6 +521,6 @@ global:
 
 ## Next Steps
 
-- **[Getting Started](/getting-started)**: Set up Guardian Layer
+- **[Getting Started](/getting-started)**: Set up Clad
 - **[MCP Tools](/mcp-tools)**: See what Claude can do with these policies
 - **[Starter Policies](/starter-policies)**: Copy ready-to-use templates

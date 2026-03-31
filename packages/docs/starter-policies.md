@@ -1,6 +1,6 @@
 # Starter Policy Templates
 
-This page contains three complete, production-ready Guardian Layer policy templates you can copy and customize for your use case.
+This page contains three complete, production-ready Clad policy templates you can copy and customize for your use case.
 
 ## 1. Read-Only Analyst
 
@@ -52,10 +52,10 @@ global:
 ```
 
 **To use:**
-1. Copy this YAML to `guardian.yaml`
+1. Copy this YAML to `clad.yaml`
 2. Customize account IDs to match your accounts
-3. Run `guardian init --file guardian.yaml`
-4. Test with: `guardian status`
+3. Run `clad init --file clad.yaml`
+4. Test with: `clad status`
 
 **Claude integration:**
 > "Show me all transactions from January"
@@ -147,10 +147,10 @@ global:
 ```
 
 **To use:**
-1. Copy this YAML to `guardian.yaml`
+1. Copy this YAML to `clad.yaml`
 2. Adjust `max_per_transaction`, `max_daily`, `max_weekly` to your comfort level
 3. Update merchant and category lists to match your vendor ecosystem
-4. Run `guardian reload`
+4. Run `clad reload`
 5. Test by asking Claude to make a purchase
 
 **Claude integration:**
@@ -260,7 +260,7 @@ global:
 
 **Webhook Endpoint Example**
 
-When an escalation occurs, Guardian sends a POST request to your webhook:
+When an escalation occurs, Clad sends a POST request to your webhook:
 
 ```json
 {
@@ -319,11 +319,11 @@ app.post('/guardian/escalate', express.json(), async (req, res) => {
 ```
 
 **To use:**
-1. Copy this YAML to `guardian.yaml`
+1. Copy this YAML to `clad.yaml`
 2. Update the `webhook_url` to your approval endpoint
 3. Customize account IDs, merchants, categories
 4. Update blackout dates to match your holidays
-5. Run `guardian reload`
+5. Run `clad reload`
 6. Set up your webhook endpoint to handle approvals
 
 **Claude integration:**
@@ -383,11 +383,11 @@ Then configure Claude for each:
 {
   "mcpServers": {
     "guardian-analyst": {
-      "command": "guardian",
+      "command": "clad",
       "args": ["serve", "--agent", "analyst"]
     },
     "guardian-procurement": {
-      "command": "guardian",
+      "command": "clad",
       "args": ["serve", "--agent", "procurement"]
     }
   }
@@ -426,6 +426,6 @@ escalation:
 ## Next Steps
 
 - **[Policy Reference](/policy-reference)**: Learn about all policy options
-- **[Getting Started](/getting-started)**: Set up Guardian Layer
+- **[Getting Started](/getting-started)**: Set up Clad
 - **[Integration Guide](/integration-guides)**: Connect to Claude Desktop
 - **[MCP Tools](/mcp-tools)**: See what Claude can do

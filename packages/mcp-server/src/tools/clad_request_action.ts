@@ -1,6 +1,6 @@
-import { evaluate, type PolicyConfig, type DataProvider, type ApprovalQueue } from '@guardian-layer/core'
+import { evaluate, type PolicyConfig, type DataProvider, type ApprovalQueue } from '@clad/core'
 
-export const name = 'guardian_request_action'
+export const name = 'clad_request_action'
 export const description = 'Request a spending action, evaluated by policy → allow/deny/escalate'
 export const inputSchema = {
   type: 'object' as const,
@@ -47,7 +47,7 @@ export async function handler(
   if (result.decision === 'escalate') {
     const approval = context.approvalQueue.createApproval(
       context.agentId,
-      'guardian_request_action',
+      'clad_request_action',
       result.reason
     )
     return {

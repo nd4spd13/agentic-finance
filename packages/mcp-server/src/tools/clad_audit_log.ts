@@ -1,6 +1,6 @@
-import { evaluate, type PolicyConfig, type AuditLogger } from '@guardian-layer/core'
+import { evaluate, type PolicyConfig, type AuditLogger } from '@clad/core'
 
-export const name = 'guardian_audit_log'
+export const name = 'clad_audit_log'
 export const description = 'Query the audit log with filters'
 export const inputSchema = {
   type: 'object' as const,

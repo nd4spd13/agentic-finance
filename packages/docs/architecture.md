@@ -1,10 +1,10 @@
 # Architecture
 
-This document describes the design, components, and security model of Guardian Layer.
+This document describes the design, components, and security model of Clad.
 
 ## System Overview
 
-Guardian Layer sits between AI agents and financial data providers, enforcing policies at the MCP layer.
+Clad sits between AI agents and financial data providers, enforcing policies at the MCP layer.
 
 ```
 ┌─────────────────────┐
@@ -15,7 +15,7 @@ Guardian Layer sits between AI agents and financial data providers, enforcing po
          │ MCP Protocol
          │
 ┌────────▼──────────────────────────────────────┐
-│         Guardian Layer MCP Server             │
+│         Clad MCP Server             │
 │                                              │
 │ ┌──────────────────────────────────────────┐ │
 │ │   Policy Evaluator                       │ │
@@ -53,11 +53,11 @@ Guardian Layer sits between AI agents and financial data providers, enforcing po
 Here's what happens when an MCP agent makes a financial request:
 
 1. **Agent Request**
-   - The agent (via MCP) calls `guardian_request_action` with amount, merchant, category
+   - The agent (via MCP) calls `clad_request_action` with amount, merchant, category
    - Includes agent ID and account ID
 
 2. **Policy Lookup**
-   - Policy Evaluator loads `guardian.yaml`
+   - Policy Evaluator loads `clad.yaml`
    - Finds the agent's policy definition
    - Verifies agent exists (deny if not found)
 
@@ -93,31 +93,31 @@ Here's what happens when an MCP agent makes a financial request:
 
 ### Core Components
 
-**Policy Engine** (`@guardian-layer/core`)
+**Policy Engine** (`@clad/core`)
 - YAML parser and validator
 - Policy structure definition (TypeScript interfaces)
 - Decision evaluation logic
 - Spending constraint calculation
 
-**MCP Server** (`@guardian-layer/mcp-server`)
+**MCP Server** (`@clad/mcp-server`)
 - Implements the 5 MCP tools
 - Routes requests to policy engine
 - Handles authentication (agent ID verification)
 - Formats responses for MCP clients
 
-**Audit Logger** (`@guardian-layer/core`)
+**Audit Logger** (`@clad/core`)
 - Append-only audit log
 - Chain hashing for tamper-evidence
 - Filtering by agent and permission level
 - Serialization to file or database
 
-**Approval Queue** (`@guardian-layer/core`)
+**Approval Queue** (`@clad/core`)
 - In-memory or persistent storage of escalations
 - Webhook dispatch to external systems
 - CLI integration for manual approvals
 - Timeout handling and default decision logic
 
-### CLI (`@guardian-layer/cli`)
+### CLI (`@clad/cli`)
 
 Command-line interface for:
 - `guardian init` - Create default policy
@@ -132,7 +132,7 @@ Command-line interface for:
 
 ### Default-Deny Principle
 
-Guardian Layer uses a default-deny security model:
+Clad uses a default-deny security model:
 
 1. **Agents are not mentioned in policy** → Denied
 2. **Accounts not in agent's list** → Denied
@@ -143,21 +143,21 @@ This means policies must explicitly whitelist what agents can do, rather than bl
 
 ### Constraint Sources
 
-Guardian Layer's permission model draws on established agentic payment standards and Guardian Layer's own design:
+Clad's permission model draws on established agentic payment standards and Clad's own design:
 
 **[AP2 — Agent Payments Protocol](https://github.com/google-agentic-commerce/AP2) (Google, Apache 2.0)**
 - Spending limit hierarchy: per-transaction, daily, weekly, monthly
 - Merchant and category controls
 - Account visibility and field visibility
 
-**Time-Window Controls (Guardian Layer)**
+**Time-Window Controls (Clad)**
 - Active hours enforcement
 - Active days (weekday/weekend)
 - Timezone support
 - Blackout dates
 - Configurable behavior outside schedule (deny / escalate / allow)
 
-**Escalation Framework (Guardian Layer)**
+**Escalation Framework (Clad)**
 - Escalation triggers (amount, new merchant, category, percentages)
 - Multiple escalation channels (CLI, webhook)
 - Timeout and default decision logic
@@ -199,7 +199,7 @@ Agents are identified by:
 
 ## Spending Constraint Evaluation
 
-When evaluating spending, Guardian Layer checks constraints in this order:
+When evaluating spending, Clad checks constraints in this order:
 
 ```
 1. Agent exists in policy?
@@ -308,7 +308,7 @@ When evaluating spending, Guardian Layer checks constraints in this order:
 
 ### Custom Data Providers
 
-Guardian Layer provides a data provider interface:
+Clad provides a data provider interface:
 
 ```typescript
 interface DataProvider {
@@ -378,8 +378,8 @@ guardian start --agent spender --port 3002 --foreground
 # MCP client config (example: Claude Desktop)
 {
   "mcpServers": {
-    "guardian-analyst": { "command": "guardian", "args": ["serve", "--agent", "analyst"] },
-    "guardian-spender": { "command": "guardian", "args": ["serve", "--agent", "spender"] }
+    "guardian-analyst": { "command": "clad", "args": ["serve", "--agent", "analyst"] },
+    "guardian-spender": { "command": "clad", "args": ["serve", "--agent", "spender"] }
   }
 }
 ```
@@ -419,7 +419,7 @@ For production:
 
 ## Next Steps
 
-- **[Getting Started](/getting-started)**: Set up Guardian Layer
+- **[Getting Started](/getting-started)**: Set up Clad
 - **[Policy Reference](/policy-reference)**: Learn all policy options
 - **[MCP Tools](/mcp-tools)**: See available tools
 - **[Integration Guide](/integration-guides)**: Connect your MCP agent

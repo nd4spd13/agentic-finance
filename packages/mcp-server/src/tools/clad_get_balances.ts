@@ -1,6 +1,6 @@
-import { evaluate, type PolicyConfig, type DataProvider } from '@guardian-layer/core'
+import { evaluate, type PolicyConfig, type DataProvider } from '@clad/core'
 
-export const name = 'guardian_get_balances'
+export const name = 'clad_get_balances'
 export const description = 'Get account balances filtered by agent policy'
 export const inputSchema = {
   type: 'object' as const,

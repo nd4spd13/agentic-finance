@@ -32,7 +32,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@guardian-layer/core':
+      '@clad/core':
         specifier: workspace:*
         version: link:../core
       commander:
@@ -76,7 +76,7 @@ importers:
 
   packages/mcp-server:
     dependencies:
-      '@guardian-layer/core':
+      '@clad/core':
         specifier: workspace:*
         version: link:../core
       '@modelcontextprotocol/sdk':
