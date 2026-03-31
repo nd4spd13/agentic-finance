@@ -7,11 +7,11 @@ This document describes the design, components, and security model of Guardian L
 Guardian Layer sits between AI agents and financial data providers, enforcing policies at the MCP layer.
 
 ```
-┌─────────────────┐
-│  Claude Desktop │
-│    (or other    │
-│   MCP client)   │
-└────────┬────────┘
+┌─────────────────────┐
+│   MCP-compatible    │
+│   agent / client    │
+│ (Claude, GPT, etc.) │
+└────────┬────────────┘
          │ MCP Protocol
          │
 ┌────────▼──────────────────────────────────────┐
@@ -50,10 +50,10 @@ Guardian Layer sits between AI agents and financial data providers, enforcing po
 
 ## Data Flow
 
-Here's what happens when Claude makes a financial request:
+Here's what happens when an MCP agent makes a financial request:
 
 1. **Agent Request**
-   - Claude (via MCP) calls `guardian_request_action` with amount, merchant, category
+   - The agent (via MCP) calls `guardian_request_action` with amount, merchant, category
    - Includes agent ID and account ID
 
 2. **Policy Lookup**
@@ -85,7 +85,7 @@ Here's what happens when Claude makes a financial request:
    - Wait for human decision or timeout
 
 7. **Response**
-   - Return decision to Claude
+   - Return decision to the agent
    - Include escalation ID if escalated
    - Include reason for deny/escalate
 
@@ -143,25 +143,25 @@ This means policies must explicitly whitelist what agents can do, rather than bl
 
 ### Constraint Sources
 
-Guardian Layer aligns with established financial permission frameworks:
+Guardian Layer's permission model draws on established agentic payment standards and Guardian Layer's own design:
 
-**AP2 (Agentic Permissions Protocol v2)**
+**[AP2 — Agent Payments Protocol](https://github.com/google-agentic-commerce/AP2) (Google, Apache 2.0)**
 - Spending limit hierarchy: per-transaction, daily, weekly, monthly
 - Merchant and category controls
 - Account visibility and field visibility
 
-**Nekuda (Temporal Execution Framework)**
+**Time-Window Controls (Guardian Layer)**
 - Active hours enforcement
 - Active days (weekday/weekend)
 - Timezone support
 - Blackout dates
-- Behavior outside schedule
+- Configurable behavior outside schedule (deny / escalate / allow)
 
-**Novel (Escalation Framework)**
+**Escalation Framework (Guardian Layer)**
 - Escalation triggers (amount, new merchant, category, percentages)
 - Multiple escalation channels (CLI, webhook)
 - Timeout and default decision logic
-- Approval tracking
+- Tamper-evident approval tracking in audit log
 
 ### Tamper-Evidence via Chain Hashing
 
@@ -361,7 +361,7 @@ For a single agent (most common):
 
 ```bash
 guardian start --foreground
-# Claude Desktop connects via MCP
+# Any MCP-compatible agent can now connect
 ```
 
 ### Multi-Agent Deployment
@@ -375,7 +375,7 @@ guardian start --agent analyst --port 3001 --foreground
 # Terminal 2
 guardian start --agent spender --port 3002 --foreground
 
-# Claude config
+# MCP client config (example: Claude Desktop)
 {
   "mcpServers": {
     "guardian-analyst": { "command": "guardian", "args": ["serve", "--agent", "analyst"] },
@@ -422,4 +422,4 @@ For production:
 - **[Getting Started](/getting-started)**: Set up Guardian Layer
 - **[Policy Reference](/policy-reference)**: Learn all policy options
 - **[MCP Tools](/mcp-tools)**: See available tools
-- **[Integration Guide](/integration-guides)**: Connect to Claude
+- **[Integration Guide](/integration-guides)**: Connect your MCP agent

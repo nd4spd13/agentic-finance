@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide walks you through setting up Guardian Layer and connecting it to Claude Desktop.
+This guide walks you through setting up Guardian Layer and connecting it to an MCP-compatible agent.
 
 ## Prerequisites
 
@@ -8,7 +8,7 @@ Before you start, make sure you have:
 
 - **Node.js 22+**: Check with `node --version`
 - **pnpm**: Install with `npm install -g pnpm` or check [pnpm.io](https://pnpm.io)
-- **Claude Desktop**: Download from [claude.ai](https://claude.ai)
+- **An MCP-compatible agent**: e.g. [Claude Desktop](https://claude.ai), or any agent using the [Model Context Protocol](https://modelcontextprotocol.io)
 
 ## Installation
 
@@ -166,11 +166,11 @@ pm2 save
 pm2 startup
 ```
 
-## Configure Claude Desktop
+## Connect Your MCP Agent
 
-Guardian Layer integrates with Claude Desktop via the Model Context Protocol (MCP).
+Guardian Layer works with any MCP-compatible agent. Below is an example using Claude Desktop — the same JSON structure applies to any MCP client.
 
-### macOS/Linux
+### Claude Desktop — macOS/Linux
 
 Edit `~/.config/Claude/claude_desktop_config.json`:
 
@@ -185,7 +185,7 @@ Edit `~/.config/Claude/claude_desktop_config.json`:
 }
 ```
 
-### Windows
+### Claude Desktop — Windows
 
 Edit `%APPDATA%\Claude\claude_desktop_config.json`:
 
@@ -222,11 +222,11 @@ Connected clients: 0
 Audit logs: /path/to/guardian.log
 ```
 
-In Claude Desktop, you can now use Guardian Layer tools in conversations. Start with:
+Your MCP agent can now use Guardian Layer tools. If using Claude Desktop, try:
 
 > "What's my checking account balance?"
 
-Claude will use the `guardian_get_balances` tool, which will be checked against your policy before returning results.
+The agent will call the `guardian_get_balances` tool, which is checked against your policy before results are returned.
 
 ## Common Tasks
 
@@ -283,8 +283,8 @@ pnpm exec guardian status
 ### "MCP Server not responding"
 
 1. Verify the server is running: `guardian status`
-2. Check that `claude_desktop_config.json` points to the correct command
-3. Restart Claude Desktop
+2. Check that your MCP client config points to the correct command
+3. Restart your MCP agent (e.g. Claude Desktop)
 4. Check logs: `guardian logs`
 
 ### "Policy validation failed"
@@ -306,5 +306,5 @@ Check that:
 
 - **[Policy Reference](/policy-reference)**: Learn about all available policy options
 - **[Starter Policies](/starter-policies)**: Copy ready-to-use policy templates
-- **[MCP Tools Reference](/mcp-tools)**: Understand what Claude can do with Guardian Layer
+- **[MCP Tools Reference](/mcp-tools)**: Understand the available MCP tools
 - **[Architecture](/architecture)**: Deep dive into how Guardian Layer works

@@ -311,7 +311,7 @@ describe('Policy Evaluator', () => {
       const result = await evaluate('escalating', { type: 'transaction', amount: 51 }, policy, {})
       expect(result.decision).toBe('escalate')
       expect(result.constraints_applied).toContainEqual(
-        expect.objectContaining({ source: 'novel' })
+        expect.objectContaining({ source: 'escalation' })
       )
     })
 
@@ -466,7 +466,7 @@ describe('Policy Evaluator', () => {
       const result = await evaluate('scheduled', { type: 'transaction' }, policy, context)
       expect(result.decision).toBe('allow')
       expect(result.constraints_applied).toContainEqual(
-        expect.objectContaining({ source: 'nekuda' })
+        expect.objectContaining({ source: 'schedule' })
       )
     })
 
@@ -737,7 +737,7 @@ describe('Policy Evaluator', () => {
       const result = await evaluate('test', { type: 'transaction', amount: 100 }, policy, context)
       expect(result.constraints_applied.length).toBeGreaterThan(0)
       result.constraints_applied.forEach(constraint => {
-        expect(['ap2', 'nekuda', 'mcp-oauth', 'ack', 'novel']).toContain(constraint.source)
+        expect(['ap2', 'schedule', 'escalation', 'mcp-oauth', 'ack']).toContain(constraint.source)
       })
     })
 
