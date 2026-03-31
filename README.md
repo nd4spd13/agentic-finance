@@ -50,3 +50,5 @@ pnpm test:watch    # Run tests in watch mode
 - **Chain-of-Custody**: SHA-256 audit trail with tamper detection
 - **ESM-Only**: All code is ES modules with explicit .js imports
 - **Strict TypeScript**: Full strict mode with no any types
+
+
