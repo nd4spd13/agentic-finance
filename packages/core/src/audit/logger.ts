@@ -92,6 +92,64 @@ export class AuditLogger {
     return record
   }
 
+  logEscalationDecision(
+    agent_id: string,
+    tool_name: string,
+    decision: 'approved' | 'denied',
+    reason: string,
+    approval_id: string
+  ): AuditRecord {
+    const id = nanoid()
+    const timestamp = new Date().toISOString()
+    const event_type = 'escalation_decision'
+    const payload = JSON.stringify({ approval_id })
+
+    const receiptHash = this.computeHash(
+      id,
+      timestamp,
+      agent_id,
+      event_type,
+      tool_name,
+      decision,
+      reason,
+      this.lastHash
+    )
+
+    const record: AuditRecord = {
+      id,
+      timestamp,
+      agent_id,
+      event_type,
+      tool_name,
+      decision,
+      reason,
+      payload,
+      receipt_hash: receiptHash,
+      previous_hash: this.lastHash,
+    }
+
+    const stmt = this.db.prepare(`
+      INSERT INTO audit_records (
+        id, timestamp, agent_id, event_type, tool_name, decision, reason, payload, receipt_hash, previous_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    stmt.run(
+      record.id,
+      record.timestamp,
+      record.agent_id,
+      record.event_type,
+      record.tool_name || '',
+      record.decision || '',
+      record.reason || '',
+      record.payload || '',
+      record.receipt_hash,
+      record.previous_hash
+    )
+
+    this.lastHash = receiptHash
+    return record
+  }
+
   getRecords(filters?: {
     agent_id?: string
     decision?: string
@@ -136,6 +194,7 @@ export class AuditLogger {
       tool_name: row.tool_name,
       decision: row.decision,
       reason: row.reason,
+      payload: row.payload,
       receipt_hash: row.receipt_hash,
       previous_hash: row.previous_hash,
     }))

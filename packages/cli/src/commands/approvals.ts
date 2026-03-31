@@ -1,11 +1,12 @@
 /**
  * guardian approvals / approve / deny / lockdown
  * CRS-29: Human-in-the-Loop approval commands
+ * CRS-44: Escalation decisions are written to the audit log
  */
 
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { loadConfig } from '../config.js'
-import { ApprovalQueue } from '@guardian-layer/core'
+import { ApprovalQueue, AuditLogger } from '@guardian-layer/core'
 import type { ApprovalRecord } from '@guardian-layer/core'
 
 function timeAgo(isoString: string): string {
@@ -66,6 +67,12 @@ function getQueue(): ApprovalQueue | null {
   return new ApprovalQueue(config.approval_db)
 }
 
+function getAuditLogger(): AuditLogger | null {
+  const config = loadConfig()
+  if (!existsSync(config.audit_db)) return null
+  return new AuditLogger(config.audit_db)
+}
+
 export function approvalsListCommand(opts: { all?: boolean; agent?: string } = {}): void {
   const queue = getQueue()
   if (!queue) return
@@ -105,6 +112,18 @@ export function approveCommand(id: string): void {
     console.log(`\n✓ Approved: ${record.id}`)
     console.log(`  Agent: ${record.agent_id}  Tool: ${record.tool_name}`)
     console.log(`  The waiting agent will be unblocked on its next status poll.\n`)
+
+    // Record the human decision in the audit log
+    const logger = getAuditLogger()
+    if (logger) {
+      logger.logEscalationDecision(
+        record.agent_id,
+        record.tool_name,
+        'approved',
+        'human approved via CLI',
+        record.id
+      )
+    }
   } catch (err) {
     console.error(`✗ Failed to approve: ${err}`)
     process.exit(1)
@@ -119,6 +138,18 @@ export function denyCommand(id: string): void {
     const record = queue.deny(id)
     console.log(`\n✓ Denied: ${record.id}`)
     console.log(`  Agent: ${record.agent_id}  Tool: ${record.tool_name}\n`)
+
+    // Record the human decision in the audit log
+    const logger = getAuditLogger()
+    if (logger) {
+      logger.logEscalationDecision(
+        record.agent_id,
+        record.tool_name,
+        'denied',
+        'human denied via CLI',
+        record.id
+      )
+    }
   } catch (err) {
     console.error(`✗ Failed to deny: ${err}`)
     process.exit(1)
@@ -138,12 +169,25 @@ export function lockdownCommand(): void {
 
   console.log(`\n⚠️  Lockdown: denying ${pending.length} pending approval${pending.length !== 1 ? 's' : ''}...\n`)
 
+  const logger = getAuditLogger()
   let denied = 0
+
   for (const r of pending) {
     try {
       queue.deny(r.id)
       console.log(`  ✓ Denied ${r.id}  (${r.agent_id} · ${r.tool_name})`)
       denied++
+
+      // Record each lockdown denial in the audit log
+      if (logger) {
+        logger.logEscalationDecision(
+          r.agent_id,
+          r.tool_name,
+          'denied',
+          'lockdown — all pending escalations denied',
+          r.id
+        )
+      }
     } catch (err) {
       console.log(`  ✗ Could not deny ${r.id}: ${err}`)
     }
