@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Guardian Layer CLI — CRS-30 + CRS-29
+ * Clad CLI — CRS-30 + CRS-29
  * Financial permissions middleware for AI agents
  */
 
@@ -20,11 +20,11 @@ import {
 const program = new Command()
 
 program
-  .name('guardian')
-  .description('Guardian Layer — financial permissions middleware for AI agents')
+  .name('clad')
+  .description('Clad — financial permissions middleware for AI agents')
   .version('0.1.0')
 
-// ── guardian init ────────────────────────────────────────────────────────────
+// ── clad init ────────────────────────────────────────────────────────────
 program
   .command('init')
   .description('First-time setup: create config and starter policy')
@@ -32,24 +32,24 @@ program
     await initCommand()
   })
 
-// ── guardian start ───────────────────────────────────────────────────────────
+// ── clad start ───────────────────────────────────────────────────────────
 program
   .command('start')
-  .description('Start the Guardian Layer MCP server')
+  .description('Start the Clad MCP server')
   .option('-f, --foreground', 'Run in foreground (stdio mode for Claude Desktop)')
   .action((opts: { foreground?: boolean }) => {
     startCommand({ foreground: opts.foreground })
   })
 
-// ── guardian stop ────────────────────────────────────────────────────────────
+// ── clad stop ────────────────────────────────────────────────────────────
 program
   .command('stop')
-  .description('Stop the background Guardian Layer server')
+  .description('Stop the background Clad server')
   .action(() => {
     stopCommand()
   })
 
-// ── guardian status ──────────────────────────────────────────────────────────
+// ── clad status ──────────────────────────────────────────────────────────
 program
   .command('status')
   .description('Show server status, policy health, and pending approvals')
@@ -57,7 +57,7 @@ program
     await statusCommand()
   })
 
-// ── guardian policy ──────────────────────────────────────────────────────────
+// ── clad policy ──────────────────────────────────────────────────────────
 const policyCmd = program
   .command('policy')
   .description('Policy management commands')
@@ -76,7 +76,7 @@ policyCmd
     await policyShowCommand(path)
   })
 
-// ── guardian log ─────────────────────────────────────────────────────────────
+// ── clad log ─────────────────────────────────────────────────────────────
 const logCmd = program
   .command('log')
   .description('View the audit log')
@@ -100,7 +100,7 @@ logCmd
     logExportCommand(file, opts)
   })
 
-// ── guardian approvals ───────────────────────────────────────────────────────
+// ── clad approvals ───────────────────────────────────────────────────────
 program
   .command('approvals')
   .description('List pending approval requests (HITL queue)')
@@ -110,7 +110,7 @@ program
     approvalsListCommand(opts)
   })
 
-// ── guardian approve <id> ────────────────────────────────────────────────────
+// ── clad approve <id> ────────────────────────────────────────────────────
 program
   .command('approve <id>')
   .description('Approve a pending escalation request')
@@ -118,7 +118,7 @@ program
     approveCommand(id)
   })
 
-// ── guardian deny <id> ───────────────────────────────────────────────────────
+// ── clad deny <id> ───────────────────────────────────────────────────────
 program
   .command('deny <id>')
   .description('Deny a pending escalation request')
@@ -126,7 +126,7 @@ program
     denyCommand(id)
   })
 
-// ── guardian lockdown ────────────────────────────────────────────────────────
+// ── clad lockdown ────────────────────────────────────────────────────────
 program
   .command('lockdown')
   .description('Immediately deny all pending approvals')

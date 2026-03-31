@@ -1,6 +1,6 @@
-import { evaluate, type PolicyConfig, type DataProvider, type TransactionQueryOpts } from '@guardian-layer/core'
+import { evaluate, type PolicyConfig, type DataProvider, type TransactionQueryOpts } from '@clad/core'
 
-export const name = 'guardian_get_transactions'
+export const name = 'clad_get_transactions'
 export const description = 'Get transactions with policy-based redaction'
 export const inputSchema = {
   type: 'object' as const,

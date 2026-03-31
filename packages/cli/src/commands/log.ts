@@ -1,11 +1,11 @@
 /**
- * guardian log — view and export the audit trail
+ * clad log — view and export the audit trail
  */
 
 import { existsSync, writeFileSync } from 'node:fs'
 import { loadConfig } from '../config.js'
-import { AuditLogger } from '@guardian-layer/core'
-import type { AuditRecord } from '@guardian-layer/core'
+import { AuditLogger } from '@clad/core'
+import type { AuditRecord } from '@clad/core'
 
 function formatRecord(r: AuditRecord, index: number): string {
   const ts = new Date(r.timestamp).toLocaleString()

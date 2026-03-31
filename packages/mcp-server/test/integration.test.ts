@@ -1,16 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import { DummyDataProvider, type PolicyConfig } from '@guardian-layer/core'
-import * as getBalances from '../src/tools/guardian_get_balances.js'
-import * as getTransactions from '../src/tools/guardian_get_transactions.js'
-import * as safeToSpend from '../src/tools/guardian_safe_to_spend.js'
-import * as requestAction from '../src/tools/guardian_request_action.js'
-import * as auditLog from '../src/tools/guardian_audit_log.js'
-import { AuditLogger, ApprovalQueue } from '@guardian-layer/core'
+import { DummyDataProvider, type PolicyConfig } from '@clad/core'
+import * as getBalances from '../src/tools/clad_get_balances.js'
+import * as getTransactions from '../src/tools/clad_get_transactions.js'
+import * as safeToSpend from '../src/tools/clad_safe_to_spend.js'
+import * as requestAction from '../src/tools/clad_request_action.js'
+import * as auditLog from '../src/tools/clad_audit_log.js'
+import { AuditLogger, ApprovalQueue } from '@clad/core'
 
 describe('MCP Tool Handlers', () => {
   const provider = new DummyDataProvider()
 
-  describe('guardian_get_balances', () => {
+  describe('clad_get_balances', () => {
     it('returns balances for allowed agent', async () => {
       const policy: PolicyConfig = {
         agents: {
@@ -66,7 +66,7 @@ describe('MCP Tool Handlers', () => {
     })
   })
 
-  describe('guardian_get_transactions', () => {
+  describe('clad_get_transactions', () => {
     it('returns transactions for allowed agent', async () => {
       const policy: PolicyConfig = {
         agents: {
@@ -99,7 +99,7 @@ describe('MCP Tool Handlers', () => {
     })
   })
 
-  describe('guardian_safe_to_spend', () => {
+  describe('clad_safe_to_spend', () => {
     it('calculates safe to spend', async () => {
       const policy: PolicyConfig = {
         agents: {
@@ -125,7 +125,7 @@ describe('MCP Tool Handlers', () => {
     })
   })
 
-  describe('guardian_request_action', () => {
+  describe('clad_request_action', () => {
     it('allows spending request within limits', async () => {
       const policy: PolicyConfig = {
         agents: {
@@ -202,7 +202,7 @@ describe('MCP Tool Handlers', () => {
     })
   })
 
-  describe('guardian_audit_log', () => {
+  describe('clad_audit_log', () => {
     it('returns audit records', async () => {
       const policy: PolicyConfig = {
         agents: {
@@ -214,8 +214,8 @@ describe('MCP Tool Handlers', () => {
       }
       const auditLogger = new AuditLogger(':memory:')
       // Log some test records
-      auditLogger.logRequest('test-agent', 'guardian_get_balances', 'allow', 'test')
-      auditLogger.logRequest('test-agent', 'guardian_request_action', 'deny', 'test')
+      auditLogger.logRequest('test-agent', 'clad_get_balances', 'allow', 'test')
+      auditLogger.logRequest('test-agent', 'clad_request_action', 'deny', 'test')
 
       const result = await auditLog.handler(
         {},
@@ -237,8 +237,8 @@ describe('MCP Tool Handlers', () => {
         },
       }
       const auditLogger = new AuditLogger(':memory:')
-      auditLogger.logRequest('test-agent', 'guardian_get_balances', 'allow', 'test')
-      auditLogger.logRequest('other-agent', 'guardian_request_action', 'deny', 'test')
+      auditLogger.logRequest('test-agent', 'clad_get_balances', 'allow', 'test')
+      auditLogger.logRequest('other-agent', 'clad_request_action', 'deny', 'test')
 
       const result = await auditLog.handler(
         { agent_id: 'test-agent' },

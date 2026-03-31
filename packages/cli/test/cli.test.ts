@@ -8,16 +8,16 @@ import { existsSync, unlinkSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-// Use a temp dir as GUARDIAN_CONFIG_DIR for all tests
+// Use a temp dir as CLAD_CONFIG_DIR for all tests
 const TEST_DIR = join(tmpdir(), `guardian-test-${process.pid}`)
 
 beforeEach(() => {
-  process.env.GUARDIAN_CONFIG_DIR = TEST_DIR
+  process.env.CLAD_CONFIG_DIR = TEST_DIR
   mkdirSync(TEST_DIR, { recursive: true })
 })
 
 afterEach(() => {
-  delete process.env.GUARDIAN_CONFIG_DIR
+  delete process.env.CLAD_CONFIG_DIR
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true, force: true })
   }
@@ -26,7 +26,7 @@ afterEach(() => {
 // ── Config ───────────────────────────────────────────────────────────────────
 
 describe('Config', () => {
-  it('defaultConfig returns paths under GUARDIAN_CONFIG_DIR', async () => {
+  it('defaultConfig returns paths under CLAD_CONFIG_DIR', async () => {
     const { defaultConfig } = await import('../src/config.js')
     const cfg = defaultConfig()
     expect(cfg.policy_path).toContain(TEST_DIR)
@@ -66,7 +66,7 @@ describe('Log command', () => {
 
   it('logExportCommand writes JSON to file', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { AuditLogger } = await import('@guardian-layer/core')
+    const { AuditLogger } = await import('@clad/core')
     const { logExportCommand } = await import('../src/commands/log.js')
 
     const config = loadConfig()
@@ -86,7 +86,7 @@ describe('Log command', () => {
 
   it('logExportCommand writes CSV to file', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { AuditLogger } = await import('@guardian-layer/core')
+    const { AuditLogger } = await import('@clad/core')
     const { logExportCommand } = await import('../src/commands/log.js')
 
     const config = loadConfig()
@@ -119,7 +119,7 @@ describe('Approval commands (HITL)', () => {
 
   it('approveCommand approves a pending approval', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { ApprovalQueue } = await import('@guardian-layer/core')
+    const { ApprovalQueue } = await import('@clad/core')
     const { approveCommand } = await import('../src/commands/approvals.js')
 
     const config = loadConfig()
@@ -141,7 +141,7 @@ describe('Approval commands (HITL)', () => {
 
   it('denyCommand denies a pending approval', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { ApprovalQueue } = await import('@guardian-layer/core')
+    const { ApprovalQueue } = await import('@clad/core')
     const { denyCommand } = await import('../src/commands/approvals.js')
 
     const config = loadConfig()
@@ -156,7 +156,7 @@ describe('Approval commands (HITL)', () => {
 
   it('lockdownCommand denies all pending approvals', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { ApprovalQueue } = await import('@guardian-layer/core')
+    const { ApprovalQueue } = await import('@clad/core')
     const { lockdownCommand } = await import('../src/commands/approvals.js')
 
     const config = loadConfig()
@@ -177,7 +177,7 @@ describe('Approval commands (HITL)', () => {
 
   it('approvals --all shows all statuses', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { ApprovalQueue } = await import('@guardian-layer/core')
+    const { ApprovalQueue } = await import('@clad/core')
     const { approvalsListCommand } = await import('../src/commands/approvals.js')
 
     const config = loadConfig()
@@ -287,7 +287,7 @@ describe('Policy commands', () => {
 
     // Use the fixture policy from core (fileURLToPath handles spaces correctly)
     const { fileURLToPath } = await import('node:url')
-    // test/ -> cli/ -> packages/ -> guardian-layer/fixtures/...
+    // test/ -> cli/ -> packages/ -> clad/fixtures/...
     const fixturePath = fileURLToPath(
       new URL('../../../fixtures/policies/valid-basic.yaml', import.meta.url)
     )
