@@ -197,6 +197,88 @@ describe('Approval commands (HITL)', () => {
   })
 })
 
+// ── Escalation audit logging (CRS-44) ────────────────────────────────────────
+
+describe('Escalation decision audit logging', () => {
+  it('approveCommand writes an escalation_decision record to the audit log', async () => {
+    const { loadConfig } = await import('../src/config.js')
+    const { ApprovalQueue, AuditLogger } = await import('@guardian-layer/core')
+    const { approveCommand } = await import('../src/commands/approvals.js')
+
+    const config = loadConfig()
+    // Seed the audit log so getAuditLogger() finds the DB
+    const logger = new AuditLogger(config.audit_db)
+    const queue = new ApprovalQueue(config.approval_db)
+    const record = queue.createApproval('agent1', 'spend', 'exceeds limit')
+
+    approveCommand(record.id)
+
+    const auditRecords = logger.getRecords({ agent_id: 'agent1' })
+    const decision = auditRecords.find(r => r.event_type === 'escalation_decision')
+    expect(decision).toBeDefined()
+    expect(decision?.decision).toBe('approved')
+    expect(decision?.payload).toContain(record.id)
+  })
+
+  it('denyCommand writes an escalation_decision record to the audit log', async () => {
+    const { loadConfig } = await import('../src/config.js')
+    const { ApprovalQueue, AuditLogger } = await import('@guardian-layer/core')
+    const { denyCommand } = await import('../src/commands/approvals.js')
+
+    const config = loadConfig()
+    const logger = new AuditLogger(config.audit_db)
+    const queue = new ApprovalQueue(config.approval_db)
+    const record = queue.createApproval('agent2', 'transfer', 'new merchant')
+
+    denyCommand(record.id)
+
+    const auditRecords = logger.getRecords({ agent_id: 'agent2' })
+    const decision = auditRecords.find(r => r.event_type === 'escalation_decision')
+    expect(decision).toBeDefined()
+    expect(decision?.decision).toBe('denied')
+    expect(decision?.reason).toContain('CLI')
+  })
+
+  it('lockdownCommand writes one escalation_decision record per denial', async () => {
+    const { loadConfig } = await import('../src/config.js')
+    const { ApprovalQueue, AuditLogger } = await import('@guardian-layer/core')
+    const { lockdownCommand } = await import('../src/commands/approvals.js')
+
+    const config = loadConfig()
+    const logger = new AuditLogger(config.audit_db)
+    const queue = new ApprovalQueue(config.approval_db)
+    queue.createApproval('agentA', 'spend', 'reason 1')
+    queue.createApproval('agentB', 'transfer', 'reason 2')
+    queue.createApproval('agentC', 'spend', 'reason 3')
+
+    lockdownCommand()
+
+    const decisions = logger.getRecords().filter(r => r.event_type === 'escalation_decision')
+    expect(decisions).toHaveLength(3)
+    expect(decisions.every(d => d.decision === 'denied')).toBe(true)
+    expect(decisions.every(d => d.reason?.includes('lockdown'))).toBe(true)
+  })
+
+  it('audit chain remains valid after mixed request + escalation_decision records', async () => {
+    const { loadConfig } = await import('../src/config.js')
+    const { ApprovalQueue, AuditLogger } = await import('@guardian-layer/core')
+    const { approveCommand } = await import('../src/commands/approvals.js')
+
+    const config = loadConfig()
+    const logger = new AuditLogger(config.audit_db)
+    const queue = new ApprovalQueue(config.approval_db)
+
+    // Seed a normal request record
+    logger.logRequest('agent1', 'get_balances', 'allow', 'within policy')
+
+    // Approve an escalation (adds escalation_decision record)
+    const record = queue.createApproval('agent1', 'spend', 'limit exceeded')
+    approveCommand(record.id)
+
+    expect(logger.verifyChain()).toBe(true)
+  })
+})
+
 // ── Policy commands ──────────────────────────────────────────────────────────
 
 describe('Policy commands', () => {
