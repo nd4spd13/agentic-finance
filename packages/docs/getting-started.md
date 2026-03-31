@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide walks you through setting up Guardian Layer and connecting it to an MCP-compatible agent.
+This guide walks you through setting up Clad and connecting it to an MCP-compatible agent.
 
 ## Prerequisites
 
@@ -12,11 +12,11 @@ Before you start, make sure you have:
 
 ## Installation
 
-Clone the Guardian Layer repository and install dependencies:
+Clone the Clad repository and install dependencies:
 
 ```bash
-git clone https://github.com/yourusername/guardian-layer.git
-cd guardian-layer
+git clone https://github.com/yourusername/clad.git
+cd clad
 pnpm install
 ```
 
@@ -26,15 +26,15 @@ Build the project:
 pnpm build
 ```
 
-## Initialize Guardian Layer
+## Initialize Clad
 
-Create a new Guardian Layer instance in your project:
+Create a new Clad instance in your project:
 
 ```bash
 guardian init
 ```
 
-This creates a `guardian.yaml` file with a basic policy template. The file will look like this:
+This creates a `clad.yaml` file with a basic policy template. The file will look like this:
 
 ```yaml
 agents:
@@ -81,7 +81,7 @@ global:
 
 ## Edit Your Policy
 
-Open `guardian.yaml` and customize it for your use case:
+Open `clad.yaml` and customize it for your use case:
 
 **Example: Read-only agent with spending limits**
 
@@ -143,7 +143,7 @@ agents:
 
 ## Start the Server
 
-Start Guardian Layer in the foreground:
+Start Clad in the foreground:
 
 ```bash
 guardian start --foreground
@@ -152,9 +152,9 @@ guardian start --foreground
 You should see output like:
 
 ```
-Guardian Layer MCP Server
+Clad MCP Server
 Listening on stdio
-Loaded policy from ./guardian.yaml
+Loaded policy from ./clad.yaml
 Ready to accept connections
 ```
 
@@ -168,7 +168,7 @@ pm2 startup
 
 ## Connect Your MCP Agent
 
-Guardian Layer works with any MCP-compatible agent. Below is an example using Claude Desktop — the same JSON structure applies to any MCP client.
+Clad works with any MCP-compatible agent. Below is an example using Claude Desktop — the same JSON structure applies to any MCP client.
 
 ### Claude Desktop — macOS/Linux
 
@@ -177,8 +177,8 @@ Edit `~/.config/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "guardian-layer": {
-      "command": "guardian",
+    "clad": {
+      "command": "clad",
       "args": ["serve"]
     }
   }
@@ -192,8 +192,8 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "guardian-layer": {
-      "command": "guardian",
+    "clad": {
+      "command": "clad",
       "args": ["serve"]
     }
   }
@@ -204,7 +204,7 @@ After editing, restart Claude Desktop for the changes to take effect.
 
 ## Verify the Connection
 
-Run the Guardian Layer status command:
+Run the Clad status command:
 
 ```bash
 guardian status
@@ -213,20 +213,20 @@ guardian status
 Expected output:
 
 ```
-Guardian Layer Status
+Clad Status
 ====================
 MCP Server: running
-Policy loaded: guardian.yaml
+Policy loaded: clad.yaml
 Agents configured: 1
 Connected clients: 0
 Audit logs: /path/to/guardian.log
 ```
 
-Your MCP agent can now use Guardian Layer tools. If using Claude Desktop, try:
+Your MCP agent can now use Clad tools. If using Claude Desktop, try:
 
 > "What's my checking account balance?"
 
-The agent will call the `guardian_get_balances` tool, which is checked against your policy before results are returned.
+The agent will call the `clad_get_balances` tool, which is checked against your policy before results are returned.
 
 ## Common Tasks
 
@@ -246,7 +246,7 @@ guardian agents list
 
 ### Reload the Policy
 
-Edit `guardian.yaml` and reload without restarting:
+Edit `clad.yaml` and reload without restarting:
 
 ```bash
 guardian reload
@@ -270,11 +270,11 @@ guardian decisions --limit 20
 
 ### "Command not found: guardian"
 
-Make sure Guardian Layer is installed globally or use the full path to the executable.
+Make sure Clad is installed globally or use the full path to the executable.
 
 ```bash
 # Install globally
-npm install -g @guardian-layer/cli
+npm install -g @clad/cli
 
 # Or use via pnpm
 pnpm exec guardian status
@@ -289,10 +289,10 @@ pnpm exec guardian status
 
 ### "Policy validation failed"
 
-Ensure your `guardian.yaml` is valid YAML and all required fields are present. Use a YAML validator:
+Ensure your `clad.yaml` is valid YAML and all required fields are present. Use a YAML validator:
 
 ```bash
-guardian validate guardian.yaml
+guardian validate clad.yaml
 ```
 
 ### Escalations not triggering
@@ -307,4 +307,4 @@ Check that:
 - **[Policy Reference](/policy-reference)**: Learn about all available policy options
 - **[Starter Policies](/starter-policies)**: Copy ready-to-use policy templates
 - **[MCP Tools Reference](/mcp-tools)**: Understand the available MCP tools
-- **[Architecture](/architecture)**: Deep dive into how Guardian Layer works
+- **[Architecture](/architecture)**: Deep dive into how Clad works

@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'Guardian Layer',
+  title: 'Clad',
   description: 'Financial permissions middleware for AI agents',
   base: '/',
   theme: 'dark',
@@ -66,7 +66,7 @@ export default defineConfig({
 
     footer: {
       message: 'Open source financial permissions middleware',
-      copyright: 'Copyright © 2024 Guardian Layer Contributors'
+      copyright: 'Copyright © 2024 Clad Contributors'
     }
   }
 })

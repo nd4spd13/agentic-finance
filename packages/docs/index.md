@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: "Guardian Layer"
+  name: "Clad"
   text: "Financial permissions middleware for AI agents"
   tagline: "Policy-driven access control. Full audit trail. Human-in-the-loop escalation."
   actions:
@@ -39,13 +39,13 @@ features:
     details: Spending constraints aligned with Google's Agent Payments Protocol (AP2). Time-window controls and escalation routing built on established agentic permission patterns.
 ---
 
-## What is Guardian Layer?
+## What is Clad?
 
-Guardian Layer sits between AI agents and financial accounts, enforcing YAML-based policies that determine what actions agents can take.
+Clad sits between AI agents and financial accounts, enforcing YAML-based policies that determine what actions agents can take.
 
 **The problem:** AI agents can make financial requests, but without proper safeguards, they might spend too much, access sensitive data, or interact with unexpected merchants.
 
-**The solution:** Guardian Layer provides:
+**The solution:** Clad provides:
 
 - **Default-deny security model**: Agents can only do what policies explicitly allow
 - **Multi-level constraints**: Spending limits at transaction, daily, weekly, and monthly levels
@@ -55,10 +55,10 @@ Guardian Layer sits between AI agents and financial accounts, enforcing YAML-bas
 
 ## Quick Start
 
-Install Guardian Layer in your TypeScript project:
+Install Clad in your TypeScript project:
 
 ```bash
-npm install @guardian-layer/core @guardian-layer/mcp-server
+npm install @clad/core @clad/mcp-server
 
 # Initialize with a default policy
 guardian init
@@ -67,7 +67,7 @@ guardian init
 guardian start --foreground
 ```
 
-Define your first policy in `guardian.yaml`:
+Define your first policy in `clad.yaml`:
 
 ```yaml
 agents:
@@ -100,8 +100,8 @@ Connect any MCP-compatible agent (e.g. Claude Desktop):
 ```json
 {
   "mcpServers": {
-    "guardian-layer": {
-      "command": "guardian",
+    "clad": {
+      "command": "clad",
       "args": ["serve"]
     }
   }

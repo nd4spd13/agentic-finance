@@ -1,0 +1,36 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Docs Site (Vitepress)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["exec", "pnpm", "--", "dev"],
+      "cwd": "packages/docs",
+      "port": 5174
+    },
+    {
+      "name": "CLI - Build",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["exec", "pnpm", "--", "build"],
+      "cwd": "packages/cli"
+    },
+    {
+      "name": "Core - Build",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["exec", "pnpm", "--", "build"],
+      "cwd": "packages/core"
+    },
+    {
+      "name": "MCP Server - Build",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["exec", "pnpm", "--", "build"],
+      "cwd": "packages/mcp-server"
+    },
+    {
+      "name": "All - Tests",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["exec", "pnpm", "--", "test"],
+      "cwd": "."
+    }
+  ]
+}

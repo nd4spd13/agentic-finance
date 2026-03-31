@@ -1,5 +1,5 @@
 /**
- * guardian start — launch the Guardian Layer MCP server
+ * clad start — launch the Clad MCP server
  * Spawns the MCP server process with config-derived env vars
  */
 
@@ -16,8 +16,8 @@ function getServerPath(): string {
   const candidate = resolve(__dirname, '../../../mcp-server/dist/server.js')
   if (existsSync(candidate)) return candidate
 
-  // Fallback: look for guardian-layer-server in PATH
-  return 'guardian-layer-server'
+  // Fallback: look for clad-server in PATH
+  return 'clad-server'
 }
 
 function isRunning(pid: number): boolean {
@@ -37,7 +37,7 @@ export function startCommand(opts: { foreground?: boolean } = {}): void {
     const pidStr = readFileSync(config.server_pid_file, 'utf-8').trim()
     const pid = parseInt(pidStr, 10)
     if (!isNaN(pid) && isRunning(pid)) {
-      console.log(`Guardian Layer is already running (PID ${pid})`)
+      console.log(`Clad is already running (PID ${pid})`)
       return
     }
   }
@@ -46,14 +46,14 @@ export function startCommand(opts: { foreground?: boolean } = {}): void {
 
   const env = {
     ...process.env,
-    GUARDIAN_POLICY_PATH: config.policy_path,
-    GUARDIAN_AUDIT_DB: config.audit_db,
-    GUARDIAN_APPROVAL_DB: config.approval_db,
+    CLAD_POLICY_PATH: config.policy_path,
+    CLAD_AUDIT_DB: config.audit_db,
+    CLAD_APPROVAL_DB: config.approval_db,
   }
 
   if (opts.foreground) {
     // Foreground mode (for MCP stdio transport — Claude Desktop uses this)
-    console.log(`Starting Guardian Layer MCP server (foreground)...`)
+    console.log(`Starting Clad MCP server (foreground)...`)
     console.log(`  Policy:  ${config.policy_path}`)
     console.log(`  Audit:   ${config.audit_db}`)
     console.log(`  Approvals: ${config.approval_db}`)
@@ -78,7 +78,7 @@ export function startCommand(opts: { foreground?: boolean } = {}): void {
 
     if (child.pid) {
       writeFileSync(config.server_pid_file, String(child.pid), 'utf-8')
-      console.log(`✓ Guardian Layer started (PID ${child.pid})`)
+      console.log(`✓ Clad started (PID ${child.pid})`)
       console.log(`  Policy:  ${config.policy_path}`)
       console.log(`  Audit:   ${config.audit_db}`)
     } else {
@@ -111,7 +111,7 @@ export function stopCommand(): void {
 
   try {
     process.kill(pid, 'SIGTERM')
-    console.log(`✓ Guardian Layer stopped (PID ${pid})`)
+    console.log(`✓ Clad stopped (PID ${pid})`)
   } catch (err) {
     console.error(`Failed to stop server: ${err}`)
   }

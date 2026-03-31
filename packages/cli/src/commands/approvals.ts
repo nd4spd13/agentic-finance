@@ -6,8 +6,8 @@
 
 import { existsSync } from 'node:fs'
 import { loadConfig } from '../config.js'
-import { ApprovalQueue, AuditLogger } from '@guardian-layer/core'
-import type { ApprovalRecord } from '@guardian-layer/core'
+import { ApprovalQueue, AuditLogger } from '@clad/core'
+import type { ApprovalRecord } from '@clad/core'
 
 function timeAgo(isoString: string): string {
   const diff = Date.now() - new Date(isoString).getTime()

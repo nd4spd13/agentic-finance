@@ -1,10 +1,10 @@
 /**
- * guardian status — show server and policy status
+ * clad status — show server and policy status
  */
 
 import { existsSync, readFileSync } from 'node:fs'
 import { loadConfig } from '../config.js'
-import { AuditLogger, ApprovalQueue, parsePolicy } from '@guardian-layer/core'
+import { AuditLogger, ApprovalQueue, parsePolicy } from '@clad/core'
 
 function isRunning(pid: number): boolean {
   try {
@@ -18,7 +18,7 @@ function isRunning(pid: number): boolean {
 export async function statusCommand(): Promise<void> {
   const config = loadConfig()
 
-  console.log('\n🛡️  Guardian Layer Status\n')
+  console.log('\n🛡️  Clad Status\n')
 
   // Server status
   let serverStatus = 'stopped'
@@ -47,7 +47,7 @@ export async function statusCommand(): Promise<void> {
     }
   } else {
     console.log(`Policy:   ⚠  not found at ${config.policy_path}`)
-    console.log(`          Run: guardian init`)
+    console.log(`          Run: clad init`)
   }
 
   // Pending approvals
@@ -58,7 +58,7 @@ export async function statusCommand(): Promise<void> {
       const pendingCount = pending.length
       if (pendingCount > 0) {
         console.log(`\nApprovals: ⚠  ${pendingCount} pending`)
-        console.log(`           Run: guardian approvals`)
+        console.log(`           Run: clad approvals`)
       } else {
         console.log(`Approvals: ✓ none pending`)
       }

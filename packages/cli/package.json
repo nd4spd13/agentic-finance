@@ -1,16 +1,16 @@
 {
-  "name": "@guardian-layer/cli",
+  "name": "@clad/cli",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "guardian": "./dist/index.js"
+    "clad": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
     "test": "vitest run"
   },
   "dependencies": {
-    "@guardian-layer/core": "workspace:*",
+    "@clad/core": "workspace:*",
     "commander": "^12.1.0"
   },
   "devDependencies": {
