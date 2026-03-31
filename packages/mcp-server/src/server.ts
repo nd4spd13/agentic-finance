@@ -4,26 +4,26 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { parsePolicy, DummyDataProvider, AuditLogger, ApprovalQueue } from '@guardian-layer/core'
+import { parsePolicy, DummyDataProvider, AuditLogger, ApprovalQueue } from '@clad/core'
 
 // Import all tool handlers
-import * as getBalances from './tools/guardian_get_balances.js'
-import * as getTransactions from './tools/guardian_get_transactions.js'
-import * as safeToSpend from './tools/guardian_safe_to_spend.js'
-import * as requestAction from './tools/guardian_request_action.js'
-import * as auditLog from './tools/guardian_audit_log.js'
+import * as getBalances from './tools/clad_get_balances.js'
+import * as getTransactions from './tools/clad_get_transactions.js'
+import * as safeToSpend from './tools/clad_safe_to_spend.js'
+import * as requestAction from './tools/clad_request_action.js'
+import * as auditLog from './tools/clad_audit_log.js'
 
 const tools = [getBalances, getTransactions, safeToSpend, requestAction, auditLog]
 
 async function main() {
   const server = new Server(
-    { name: 'guardian-layer', version: '0.1.0' },
+    { name: 'clad', version: '0.1.0' },
     { capabilities: { tools: {} } }
   )
 
-  const policyPath = process.env.GUARDIAN_POLICY_PATH ?? './policy.yaml'
-  const auditDbPath = process.env.GUARDIAN_AUDIT_DB ?? './audit.sqlite'
-  const approvalDbPath = process.env.GUARDIAN_APPROVAL_DB ?? './approvals.sqlite'
+  const policyPath = process.env.CLAD_POLICY_PATH ?? './policy.yaml'
+  const auditDbPath = process.env.CLAD_AUDIT_DB ?? './audit.sqlite'
+  const approvalDbPath = process.env.CLAD_APPROVAL_DB ?? './approvals.sqlite'
 
   const policy = await parsePolicy(policyPath)
   const provider = new DummyDataProvider()

@@ -2,16 +2,16 @@
 
 ## Claude Desktop Integration
 
-Guardian Layer integrates with Claude Desktop through the Model Context Protocol (MCP). This guide walks you through setting up the integration.
+Clad integrates with Claude Desktop through the Model Context Protocol (MCP). This guide walks you through setting up the integration.
 
 ### What is MCP?
 
-The Model Context Protocol (MCP) allows Claude to use external tools and services. With Guardian Layer's MCP server, Claude gains access to all Guardian Layer tools while respecting your financial policies.
+The Model Context Protocol (MCP) allows Claude to use external tools and services. With Clad's MCP server, Claude gains access to all Clad tools while respecting your financial policies.
 
 ### Prerequisites
 
 - Claude Desktop installed
-- Guardian Layer installed and configured with a `guardian.yaml` policy
+- Clad installed and configured with a `clad.yaml` policy
 - The `guardian` CLI command available in your PATH (or you know its full path)
 
 ### Step 1: Find Your Configuration File
@@ -62,13 +62,13 @@ Open the configuration file in your text editor. It should look like this initia
 }
 ```
 
-Add the Guardian Layer server configuration:
+Add the Clad server configuration:
 
 ```json
 {
   "mcpServers": {
-    "guardian-layer": {
-      "command": "guardian",
+    "clad": {
+      "command": "clad",
       "args": ["serve"]
     }
   }
@@ -80,7 +80,7 @@ If `guardian` is not in your PATH, provide the full path:
 ```json
 {
   "mcpServers": {
-    "guardian-layer": {
+    "clad": {
       "command": "/usr/local/bin/guardian",
       "args": ["serve"]
     }
@@ -92,7 +92,7 @@ On Windows:
 ```json
 {
   "mcpServers": {
-    "guardian-layer": {
+    "clad": {
       "command": "C:\\Users\\YourUsername\\AppData\\Local\\guardian\\bin\\guardian.exe",
       "args": ["serve"]
     }
@@ -100,21 +100,21 @@ On Windows:
 }
 ```
 
-### Step 3: Verify the Guardian Server is Running
+### Step 3: Verify the Clad Server is Running
 
-Before starting Claude, make sure Guardian Layer is running:
+Before starting Claude, make sure Clad is running:
 
 ```bash
-guardian status
+clad status
 ```
 
 Expected output:
 
 ```
-Guardian Layer Status
+Clad Status
 ====================
 MCP Server: running
-Policy loaded: guardian.yaml
+Policy loaded: clad.yaml
 Agents configured: 3
 Connected clients: 0
 Audit logs: /path/to/audit.log
@@ -123,8 +123,8 @@ Audit logs: /path/to/audit.log
 If the server is not running, start it:
 
 ```bash
-# In one terminal, start Guardian Layer
-guardian start --foreground
+# In one terminal, start Clad
+clad start --foreground
 ```
 
 Keep this terminal open while using Claude.
@@ -132,7 +132,7 @@ Keep this terminal open while using Claude.
 Alternatively, run it as a background service:
 
 ```bash
-guardian start
+clad start
 ```
 
 ### Step 4: Restart Claude Desktop
@@ -147,7 +147,7 @@ In Claude, try asking a financial question:
 
 > "What accounts do I have access to?"
 
-Claude will use the `guardian_get_balances` tool to fetch your accounts, filtered by your policy.
+Claude will use the `clad_get_balances` tool to fetch your accounts, filtered by your policy.
 
 If it works, you'll see:
 
@@ -157,25 +157,25 @@ Based on your financial accounts:
 - Emergency Fund: $150,000.00
 ```
 
-If you see an error like "Guardian Layer is not available," check:
+If you see an error like "Clad is not available," check:
 
-1. Guardian Layer is running: `guardian status`
+1. Clad is running: `clad status`
 2. The config file syntax is correct (use a JSON validator)
 3. The guardian command path is correct
 4. Claude Desktop was restarted after editing the config
 
 ### Troubleshooting
 
-#### "Guardian Layer is not available"
+#### "Clad is not available"
 
-**Check 1: Is Guardian running?**
+**Check 1: Is Clad running?**
 ```bash
-guardian status
+clad status
 ```
 
 If not running, start it:
 ```bash
-guardian start
+clad start
 ```
 
 **Check 2: Is the config file correct?**
@@ -199,20 +199,20 @@ Close Claude completely and reopen it.
 
 #### "Policy validation failed"
 
-Your `guardian.yaml` has errors. Validate it:
+Your `clad.yaml` has errors. Validate it:
 
 ```bash
-guardian validate guardian.yaml
+clad validate clad.yaml
 ```
 
-Fix any errors reported and restart Guardian.
+Fix any errors reported and restart Clad.
 
 #### "Agent not found in policy"
 
-The agent ID that Claude is using doesn't match your policy. Claude uses the default agent name from your policy. Check your `guardian.yaml`:
+The agent ID that Claude is using doesn't match your policy. Claude uses the default agent name from your policy. Check your `clad.yaml`:
 
 ```bash
-guardian agents list
+clad agents list
 ```
 
 If you have multiple agents, specify which one Claude should use in the MCP config:
@@ -220,8 +220,8 @@ If you have multiple agents, specify which one Claude should use in the MCP conf
 ```json
 {
   "mcpServers": {
-    "guardian-layer": {
-      "command": "guardian",
+    "clad": {
+      "command": "clad",
       "args": ["serve", "--agent", "my-agent-name"]
     }
   }
@@ -230,29 +230,29 @@ If you have multiple agents, specify which one Claude should use in the MCP conf
 
 #### "Connection refused on port 3000"
 
-Guardian is running but not accessible. Make sure it's running on stdio (not HTTP):
+Clad is running but not accessible. Make sure it's running on stdio (not HTTP):
 
 ```bash
-guardian start --foreground
+clad start --foreground
 ```
 
-The `--foreground` flag starts Guardian on stdio, which MCP uses.
+The `--foreground` flag starts Clad on stdio, which MCP uses.
 
 #### Logs are empty or missing
 
-Check Guardian's log output:
+Check Clad's log output:
 
 ```bash
-guardian logs
+clad logs
 ```
 
-For live logs while Guardian is running:
+For live logs while Clad is running:
 
 ```bash
-guardian logs --follow
+clad logs --follow
 ```
 
-### Using Guardian Layer in Claude
+### Using Clad in Claude
 
 Once integrated, you can ask Claude natural language questions about your finances:
 
@@ -270,20 +270,20 @@ Once integrated, you can ask Claude natural language questions about your financ
 
 If the transaction requires approval (escalation), Claude will tell you:
 
-> "This transaction requires human approval. Escalation ID: esc-00042. You can approve it with: `guardian escalate esc-00042 --approve`"
+> "This transaction requires human approval. Escalation ID: esc-00042. You can approve it with: `clad escalate esc-00042 --approve`"
 
 ### Advanced: Multiple Agents
 
-If you have multiple agents in your policy, you can run separate Guardian Layer instances for each:
+If you have multiple agents in your policy, you can run separate Clad instances for each:
 
 **Terminal 1 (Analyst agent):**
 ```bash
-guardian start --agent analyst-agent --port 3001
+clad start --agent analyst-agent --port 3001
 ```
 
 **Terminal 2 (Spender agent):**
 ```bash
-guardian start --agent spender-agent --port 3002
+clad start --agent spender-agent --port 3002
 ```
 
 **Claude config:**
@@ -291,11 +291,11 @@ guardian start --agent spender-agent --port 3002
 {
   "mcpServers": {
     "guardian-analyst": {
-      "command": "guardian",
+      "command": "clad",
       "args": ["serve", "--agent", "analyst-agent"]
     },
     "guardian-spender": {
-      "command": "guardian",
+      "command": "clad",
       "args": ["serve", "--agent", "spender-agent"]
     }
   }
@@ -317,7 +317,7 @@ agents:
         timeout: 600
 ```
 
-When an escalation occurs, Guardian sends a POST request:
+When an escalation occurs, Clad sends a POST request:
 
 ```json
 {
@@ -345,18 +345,18 @@ Your webhook endpoint should respond with:
 
 ## Programmatic Integration
 
-If you're building a custom application (not Claude Desktop), you can integrate Guardian Layer directly:
+If you're building a custom application (not Claude Desktop), you can integrate Clad directly:
 
 ### Node.js Integration
 
 ```bash
-npm install @guardian-layer/core @guardian-layer/mcp-server
+npm install @clad/core @clad/mcp-server
 ```
 
 ```typescript
-import { GuardianLayer } from '@guardian-layer/core';
+import { CladLayer } from '@clad/core';
 
-const guardian = new GuardianLayer('./guardian.yaml');
+const guardian = new CladLayer('./clad.yaml');
 
 // Check if an agent can perform an action
 const decision = await guardian.requestAction({
@@ -379,9 +379,9 @@ if (decision.decision === 'allow') {
 ### Running the MCP Server
 
 ```typescript
-import { startMcpServer } from '@guardian-layer/mcp-server';
+import { startMcpServer } from '@clad/mcp-server';
 
-startMcpServer('./guardian.yaml', {
+startMcpServer('./clad.yaml', {
   agent_id: 'my-agent',
   port: 3000
 });

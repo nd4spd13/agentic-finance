@@ -1,13 +1,13 @@
 /**
- * Guardian Layer CLI — Config manager
- * Reads/writes ~/.guardian-layer/config.json
+ * Clad CLI — Config manager
+ * Reads/writes ~/.clad/config.json
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-export interface GuardianConfig {
+export interface CladConfig {
   policy_path: string
   audit_db: string
   approval_db: string
@@ -15,14 +15,14 @@ export interface GuardianConfig {
 }
 
 export function getConfigDir(): string {
-  return process.env.GUARDIAN_CONFIG_DIR ?? join(homedir(), '.guardian-layer')
+  return process.env.CLAD_CONFIG_DIR ?? join(homedir(), '.clad')
 }
 
 export function getConfigPath(): string {
   return join(getConfigDir(), 'config.json')
 }
 
-export function defaultConfig(): GuardianConfig {
+export function defaultConfig(): CladConfig {
   const dir = getConfigDir()
   return {
     policy_path: join(dir, 'policy.yaml'),
@@ -32,13 +32,13 @@ export function defaultConfig(): GuardianConfig {
   }
 }
 
-export function loadConfig(): GuardianConfig {
+export function loadConfig(): CladConfig {
   const configPath = getConfigPath()
   if (!existsSync(configPath)) {
     return defaultConfig()
   }
   const raw = readFileSync(configPath, 'utf-8')
-  const parsed = JSON.parse(raw) as Partial<GuardianConfig>
+  const parsed = JSON.parse(raw) as Partial<CladConfig>
   const defaults = defaultConfig()
   return {
     policy_path: parsed.policy_path
@@ -56,7 +56,7 @@ export function loadConfig(): GuardianConfig {
   }
 }
 
-export function saveConfig(config: GuardianConfig): void {
+export function saveConfig(config: CladConfig): void {
   const dir = getConfigDir()
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })

@@ -1,18 +1,18 @@
 # MCP Tools Reference
 
-Guardian Layer exposes 5 MCP tools that Claude can use to interact with financial data. All tools are subject to the policies defined in your `guardian.yaml`.
+Clad exposes 5 MCP tools that Claude can use to interact with financial data. All tools are subject to the policies defined in your `clad.yaml`.
 
 ## Tool Overview
 
 | Tool | Purpose | Returns |
 |------|---------|---------|
-| `guardian_get_balances` | Fetch account balances | Filtered list of account balances |
-| `guardian_get_transactions` | Fetch transaction history | Filtered list of transactions |
-| `guardian_safe_to_spend` | Check available spending | Available balance minus recurring obligations |
-| `guardian_request_action` | Request a transaction | Allow/Deny/Escalate decision |
-| `guardian_audit_log` | Fetch decision audit log | List of recent decisions |
+| `clad_get_balances` | Fetch account balances | Filtered list of account balances |
+| `clad_get_transactions` | Fetch transaction history | Filtered list of transactions |
+| `clad_safe_to_spend` | Check available spending | Available balance minus recurring obligations |
+| `clad_request_action` | Request a transaction | Allow/Deny/Escalate decision |
+| `clad_audit_log` | Fetch decision audit log | List of recent decisions |
 
-## guardian_get_balances
+## clad_get_balances
 
 Fetch account balances for an agent.
 
@@ -74,7 +74,7 @@ Controlled by:
 
 ---
 
-## guardian_get_transactions
+## clad_get_transactions
 
 Fetch transaction history for an account.
 
@@ -153,7 +153,7 @@ Controlled by:
 
 ---
 
-## guardian_safe_to_spend
+## clad_safe_to_spend
 
 Check how much an agent can safely spend given their policy limits and existing commitments.
 
@@ -221,7 +221,7 @@ Controlled by:
 
 ---
 
-## guardian_request_action
+## clad_request_action
 
 Request permission to perform an action (usually a transaction). This is the primary tool for enforcing policies.
 
@@ -334,7 +334,7 @@ Controlled by:
 
 ---
 
-## guardian_audit_log
+## clad_audit_log
 
 Fetch the audit log of decisions made by or for agents.
 
@@ -456,8 +456,8 @@ Example Claude prompt:
 > "What's my available spending budget for today?"
 
 Claude internally uses:
-1. `guardian_safe_to_spend` to check limits
-2. `guardian_get_balances` to show account balance
+1. `clad_safe_to_spend` to check limits
+2. `clad_get_balances` to show account balance
 3. Returns the result to the user
 
 Example Claude prompt with escalation:
@@ -465,7 +465,7 @@ Example Claude prompt with escalation:
 > "Send $3,000 to my new vendor, TechCorp Solutions"
 
 Claude uses:
-1. `guardian_request_action` with the amount and merchant
+1. `clad_request_action` with the amount and merchant
 2. Policy returns `escalate` (new merchant trigger)
 3. Claude informs the user: "This requires human approval. Escalation ID: esc-00042"
 

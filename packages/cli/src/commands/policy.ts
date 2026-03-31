@@ -1,10 +1,10 @@
 /**
- * guardian policy validate / show
+ * clad policy validate / show
  */
 
 import { existsSync } from 'node:fs'
 import { loadConfig } from '../config.js'
-import { parsePolicy } from '@guardian-layer/core'
+import { parsePolicy } from '@clad/core'
 
 export async function policyValidateCommand(policyPath?: string): Promise<void> {
   const config = loadConfig()

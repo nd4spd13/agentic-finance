@@ -1,12 +1,12 @@
 /**
- * guardian approvals / approve / deny / lockdown
+ * clad approvals / approve / deny / lockdown
  * CRS-29: Human-in-the-Loop approval commands
  */
 
 import { existsSync, writeFileSync } from 'node:fs'
 import { loadConfig } from '../config.js'
-import { ApprovalQueue } from '@guardian-layer/core'
-import type { ApprovalRecord } from '@guardian-layer/core'
+import { ApprovalQueue } from '@clad/core'
+import type { ApprovalRecord } from '@clad/core'
 
 function timeAgo(isoString: string): string {
   const diff = Date.now() - new Date(isoString).getTime()
@@ -91,7 +91,7 @@ export function approvalsListCommand(opts: { all?: boolean; agent?: string } = {
   }
 
   if (!opts.all) {
-    console.log(`Run: guardian approve <id>  or  guardian deny <id>`)
+    console.log(`Run: clad approve <id>  or  clad deny <id>`)
     console.log('')
   }
 }

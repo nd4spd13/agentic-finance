@@ -1,10 +1,10 @@
 # Architecture
 
-This document describes the design, components, and security model of Guardian Layer.
+This document describes the design, components, and security model of Clad.
 
 ## System Overview
 
-Guardian Layer sits between AI agents and financial data providers, enforcing policies at the MCP layer.
+Clad sits between AI agents and financial data providers, enforcing policies at the MCP layer.
 
 ```
 ┌─────────────────┐
@@ -15,7 +15,7 @@ Guardian Layer sits between AI agents and financial data providers, enforcing po
          │ MCP Protocol
          │
 ┌────────▼──────────────────────────────────────┐
-│         Guardian Layer MCP Server             │
+│         Clad MCP Server             │
 │                                              │
 │ ┌──────────────────────────────────────────┐ │
 │ │   Policy Evaluator                       │ │
@@ -53,11 +53,11 @@ Guardian Layer sits between AI agents and financial data providers, enforcing po
 Here's what happens when Claude makes a financial request:
 
 1. **Agent Request**
-   - Claude (via MCP) calls `guardian_request_action` with amount, merchant, category
+   - Claude (via MCP) calls `clad_request_action` with amount, merchant, category
    - Includes agent ID and account ID
 
 2. **Policy Lookup**
-   - Policy Evaluator loads `guardian.yaml`
+   - Policy Evaluator loads `clad.yaml`
    - Finds the agent's policy definition
    - Verifies agent exists (deny if not found)
 
@@ -93,46 +93,46 @@ Here's what happens when Claude makes a financial request:
 
 ### Core Components
 
-**Policy Engine** (`@guardian-layer/core`)
+**Policy Engine** (`@clad/core`)
 - YAML parser and validator
 - Policy structure definition (TypeScript interfaces)
 - Decision evaluation logic
 - Spending constraint calculation
 
-**MCP Server** (`@guardian-layer/mcp-server`)
+**MCP Server** (`@clad/mcp-server`)
 - Implements the 5 MCP tools
 - Routes requests to policy engine
 - Handles authentication (agent ID verification)
 - Formats responses for MCP clients
 
-**Audit Logger** (`@guardian-layer/core`)
+**Audit Logger** (`@clad/core`)
 - Append-only audit log
 - Chain hashing for tamper-evidence
 - Filtering by agent and permission level
 - Serialization to file or database
 
-**Approval Queue** (`@guardian-layer/core`)
+**Approval Queue** (`@clad/core`)
 - In-memory or persistent storage of escalations
 - Webhook dispatch to external systems
 - CLI integration for manual approvals
 - Timeout handling and default decision logic
 
-### CLI (`@guardian-layer/cli`)
+### CLI (`@clad/cli`)
 
 Command-line interface for:
-- `guardian init` - Create default policy
-- `guardian serve` - Start MCP server
-- `guardian status` - Check server status
-- `guardian reload` - Reload policy from disk
-- `guardian escalate` - Approve/deny escalations
-- `guardian audit-log` - View decision history
-- `guardian validate` - Validate policy syntax
+- `clad init` - Create default policy
+- `clad serve` - Start MCP server
+- `clad status` - Check server status
+- `clad reload` - Reload policy from disk
+- `clad escalate` - Approve/deny escalations
+- `clad audit-log` - View decision history
+- `clad validate` - Validate policy syntax
 
 ## Security Model
 
 ### Default-Deny Principle
 
-Guardian Layer uses a default-deny security model:
+Clad uses a default-deny security model:
 
 1. **Agents are not mentioned in policy** → Denied
 2. **Accounts not in agent's list** → Denied
@@ -143,7 +143,7 @@ This means policies must explicitly whitelist what agents can do, rather than bl
 
 ### Constraint Sources
 
-Guardian Layer aligns with established financial permission frameworks:
+Clad aligns with established financial permission frameworks:
 
 **AP2 (Agentic Permissions Protocol v2)**
 - Spending limit hierarchy: per-transaction, daily, weekly, monthly
@@ -199,7 +199,7 @@ Agents are identified by:
 
 ## Spending Constraint Evaluation
 
-When evaluating spending, Guardian Layer checks constraints in this order:
+When evaluating spending, Clad checks constraints in this order:
 
 ```
 1. Agent exists in policy?
@@ -261,23 +261,23 @@ When evaluating spending, Guardian Layer checks constraints in this order:
 
 ```
 1. Agent makes request
-2. Guardian evaluates, triggers escalation
+2. Clad evaluates, triggers escalation
 3. Escalation stored in approval queue
-4. User sees in CLI: guardian escalate --list
-5. User reviews: guardian escalate <id> --show
-6. User decides: guardian escalate <id> --approve
-7. Guardian records decision in audit log
+4. User sees in CLI: clad escalate --list
+5. User reviews: clad escalate <id> --show
+6. User decides: clad escalate <id> --approve
+7. Clad records decision in audit log
 ```
 
 ### Webhook-Based Escalation
 
 ```
 1. Agent makes request
-2. Guardian evaluates, triggers escalation
-3. Guardian POSTs to webhook URL with escalation details
+2. Clad evaluates, triggers escalation
+3. Clad POSTs to webhook URL with escalation details
 4. Webhook integration (e.g., email approval) handles it
-5. External system POSTs back to Guardian with decision
-6. Guardian records decision in audit log
+5. External system POSTs back to Clad with decision
+6. Clad records decision in audit log
 7. Future requests are resolved (allowed or denied)
 ```
 
@@ -286,7 +286,7 @@ When evaluating spending, Guardian Layer checks constraints in this order:
 **Policy Loading**
 - Policy file loaded and parsed at startup
 - Cached in memory
-- `guardian reload` re-parses and updates
+- `clad reload` re-parses and updates
 - No persistent database required (audit logs stored separately)
 
 **Decision Latency**
@@ -295,7 +295,7 @@ When evaluating spending, Guardian Layer checks constraints in this order:
 - Total per request: ~10-20ms typical
 
 **Audit Log Storage**
-- Default: append-only file (guardian.log)
+- Default: append-only file (clad.log)
 - Optional: database backend (PostgreSQL, etc.)
 - Chain hashing adds negligible overhead (~0.1ms per entry)
 
@@ -308,7 +308,7 @@ When evaluating spending, Guardian Layer checks constraints in this order:
 
 ### Custom Data Providers
 
-Guardian Layer provides a data provider interface:
+Clad provides a data provider interface:
 
 ```typescript
 interface DataProvider {
@@ -346,7 +346,7 @@ Optional hooks for custom logic:
 
 ```typescript
 interface PolicyHook {
-  onPolicyLoad(policy: GuardianPolicy): void;
+  onPolicyLoad(policy: CladPolicy): void;
   beforeEvaluate(request: Request): void;
   afterEvaluate(request: Request, decision: Decision): void;
   onAuditLog(entry: AuditEntry): void;
@@ -360,7 +360,7 @@ interface PolicyHook {
 For a single agent (most common):
 
 ```bash
-guardian start --foreground
+clad start --foreground
 # Claude Desktop connects via MCP
 ```
 
@@ -370,16 +370,16 @@ For multiple agents with separate policies:
 
 ```bash
 # Terminal 1
-guardian start --agent analyst --port 3001 --foreground
+clad start --agent analyst --port 3001 --foreground
 
 # Terminal 2
-guardian start --agent spender --port 3002 --foreground
+clad start --agent spender --port 3002 --foreground
 
 # Claude config
 {
   "mcpServers": {
-    "guardian-analyst": { "command": "guardian", "args": ["serve", "--agent", "analyst"] },
-    "guardian-spender": { "command": "guardian", "args": ["serve", "--agent", "spender"] }
+    "guardian-analyst": { "command": "clad", "args": ["serve", "--agent", "analyst"] },
+    "guardian-spender": { "command": "clad", "args": ["serve", "--agent", "spender"] }
   }
 }
 ```
@@ -387,7 +387,7 @@ guardian start --agent spender --port 3002 --foreground
 ### Production Deployment
 
 For production:
-- Run Guardian as systemd service or with process manager (pm2, supervisor)
+- Run Clad as systemd service or with process manager (pm2, supervisor)
 - Store audit logs in persistent database (PostgreSQL)
 - Use webhook escalations for approval routing
 - Monitor logs and audit trail
@@ -419,7 +419,7 @@ For production:
 
 ## Next Steps
 
-- **[Getting Started](/getting-started)**: Set up Guardian Layer
+- **[Getting Started](/getting-started)**: Set up Clad
 - **[Policy Reference](/policy-reference)**: Learn all policy options
 - **[MCP Tools](/mcp-tools)**: See available tools
 - **[Integration Guide](/integration-guides)**: Connect to Claude

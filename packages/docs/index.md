@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: "Guardian Layer"
+  name: "Clad"
   text: "Financial permissions middleware for AI agents"
   tagline: "Policy-driven access control. Full audit trail. Human-in-the-loop escalation."
   actions:
@@ -39,13 +39,13 @@ features:
     details: Built on AP2 spending constraints, Nekuda temporal rules, and Novel escalation frameworks. Industry-standard security.
 ---
 
-## What is Guardian Layer?
+## What is Clad?
 
-Guardian Layer sits between AI agents and financial accounts, enforcing YAML-based policies that determine what actions agents can take.
+Clad sits between AI agents and financial accounts, enforcing YAML-based policies that determine what actions agents can take.
 
 **The problem:** AI agents can make financial requests, but without proper safeguards, they might spend too much, access sensitive data, or interact with unexpected merchants.
 
-**The solution:** Guardian Layer provides:
+**The solution:** Clad provides:
 
 - **Default-deny security model**: Agents can only do what policies explicitly allow
 - **Multi-level constraints**: Spending limits at transaction, daily, weekly, and monthly levels
@@ -55,19 +55,19 @@ Guardian Layer sits between AI agents and financial accounts, enforcing YAML-bas
 
 ## Quick Start
 
-Install Guardian Layer in your TypeScript project:
+Install Clad in your TypeScript project:
 
 ```bash
-npm install @guardian-layer/core @guardian-layer/mcp-server
+npm install @clad/core @clad/mcp-server
 
 # Initialize with a default policy
-guardian init
+clad init
 
 # Start the MCP server
-guardian start --foreground
+clad start --foreground
 ```
 
-Define your first policy in `guardian.yaml`:
+Define your first policy in `clad.yaml`:
 
 ```yaml
 agents:
@@ -95,13 +95,13 @@ agents:
         timeout: 300
 ```
 
-Connect Claude Desktop to Guardian Layer:
+Connect Claude Desktop to Clad:
 
 ```json
 {
   "mcpServers": {
-    "guardian-layer": {
-      "command": "guardian",
+    "clad": {
+      "command": "clad",
       "args": ["serve"]
     }
   }
@@ -111,7 +111,7 @@ Connect Claude Desktop to Guardian Layer:
 Verify the connection:
 
 ```bash
-guardian status
+clad status
 ```
 
 ## Key Features
