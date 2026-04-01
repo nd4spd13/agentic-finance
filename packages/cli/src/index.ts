@@ -7,6 +7,7 @@
 import { Command } from 'commander'
 import { initCommand } from './commands/init.js'
 import { startCommand, stopCommand } from './commands/start.js'
+import { serveCommand } from './commands/serve.js'
 import { statusCommand } from './commands/status.js'
 import { policyValidateCommand, policyShowCommand } from './commands/policy.js'
 import { logCommand, logExportCommand } from './commands/log.js'
@@ -30,6 +31,14 @@ program
   .description('First-time setup: create config and starter policy')
   .action(async () => {
     await initCommand()
+  })
+
+// ── clad serve ───────────────────────────────────────────────────────────
+program
+  .command('serve')
+  .description('Start the MCP server on stdio (for Claude Desktop, OpenAI, etc.)')
+  .action(() => {
+    serveCommand()
   })
 
 // ── clad start ───────────────────────────────────────────────────────────
