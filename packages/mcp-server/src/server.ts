@@ -24,11 +24,21 @@ async function main() {
   const policyPath = process.env.CLAD_POLICY_PATH ?? './policy.yaml'
   const auditDbPath = process.env.CLAD_AUDIT_DB ?? './audit.sqlite'
   const approvalDbPath = process.env.CLAD_APPROVAL_DB ?? './approvals.sqlite'
+  // Agent ID resolution: CLI arg (CLAD_AGENT_ID_ARG) > env var > default
+  // CLAD_AGENT_ID_ARG is set by `clad serve --agent-id` before spawning this process
+  const agentId = process.env.CLAD_AGENT_ID_ARG ?? process.env.CLAD_AGENT_ID ?? 'default-agent'
 
   const policy = await parsePolicy(policyPath)
   const provider = new DummyDataProvider()
   const auditLogger = new AuditLogger(auditDbPath)
   const approvalQueue = new ApprovalQueue(approvalDbPath)
+
+  // Validate agent ID exists in policy; warn to stderr (not stdout — MCP protocol)
+  if (!(agentId in policy.agents)) {
+    process.stderr.write(
+      `[clad] Warning: agent "${agentId}" not found in policy. All requests will be denied.\n`
+    )
+  }
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: tools.map(t => ({
@@ -45,7 +55,6 @@ async function main() {
       return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] }
     }
 
-    const agentId = 'default-agent' // In production, extract from auth context
     const context = { agentId, policy, provider, auditLogger, approvalQueue }
 
     try {

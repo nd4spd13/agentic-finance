@@ -23,15 +23,20 @@ function getServerPath(): string {
   return 'clad-server'
 }
 
-export function serveCommand(): void {
+export function serveCommand(opts: { agentId?: string } = {}): void {
   const config = loadConfig()
   const serverPath = getServerPath()
 
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     CLAD_POLICY_PATH: config.policy_path,
     CLAD_AUDIT_DB: config.audit_db,
     CLAD_APPROVAL_DB: config.approval_db,
+  }
+
+  // CLI flag takes precedence over CLAD_AGENT_ID env var
+  if (opts.agentId) {
+    env.CLAD_AGENT_ID_ARG = opts.agentId
   }
 
   const child = spawn(process.execPath, [serverPath], {

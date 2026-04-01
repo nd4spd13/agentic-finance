@@ -37,8 +37,9 @@ program
 program
   .command('serve')
   .description('Start the MCP server on stdio (for Claude Desktop, OpenAI, etc.)')
-  .action(() => {
-    serveCommand()
+  .option('--agent-id <name>', 'Agent identity to use for policy evaluation (overrides CLAD_AGENT_ID env var)')
+  .action((opts: { agentId?: string }) => {
+    serveCommand({ agentId: opts.agentId })
   })
 
 // ── clad start ───────────────────────────────────────────────────────────
