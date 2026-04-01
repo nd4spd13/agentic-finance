@@ -208,6 +208,43 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
 }
 ```
 
+### Multi-agent setup
+
+If your policy defines multiple agents with different permission profiles, pin each MCP server entry to a specific agent using `--agent-id`:
+
+```json
+{
+  "mcpServers": {
+    "clad-financial-advisor": {
+      "command": "clad",
+      "args": ["serve", "--agent-id", "financial-advisor"]
+    },
+    "clad-receipt-scanner": {
+      "command": "clad",
+      "args": ["serve", "--agent-id", "receipt-scanner"]
+    }
+  }
+}
+```
+
+You can also set the agent via environment variable if you prefer:
+
+```json
+{
+  "mcpServers": {
+    "clad-financial-advisor": {
+      "command": "clad",
+      "args": ["serve"],
+      "env": {
+        "CLAD_AGENT_ID": "financial-advisor"
+      }
+    }
+  }
+}
+```
+
+The `--agent-id` flag takes precedence over the `CLAD_AGENT_ID` environment variable. If the agent ID isn't found in your policy, Clad will log a warning and deny all requests from that instance.
+
 After editing, restart Claude Desktop for the changes to take effect.
 
 ## Verify the Connection
