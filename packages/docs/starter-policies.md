@@ -21,20 +21,13 @@ agents:
     description: "Financial analyst with read-only access"
     permissions:
       accounts:
-        - id: checking-001
-          visible: true
-          balance: true
-          account_number: false
-          routing_number: false
-        - id: savings-001
-          visible: true
-          balance: true
-          account_number: false
-          routing_number: false
+        visible: [checking-001, savings-001]
+        balance: true
+        account_number: false
+        routing_number: false
 
       transactions:
         read: true
-        amount_visibility_cap: null    # See all amounts
         description_visibility: true
         lookback_days: 365             # Full year of history
 
@@ -44,8 +37,9 @@ agents:
         require_itemization: false
 
       audit:
-        can_view_audit_log: true
-        can_view_other_agents: false
+        log_all_queries: true
+        log_policy_evaluations: false
+        retention: "1y"
 
 global:
   max_concurrent_agents: 5
@@ -83,15 +77,13 @@ agents:
     description: "Team member with procurement authority"
     permissions:
       accounts:
-        - id: corporate-card-001
-          visible: true
-          balance: true
-          account_number: false
-          routing_number: false
+        visible: [corporate-card-001]
+        balance: true
+        account_number: false
+        routing_number: false
 
       transactions:
         read: true
-        amount_visibility_cap: null
         description_visibility: true
         lookback_days: 90
 
@@ -121,25 +113,19 @@ agents:
           - new_merchant: true
           - daily_spend_exceeds_pct: 75
         channel: cli
-        timeout: 300
+        timeout: "5m"
         default_on_timeout: deny
 
       schedule:
-        active_hours:
-          start: "08:00"
-          end: "18:00"
-        active_days:
-          - "Monday"
-          - "Tuesday"
-          - "Wednesday"
-          - "Thursday"
-          - "Friday"
+        active_hours: "08:00-18:00"
+        active_days: [monday, tuesday, wednesday, thursday, friday]
         timezone: "America/New_York"
         behavior_outside_schedule: deny
 
       audit:
-        can_view_audit_log: true
-        can_view_other_agents: false
+        log_all_queries: true
+        log_policy_evaluations: false
+        retention: "90d"
 
 global:
   max_total_daily_spend: 50000
@@ -182,16 +168,10 @@ agents:
     description: "Autonomous agent with broad authority and approval workflow"
     permissions:
       accounts:
-        - id: corporate-account-001
-          visible: true
-          balance: true
-          account_number: true
-          routing_number: false
-        - id: corporate-account-002
-          visible: true
-          balance: true
-          account_number: true
-          routing_number: false
+        visible: [corporate-account-001, corporate-account-002]
+        balance: true
+        account_number: true
+        routing_number: false
 
       transactions:
         read: true
@@ -221,24 +201,15 @@ agents:
           - amount_exceeds: 25000
           - new_merchant: true
           - new_category: false
-          - category: "sensitive-vendor"
+          - category: ["sensitive-vendor"]
           - daily_spend_exceeds_pct: 80
         channel: webhook
-        webhook_url: "https://internal.example.com/clad/escalate"
-        timeout: 600
+        timeout: "10m"
         default_on_timeout: deny
 
       schedule:
-        active_hours:
-          start: "06:00"
-          end: "22:00"
-        active_days:
-          - "Monday"
-          - "Tuesday"
-          - "Wednesday"
-          - "Thursday"
-          - "Friday"
-          - "Saturday"
+        active_hours: "06:00-22:00"
+        active_days: [monday, tuesday, wednesday, thursday, friday, saturday]
         timezone: "America/New_York"
         blackout_dates:
           - "2024-12-25"  # Christmas
@@ -248,14 +219,16 @@ agents:
         behavior_outside_schedule: escalate
 
       audit:
-        can_view_audit_log: true
-        can_view_other_agents: true
+        log_all_queries: true
+        log_policy_evaluations: true
+        retention: "1y"
 
 global:
   max_total_daily_spend: 1000000
+  max_total_weekly_spend: 4000000
+  max_total_monthly_spend: 15000000
   max_concurrent_agents: 20
-  require_human_approval_above: 50000
-  default_escalation_timeout: 600
+  max_pending_escalations: 50
 ```
 
 **Webhook Endpoint Example**
@@ -396,15 +369,13 @@ Then configure Claude for each:
 
 ### Controlling Access to Specific Accounts
 
-Hide accounts the agent doesn't need:
+Only list accounts the agent should see in the `visible` array:
 
 ```yaml
 accounts:
-  - id: public-account
-    visible: true    # This agent sees this account
-    balance: true
-  - id: private-account
-    visible: false   # This agent doesn't see this account
+  visible: [public-account]    # Only this account is visible
+  balance: true
+  # private-account is not listed, so the agent cannot see it
 ```
 
 ### Fine-Grained Escalations
@@ -414,8 +385,8 @@ Escalate on very specific conditions:
 ```yaml
 escalation:
   triggers:
-    - merchant: "high-risk-vendor"        # Always escalate this vendor
-    - category: "legal-services"          # Always escalate legal category
+    - merchant: ["high-risk-vendor"]      # Always escalate this vendor
+    - category: ["legal-services"]        # Always escalate legal category
     - amount_exceeds: 5000                # Escalate on large amounts
     - new_merchant: true                  # Escalate on new vendors
     - daily_spend_exceeds_pct: 80         # Escalate near daily limit
