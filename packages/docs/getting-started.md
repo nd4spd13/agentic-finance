@@ -7,14 +7,24 @@ This guide walks you through setting up Clad and connecting it to an MCP-compati
 Before you start, make sure you have:
 
 - **Node.js 22+**: Check with `node --version`
+- **pnpm**: Install with `npm install -g pnpm` or check [pnpm.io](https://pnpm.io)
 - **An MCP-compatible agent**: e.g. [Claude Desktop](https://claude.ai), or any agent using the [Model Context Protocol](https://modelcontextprotocol.io)
 
 ## Installation
 
-Install the Clad CLI globally:
+Clone the repository, install dependencies, and build:
 
 ```bash
-npm install -g @clad/cli
+git clone https://github.com/yourusername/clad.git
+cd clad
+pnpm install
+pnpm build
+```
+
+Link the `clad` command globally:
+
+```bash
+pnpm setup
 ```
 
 Verify the installation:
@@ -262,10 +272,10 @@ clad decisions --limit 20
 
 ### "Command not found: clad"
 
-Reinstall the CLI globally:
+Re-run the link step from the repo root:
 
 ```bash
-npm install -g @clad/cli
+pnpm setup
 ```
 
 ### "MCP Server not responding"

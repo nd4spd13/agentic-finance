@@ -9,13 +9,12 @@ git clone https://github.com/yourusername/clad.git
 cd clad
 pnpm install
 pnpm build
+pnpm setup   # links the clad binary globally
 ```
 
-Run the CLI without installing globally:
+Or run the CLI directly without linking:
 
 ```bash
-pnpm --filter @clad/cli exec clad <command>
-# or
 node packages/cli/dist/index.js <command>
 ```
 
