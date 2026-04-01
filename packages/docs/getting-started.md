@@ -24,7 +24,7 @@ pnpm build
 Link the `clad` command globally:
 
 ```bash
-pnpm setup
+pnpm install-cli
 ```
 
 Verify the installation:
@@ -275,7 +275,7 @@ clad decisions --limit 20
 Re-run the link step from the repo root:
 
 ```bash
-pnpm setup
+pnpm install-cli
 ```
 
 ### "MCP Server not responding"

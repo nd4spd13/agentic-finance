@@ -9,7 +9,7 @@ git clone https://github.com/yourusername/clad.git
 cd clad
 pnpm install
 pnpm build
-pnpm setup   # links the clad binary globally
+pnpm install-cli   # links the clad binary globally
 ```
 
 Or run the CLI directly without linking:

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
-    "setup": "npm install -g ./packages/cli",
+    "install-cli": "npm install -g ./packages/cli",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint packages --ext .ts",
