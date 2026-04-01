@@ -120,13 +120,13 @@ Here's what happens when an MCP agent makes a financial request:
 ### CLI (`@clad/cli`)
 
 Command-line interface for:
-- `guardian init` - Create default policy
-- `guardian serve` - Start MCP server
-- `guardian status` - Check server status
-- `guardian reload` - Reload policy from disk
-- `guardian escalate` - Approve/deny escalations
-- `guardian audit-log` - View decision history
-- `guardian validate` - Validate policy syntax
+- `clad init` - Create default policy
+- `clad serve` - Start MCP server
+- `clad status` - Check server status
+- `clad reload` - Reload policy from disk
+- `clad escalate` - Approve/deny escalations
+- `clad audit-log` - View decision history
+- `clad validate` - Validate policy syntax
 
 ## Security Model
 
@@ -261,23 +261,23 @@ When evaluating spending, Clad checks constraints in this order:
 
 ```
 1. Agent makes request
-2. Guardian evaluates, triggers escalation
+2. Clad evaluates, triggers escalation
 3. Escalation stored in approval queue
-4. User sees in CLI: guardian escalate --list
-5. User reviews: guardian escalate <id> --show
-6. User decides: guardian escalate <id> --approve
-7. Guardian records decision in audit log
+4. User sees in CLI: clad escalate --list
+5. User reviews: clad escalate <id> --show
+6. User decides: clad escalate <id> --approve
+7. Clad records decision in audit log
 ```
 
 ### Webhook-Based Escalation
 
 ```
 1. Agent makes request
-2. Guardian evaluates, triggers escalation
-3. Guardian POSTs to webhook URL with escalation details
+2. Clad evaluates, triggers escalation
+3. Clad POSTs to webhook URL with escalation details
 4. Webhook integration (e.g., email approval) handles it
-5. External system POSTs back to Guardian with decision
-6. Guardian records decision in audit log
+5. External system POSTs back to Clad with decision
+6. Clad records decision in audit log
 7. Future requests are resolved (allowed or denied)
 ```
 
@@ -286,7 +286,7 @@ When evaluating spending, Clad checks constraints in this order:
 **Policy Loading**
 - Policy file loaded and parsed at startup
 - Cached in memory
-- `guardian reload` re-parses and updates
+- `clad reload` re-parses and updates
 - No persistent database required (audit logs stored separately)
 
 **Decision Latency**
@@ -295,7 +295,7 @@ When evaluating spending, Clad checks constraints in this order:
 - Total per request: ~10-20ms typical
 
 **Audit Log Storage**
-- Default: append-only file (guardian.log)
+- Default: append-only file (clad.log)
 - Optional: database backend (PostgreSQL, etc.)
 - Chain hashing adds negligible overhead (~0.1ms per entry)
 
@@ -346,7 +346,7 @@ Optional hooks for custom logic:
 
 ```typescript
 interface PolicyHook {
-  onPolicyLoad(policy: GuardianPolicy): void;
+  onPolicyLoad(policy: CladPolicy): void;
   beforeEvaluate(request: Request): void;
   afterEvaluate(request: Request, decision: Decision): void;
   onAuditLog(entry: AuditEntry): void;
@@ -360,7 +360,7 @@ interface PolicyHook {
 For a single agent (most common):
 
 ```bash
-guardian start --foreground
+clad start --foreground
 # Any MCP-compatible agent can now connect
 ```
 
@@ -370,16 +370,16 @@ For multiple agents with separate policies:
 
 ```bash
 # Terminal 1
-guardian start --agent analyst --port 3001 --foreground
+clad start --agent analyst --port 3001 --foreground
 
 # Terminal 2
-guardian start --agent spender --port 3002 --foreground
+clad start --agent spender --port 3002 --foreground
 
 # MCP client config (example: Claude Desktop)
 {
   "mcpServers": {
-    "guardian-analyst": { "command": "clad", "args": ["serve", "--agent", "analyst"] },
-    "guardian-spender": { "command": "clad", "args": ["serve", "--agent", "spender"] }
+    "clad-analyst": { "command": "clad", "args": ["serve", "--agent", "analyst"] },
+    "clad-spender": { "command": "clad", "args": ["serve", "--agent", "spender"] }
   }
 }
 ```
@@ -387,7 +387,7 @@ guardian start --agent spender --port 3002 --foreground
 ### Production Deployment
 
 For production:
-- Run Guardian as systemd service or with process manager (pm2, supervisor)
+- Run Clad as systemd service or with process manager (pm2, supervisor)
 - Store audit logs in persistent database (PostgreSQL)
 - Use webhook escalations for approval routing
 - Monitor logs and audit trail

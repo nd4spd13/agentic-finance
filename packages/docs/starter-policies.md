@@ -224,7 +224,7 @@ agents:
           - category: "sensitive-vendor"
           - daily_spend_exceeds_pct: 80
         channel: webhook
-        webhook_url: "https://internal.example.com/guardian/escalate"
+        webhook_url: "https://internal.example.com/clad/escalate"
         timeout: 600
         default_on_timeout: deny
 
@@ -296,7 +296,7 @@ Your webhook should respond with:
 const express = require('express');
 const app = express();
 
-app.post('/guardian/escalate', express.json(), async (req, res) => {
+app.post('/clad/escalate', express.json(), async (req, res) => {
   const escalation = req.body;
 
   // Log to approval system
@@ -382,11 +382,11 @@ Then configure Claude for each:
 ```json
 {
   "mcpServers": {
-    "guardian-analyst": {
+    "clad-analyst": {
       "command": "clad",
       "args": ["serve", "--agent", "analyst"]
     },
-    "guardian-procurement": {
+    "clad-procurement": {
       "command": "clad",
       "args": ["serve", "--agent", "procurement"]
     }
