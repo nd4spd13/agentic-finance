@@ -12,7 +12,7 @@ The Model Context Protocol (MCP) allows Claude to use external tools and service
 
 - Claude Desktop installed
 - Clad installed and configured with a `clad.yaml` policy
-- The `guardian` CLI command available in your PATH (or you know its full path)
+- The `clad` CLI command available in your PATH (or you know its full path)
 
 ### Step 1: Find Your Configuration File
 
@@ -75,13 +75,13 @@ Add the Clad server configuration:
 }
 ```
 
-If `guardian` is not in your PATH, provide the full path:
+If `clad` is not in your PATH, provide the full path:
 
 ```json
 {
   "mcpServers": {
     "clad": {
-      "command": "/usr/local/bin/guardian",
+      "command": "/usr/local/bin/clad",
       "args": ["serve"]
     }
   }
@@ -93,7 +93,7 @@ On Windows:
 {
   "mcpServers": {
     "clad": {
-      "command": "C:\\Users\\YourUsername\\AppData\\Local\\guardian\\bin\\guardian.exe",
+      "command": "C:\\Users\\YourUsername\\AppData\\Local\\clad\\bin\\clad.exe",
       "args": ["serve"]
     }
   }
@@ -161,7 +161,7 @@ If you see an error like "Clad is not available," check:
 
 1. Clad is running: `clad status`
 2. The config file syntax is correct (use a JSON validator)
-3. The guardian command path is correct
+3. The clad command path is correct
 4. Claude Desktop was restarted after editing the config
 
 ### Troubleshooting
@@ -185,10 +185,10 @@ Validate the JSON:
 python3 -m json.tool ~/.config/Claude/claude_desktop_config.json
 ```
 
-**Check 3: Is the guardian command in PATH?**
+**Check 3: Is the clad command in PATH?**
 
 ```bash
-which guardian
+which clad
 ```
 
 If not found, use the full path in the config file.
@@ -290,11 +290,11 @@ clad start --agent spender-agent --port 3002
 ```json
 {
   "mcpServers": {
-    "guardian-analyst": {
+    "clad-analyst": {
       "command": "clad",
       "args": ["serve", "--agent", "analyst-agent"]
     },
-    "guardian-spender": {
+    "clad-spender": {
       "command": "clad",
       "args": ["serve", "--agent", "spender-agent"]
     }
@@ -313,7 +313,7 @@ agents:
     permissions:
       escalation:
         channel: webhook
-        webhook_url: "https://internal.example.com/guardian/escalate"
+        webhook_url: "https://internal.example.com/clad/escalate"
         timeout: 600
 ```
 
@@ -356,10 +356,10 @@ npm install @clad/core @clad/mcp-server
 ```typescript
 import { CladLayer } from '@clad/core';
 
-const guardian = new CladLayer('./clad.yaml');
+const clad = new CladLayer('./clad.yaml');
 
 // Check if an agent can perform an action
-const decision = await guardian.requestAction({
+const decision = await clad.requestAction({
   agent_id: 'my-agent',
   tool_name: 'send_money',
   amount: 1500.00,

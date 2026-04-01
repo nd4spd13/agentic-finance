@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 // Use a temp dir as CLAD_CONFIG_DIR for all tests
-const TEST_DIR = join(tmpdir(), `guardian-test-${process.pid}`)
+const TEST_DIR = join(tmpdir(), `clad-test-${process.pid}`)
 
 beforeEach(() => {
   process.env.CLAD_CONFIG_DIR = TEST_DIR
@@ -202,7 +202,7 @@ describe('Approval commands (HITL)', () => {
 describe('Escalation decision audit logging', () => {
   it('approveCommand writes an escalation_decision record to the audit log', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { ApprovalQueue, AuditLogger } = await import('@guardian-layer/core')
+    const { ApprovalQueue, AuditLogger } = await import('@clad/core')
     const { approveCommand } = await import('../src/commands/approvals.js')
 
     const config = loadConfig()
@@ -222,7 +222,7 @@ describe('Escalation decision audit logging', () => {
 
   it('denyCommand writes an escalation_decision record to the audit log', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { ApprovalQueue, AuditLogger } = await import('@guardian-layer/core')
+    const { ApprovalQueue, AuditLogger } = await import('@clad/core')
     const { denyCommand } = await import('../src/commands/approvals.js')
 
     const config = loadConfig()
@@ -241,7 +241,7 @@ describe('Escalation decision audit logging', () => {
 
   it('lockdownCommand writes one escalation_decision record per denial', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { ApprovalQueue, AuditLogger } = await import('@guardian-layer/core')
+    const { ApprovalQueue, AuditLogger } = await import('@clad/core')
     const { lockdownCommand } = await import('../src/commands/approvals.js')
 
     const config = loadConfig()
@@ -261,7 +261,7 @@ describe('Escalation decision audit logging', () => {
 
   it('audit chain remains valid after mixed request + escalation_decision records', async () => {
     const { loadConfig } = await import('../src/config.js')
-    const { ApprovalQueue, AuditLogger } = await import('@guardian-layer/core')
+    const { ApprovalQueue, AuditLogger } = await import('@clad/core')
     const { approveCommand } = await import('../src/commands/approvals.js')
 
     const config = loadConfig()
