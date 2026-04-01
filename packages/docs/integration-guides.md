@@ -312,9 +312,11 @@ agents:
   spender:
     permissions:
       escalation:
+        triggers:
+          - amount_exceeds: 2000
         channel: webhook
-        webhook_url: "https://internal.example.com/clad/escalate"
-        timeout: 600
+        timeout: "10m"
+        default_on_timeout: deny
 ```
 
 When an escalation occurs, Clad sends a POST request:

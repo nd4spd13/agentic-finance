@@ -42,23 +42,19 @@ agents:
     description: "Default financial agent"
     permissions:
       accounts:
-        - id: default-account
-          visible: true
-          balance: true
-          account_number: false
-          routing_number: false
+        visible: [default-account]
+        balance: true
+        account_number: false
+        routing_number: false
 
       transactions:
         read: true
-        amount_visibility_cap: null
         description_visibility: true
         lookback_days: 90
 
       spending:
         max_per_transaction: 10000
         max_daily: 50000
-        max_weekly: null
-        max_monthly: null
         merchants:
           allow: []
           block: []
@@ -71,7 +67,7 @@ agents:
         triggers:
           - amount_exceeds: 10000
         channel: cli
-        timeout: 300
+        timeout: "5m"
         default_on_timeout: deny
 
 global:
@@ -91,13 +87,11 @@ agents:
     description: "Financial analyst - read-only access"
     permissions:
       accounts:
-        - id: checking-01
-          visible: true
-          balance: true
-          account_number: false
+        visible: [checking-01]
+        balance: true
+        account_number: false
       transactions:
         read: true
-        amount_visibility_cap: null
         lookback_days: 90
       spending:
         max_per_transaction: 1000
@@ -107,7 +101,8 @@ agents:
         triggers:
           - amount_exceeds: 5000
         channel: cli
-        timeout: 300
+        timeout: "5m"
+        default_on_timeout: deny
 ```
 
 **Example: Spending agent with merchant restrictions**
@@ -118,9 +113,8 @@ agents:
     description: "Autonomous spender with restrictions"
     permissions:
       accounts:
-        - id: corporate-account
-          visible: true
-          balance: true
+        visible: [corporate-account]
+        balance: true
       spending:
         max_per_transaction: 500
         max_daily: 2000
@@ -138,7 +132,8 @@ agents:
           - amount_exceeds: 1000
           - new_merchant: true
         channel: webhook
-        timeout: 600
+        timeout: "10m"
+        default_on_timeout: deny
 ```
 
 ## Start the Server

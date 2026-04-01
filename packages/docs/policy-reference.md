@@ -14,7 +14,12 @@ agents:
 
 global:
   max_total_daily_spend: number
+  max_total_weekly_spend: number
+  max_total_monthly_spend: number
   max_concurrent_agents: number
+  max_pending_escalations: number
+  global_blocked_categories: string[]
+  global_blocked_merchants: string[]
 ```
 
 ## TypeScript Interfaces
@@ -22,7 +27,7 @@ global:
 Here are the TypeScript interfaces that define the policy structure:
 
 ```typescript
-interface CladPolicy {
+interface PolicyConfig {
   agents: Record<string, AgentPolicy>;
   global?: GlobalPolicy;
 }
@@ -33,17 +38,16 @@ interface AgentPolicy {
 }
 
 interface AgentPermissions {
-  accounts: AccountPermissions[];
+  accounts?: AccountPermissions;
   transactions?: TransactionPermissions;
   spending?: SpendingPermissions;
   escalation?: EscalationConfig;
   schedule?: ScheduleConfig;
-  audit?: AuditPermissions;
+  audit?: AuditConfig;
 }
 
 interface AccountPermissions {
-  id: string;
-  visible: boolean;
+  visible: string[];
   balance?: boolean;
   account_number?: boolean;
   routing_number?: boolean;
@@ -51,69 +55,64 @@ interface AccountPermissions {
 
 interface TransactionPermissions {
   read: boolean;
-  amount_visibility_cap?: number | null;
+  amount_visibility_cap?: number;
   description_visibility?: boolean;
   lookback_days?: number;
 }
 
 interface SpendingPermissions {
-  max_per_transaction?: number | null;
-  max_daily?: number | null;
-  max_weekly?: number | null;
-  max_monthly?: number | null;
-  merchants?: MerchantControl;
-  categories?: CategoryControl;
+  max_per_transaction?: number;
+  max_daily?: number;
+  max_weekly?: number;
+  max_monthly?: number;
+  merchants?: {
+    allow?: string[];
+    block?: string[];
+  };
+  categories?: {
+    allow?: string[];
+    block?: string[];
+  };
   require_itemization?: boolean;
-}
-
-interface MerchantControl {
-  allow?: string[];
-  block?: string[];
-}
-
-interface CategoryControl {
-  allow?: string[];
-  block?: string[];
 }
 
 interface EscalationConfig {
   triggers: EscalationTrigger[];
   channel: 'cli' | 'webhook';
-  timeout?: number;
-  default_on_timeout?: 'allow' | 'deny';
-  webhook_url?: string;
+  timeout: string;                              // Duration string, e.g. "5m", "1h"
+  default_on_timeout: 'deny' | 'allow';
 }
 
-interface EscalationTrigger {
-  amount_exceeds?: number;
-  new_merchant?: boolean;
-  new_category?: boolean;
-  category?: string;
-  merchant?: string;
-  daily_spend_exceeds_pct?: number;
-}
+type EscalationTrigger =
+  | { amount_exceeds: number }
+  | { new_merchant: boolean }
+  | { new_category: boolean }
+  | { category: string[] }                      // Array of category names
+  | { merchant: string[] }                      // Array of merchant names
+  | { daily_spend_exceeds_pct: number };
 
 interface ScheduleConfig {
-  active_hours?: {
-    start: string;
-    end: string;
-  };
-  active_days?: string[];
+  active_hours?: string;                        // "HH:MM-HH:MM" format
+  active_days?: string[];                       // Lowercase: "monday", "tuesday", etc.
   timezone?: string;
   blackout_dates?: string[];
-  behavior_outside_schedule?: 'deny' | 'escalate' | 'allow';
+  behavior_outside_schedule?: 'deny' | 'escalate';
 }
 
-interface AuditPermissions {
-  can_view_audit_log: boolean;
-  can_view_other_agents: boolean;
+interface AuditConfig {
+  log_all_queries?: boolean;
+  log_policy_evaluations?: boolean;
+  retention?: string;                           // Duration string, e.g. "90d", "1y"
 }
 
 interface GlobalPolicy {
   max_total_daily_spend?: number;
+  max_total_weekly_spend?: number;
+  max_total_monthly_spend?: number;
   max_concurrent_agents?: number;
-  require_human_approval_above?: number;
-  default_escalation_timeout?: number;
+  max_pending_escalations?: number;
+  global_blocked_categories?: string[];
+  global_blocked_merchants?: string[];
 }
 ```
 
@@ -141,33 +140,26 @@ The `permissions` object defines what an agent can and cannot do.
 
 ### AccountPermissions
 
-Array of accounts this agent can access. Each account permission has:
+Controls which accounts this agent can access and what data is visible.
 
-**`id`** (required, string)
-The account identifier. Must match an account in your financial system.
+**`visible`** (required, string[])
+List of account IDs or types the agent can see. Accounts not listed here are hidden from the agent.
 
 ```yaml
 permissions:
   accounts:
-    - id: checking-001
-      visible: true
-      balance: true
+    visible: [checking-001, savings-001]
+    balance: true
 ```
 
-**`visible`** (required, boolean)
-Whether this agent can see this account listed at all.
-
-- `true`: Account appears in account lists
-- `false`: Account is hidden from agent
-
 **`balance`** (boolean, default: false)
-Whether the agent can view this account's balance.
+Whether the agent can view account balances.
 
 **`account_number`** (boolean, default: false)
-Whether the agent can view the account number.
+Whether the agent can view full account numbers.
 
 **`routing_number`** (boolean, default: false)
-Whether the agent can view the routing number.
+Whether the agent can view routing numbers.
 
 ### TransactionPermissions
 
@@ -184,10 +176,10 @@ permissions:
     lookback_days: 30
 ```
 
-**`amount_visibility_cap`** (number | null, default: null)
+**`amount_visibility_cap`** (number, optional)
 Cap the amount field returned in transactions. Useful for read-only agents.
 
-- `null`: Return full amount
+- Omitted: Return full amount
 - `5000`: Only return amounts for transactions under $5,000; cap larger amounts as `[REDACTED]`
 
 **`description_visibility`** (boolean, default: true)
@@ -200,7 +192,7 @@ How many days of history the agent can access.
 
 Controls how much and what the agent can spend.
 
-**`max_per_transaction`** (number | null, default: null)
+**`max_per_transaction`** (number, optional)
 Maximum amount for a single transaction.
 
 ```yaml
@@ -208,13 +200,13 @@ spending:
   max_per_transaction: 1000
 ```
 
-**`max_daily`** (number | null, default: null)
+**`max_daily`** (number, optional)
 Maximum cumulative spending per calendar day.
 
-**`max_weekly`** (number | null, default: null)
+**`max_weekly`** (number, optional)
 Maximum cumulative spending per calendar week (Monday-Sunday).
 
-**`max_monthly`** (number | null, default: null)
+**`max_monthly`** (number, optional)
 Maximum cumulative spending per calendar month.
 
 **`merchants`** (MerchantControl)
@@ -263,11 +255,13 @@ escalation:
   triggers:
     - amount_exceeds: 5000
     - new_merchant: true
-    - category: sensitive-category
+    - category: [sensitive-category]
     - daily_spend_exceeds_pct: 80
 ```
 
 #### EscalationTrigger Fields
+
+Each trigger is a single-key object. Only one field per trigger entry.
 
 **`amount_exceeds`** (number)
 Escalate if transaction amount exceeds this value.
@@ -278,11 +272,11 @@ Escalate if the merchant hasn't been used by this agent before.
 **`new_category`** (boolean)
 Escalate if the category hasn't been used by this agent before.
 
-**`category`** (string)
-Escalate for any transaction in this category.
+**`category`** (string[])
+Escalate for any transaction in these categories.
 
-**`merchant`** (string)
-Escalate for any transaction to this merchant.
+**`merchant`** (string[])
+Escalate for any transaction to these merchants.
 
 **`daily_spend_exceeds_pct`** (number 0-100)
 Escalate if today's spending exceeds this percentage of the daily limit. For example, `80` means escalate when 80% of the daily limit is used.
@@ -302,10 +296,10 @@ escalation:
   webhook_url: "https://example.com/clad/escalate"
 ```
 
-**`timeout`** (number, default: 300)
-Seconds to wait for human approval. After this time, `default_on_timeout` applies.
+**`timeout`** (required, string)
+Duration to wait for human approval, as a duration string (e.g., `"5m"`, `"1h"`, `"30s"`). After this time, `default_on_timeout` applies.
 
-**`default_on_timeout`** (string, default: 'deny')
+**`default_on_timeout`** (required, 'allow' | 'deny')
 What to do if the timeout is reached without a decision.
 
 - `allow`: Auto-approve and proceed
@@ -315,27 +309,20 @@ What to do if the timeout is reached without a decision.
 
 Restrict agent access to specific hours and days.
 
-**`active_hours`** (object)
-Define start and end times in HH:MM format (24-hour).
+**`active_hours`** (string)
+Time window in `"HH:MM-HH:MM"` format (24-hour, local timezone).
 
 ```yaml
 schedule:
-  active_hours:
-    start: "09:00"
-    end: "17:00"
+  active_hours: "09:00-17:00"
   timezone: "America/New_York"
 ```
 
 **`active_days`** (string[])
-List of days the agent can act. Use ISO weekday names.
+List of days the agent can act. Use lowercase weekday names.
 
 ```yaml
-active_days:
-  - "Monday"
-  - "Tuesday"
-  - "Wednesday"
-  - "Thursday"
-  - "Friday"
+active_days: [monday, tuesday, wednesday, thursday, friday]
 ```
 
 **`timezone`** (string)
@@ -355,17 +342,19 @@ What to do if a request comes outside active hours/days.
 
 - `deny`: Reject the request
 - `escalate`: Send to escalation queue
-- `allow`: Allow it anyway
 
-### AuditPermissions
+### AuditConfig
 
-Control what audit log data the agent can view.
+Controls audit logging behavior for this agent.
 
-**`can_view_audit_log`** (boolean, default: false)
-Whether this agent can view its own audit log entries.
+**`log_all_queries`** (boolean, optional)
+Log every data access by this agent.
 
-**`can_view_other_agents`** (boolean, default: false)
-Whether this agent can view audit log entries from other agents. (Requires elevated privileges.)
+**`log_policy_evaluations`** (boolean, optional)
+Log detailed policy evaluation results.
+
+**`retention`** (string, optional)
+How long to retain audit logs as a duration string (e.g., `"90d"`, `"1y"`).
 
 ## Global Policy
 
@@ -379,14 +368,23 @@ global:
   max_total_daily_spend: 1000000  # $1M/day across all agents
 ```
 
+**`max_total_weekly_spend`** (number)
+Maximum total spending across all agents in a calendar week.
+
+**`max_total_monthly_spend`** (number)
+Maximum total spending across all agents in a calendar month.
+
 **`max_concurrent_agents`** (number)
 Maximum number of agents that can make concurrent requests.
 
-**`require_human_approval_above`** (number)
-Any spending decision above this amount (across all agents) must escalate to humans.
+**`max_pending_escalations`** (number)
+Maximum number of pending escalation approvals. New requests are denied when this limit is reached.
 
-**`default_escalation_timeout`** (number)
-Default timeout in seconds for escalations (overrideable per agent).
+**`global_blocked_categories`** (string[])
+Categories blocked globally regardless of individual agent policy.
+
+**`global_blocked_merchants`** (string[])
+Merchants blocked globally regardless of individual agent policy.
 
 ## Complete Example Policy
 
@@ -398,27 +396,25 @@ agents:
     description: "Financial analyst with read-only access"
     permissions:
       accounts:
-        - id: bank-checking-001
-          visible: true
-          balance: true
-          account_number: false
-          routing_number: false
+        visible: [bank-checking-001]
+        balance: true
+        account_number: false
+        routing_number: false
       transactions:
         read: true
-        amount_visibility_cap: null
         description_visibility: true
         lookback_days: 90
       audit:
-        can_view_audit_log: true
-        can_view_other_agents: false
+        log_all_queries: true
+        log_policy_evaluations: false
+        retention: "90d"
 
   budget-spender:
     description: "Spender with daily limits and merchant controls"
     permissions:
       accounts:
-        - id: corporate-card-001
-          visible: true
-          balance: true
+        visible: [corporate-card-001]
+        balance: true
       transactions:
         read: true
         lookback_days: 30
@@ -443,18 +439,17 @@ agents:
           - new_merchant: true
           - daily_spend_exceeds_pct: 75
         channel: cli
-        timeout: 300
+        timeout: "5m"
         default_on_timeout: deny
 
   full-featured:
     description: "Fully configured agent with all features"
     permissions:
       accounts:
-        - id: account-001
-          visible: true
-          balance: true
-          account_number: true
-          routing_number: false
+        visible: [account-001]
+        balance: true
+        account_number: true
+        routing_number: false
       transactions:
         read: true
         amount_visibility_cap: 50000
@@ -469,21 +464,13 @@ agents:
         triggers:
           - amount_exceeds: 25000
           - new_merchant: true
-          - category: sensitive-category
+          - category: [sensitive-category]
         channel: webhook
-        webhook_url: "https://internal.example.com/clad/escalate"
-        timeout: 600
+        timeout: "10m"
         default_on_timeout: deny
       schedule:
-        active_hours:
-          start: "08:00"
-          end: "18:00"
-        active_days:
-          - "Monday"
-          - "Tuesday"
-          - "Wednesday"
-          - "Thursday"
-          - "Friday"
+        active_hours: "08:00-18:00"
+        active_days: [monday, tuesday, wednesday, thursday, friday]
         timezone: "America/New_York"
         blackout_dates:
           - "2024-12-25"
@@ -491,14 +478,16 @@ agents:
           - "2024-01-01"
         behavior_outside_schedule: escalate
       audit:
-        can_view_audit_log: true
-        can_view_other_agents: false
+        log_all_queries: true
+        log_policy_evaluations: true
+        retention: "1y"
 
 global:
   max_total_daily_spend: 1000000
+  max_total_weekly_spend: 4000000
+  max_total_monthly_spend: 15000000
   max_concurrent_agents: 10
-  require_human_approval_above: 50000
-  default_escalation_timeout: 300
+  max_pending_escalations: 25
 ```
 
 ## Best Practices

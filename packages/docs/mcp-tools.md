@@ -330,7 +330,7 @@ Controlled by:
 - `permissions.escalation.*` fields
 - `permissions.schedule.*` fields
 - `global.max_total_daily_spend`
-- `global.require_human_approval_above`
+- `global.max_pending_escalations`
 
 ---
 
@@ -413,13 +413,13 @@ interface AuditLogRequest {
 - Each entry includes a chain hash for tamper-evidence
 - Redacts sensitive information based on the requester's audit permissions
 - If `agent_id` is specified, only returns entries for that agent
-- Respects `permissions.audit.can_view_audit_log` setting
+- Respects `permissions.audit.log_all_queries` setting
 
 ### Policy Fields
 
 Controlled by:
-- `permissions.audit.can_view_audit_log`
-- `permissions.audit.can_view_other_agents`
+- `permissions.audit.log_all_queries`
+- `permissions.audit.log_policy_evaluations`
 
 ---
 

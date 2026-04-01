@@ -75,9 +75,8 @@ agents:
     description: "My financial agent"
     permissions:
       accounts:
-        - id: checking-account
-          visible: true
-          balance: true
+        visible: [checking-account]
+        balance: true
       transactions:
         read: true
         amount_visibility_cap: 10000
@@ -92,7 +91,8 @@ agents:
         triggers:
           - amount_exceeds: 5000
         channel: cli
-        timeout: 300
+        timeout: "5m"
+        default_on_timeout: deny
 ```
 
 Connect any MCP-compatible agent (e.g. Claude Desktop):
