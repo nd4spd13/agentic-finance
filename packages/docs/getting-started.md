@@ -31,7 +31,7 @@ pnpm build
 Create a new Clad instance in your project:
 
 ```bash
-guardian init
+clad init
 ```
 
 This creates a `clad.yaml` file with a basic policy template. The file will look like this:
@@ -146,7 +146,7 @@ agents:
 Start Clad in the foreground:
 
 ```bash
-guardian start --foreground
+clad start --foreground
 ```
 
 You should see output like:
@@ -161,7 +161,7 @@ Ready to accept connections
 For production, run it as a background service or with a process manager like `pm2`:
 
 ```bash
-pm2 start guardian -- start
+pm2 start clad -- start
 pm2 save
 pm2 startup
 ```
@@ -207,7 +207,7 @@ After editing, restart Claude Desktop for the changes to take effect.
 Run the Clad status command:
 
 ```bash
-guardian status
+clad status
 ```
 
 Expected output:
@@ -219,7 +219,7 @@ MCP Server: running
 Policy loaded: clad.yaml
 Agents configured: 1
 Connected clients: 0
-Audit logs: /path/to/guardian.log
+Audit logs: /path/to/clad.log
 ```
 
 Your MCP agent can now use Clad tools. If using Claude Desktop, try:
@@ -233,7 +233,7 @@ The agent will call the `clad_get_balances` tool, which is checked against your 
 ### View the Audit Log
 
 ```bash
-guardian audit-log
+clad audit-log
 ```
 
 Shows all decisions with timestamps, agents, accounts, and reasons.
@@ -241,7 +241,7 @@ Shows all decisions with timestamps, agents, accounts, and reasons.
 ### List Configured Agents
 
 ```bash
-guardian agents list
+clad agents list
 ```
 
 ### Reload the Policy
@@ -249,7 +249,7 @@ guardian agents list
 Edit `clad.yaml` and reload without restarting:
 
 ```bash
-guardian reload
+clad reload
 ```
 
 ### Escalate a Decision
@@ -257,18 +257,18 @@ guardian reload
 Manually escalate a pending decision:
 
 ```bash
-guardian escalate <decision-id>
+clad escalate <decision-id>
 ```
 
 ### Check Recent Decisions
 
 ```bash
-guardian decisions --limit 20
+clad decisions --limit 20
 ```
 
 ## Troubleshooting
 
-### "Command not found: guardian"
+### "Command not found: clad"
 
 Make sure Clad is installed globally or use the full path to the executable.
 
@@ -277,22 +277,22 @@ Make sure Clad is installed globally or use the full path to the executable.
 npm install -g @clad/cli
 
 # Or use via pnpm
-pnpm exec guardian status
+pnpm exec clad status
 ```
 
 ### "MCP Server not responding"
 
-1. Verify the server is running: `guardian status`
+1. Verify the server is running: `clad status`
 2. Check that your MCP client config points to the correct command
 3. Restart your MCP agent (e.g. Claude Desktop)
-4. Check logs: `guardian logs`
+4. Check logs: `clad logs`
 
 ### "Policy validation failed"
 
 Ensure your `clad.yaml` is valid YAML and all required fields are present. Use a YAML validator:
 
 ```bash
-guardian validate clad.yaml
+clad validate clad.yaml
 ```
 
 ### Escalations not triggering

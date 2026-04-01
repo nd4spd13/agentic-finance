@@ -61,10 +61,10 @@ Install Clad in your TypeScript project:
 npm install @clad/core @clad/mcp-server
 
 # Initialize with a default policy
-guardian init
+clad init
 
 # Start the MCP server
-guardian start --foreground
+clad start --foreground
 ```
 
 Define your first policy in `clad.yaml`:
@@ -111,7 +111,7 @@ Connect any MCP-compatible agent (e.g. Claude Desktop):
 Verify the connection:
 
 ```bash
-guardian status
+clad status
 ```
 
 ## Key Features

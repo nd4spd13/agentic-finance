@@ -1,5 +1,5 @@
 /**
- * guardian approvals / approve / deny / lockdown
+ * clad approvals / approve / deny / lockdown
  * CRS-29: Human-in-the-Loop approval commands
  * CRS-44: Escalation decisions are written to the audit log
  */
@@ -98,7 +98,7 @@ export function approvalsListCommand(opts: { all?: boolean; agent?: string } = {
   }
 
   if (!opts.all) {
-    console.log(`Run: guardian approve <id>  or  guardian deny <id>`)
+    console.log(`Run: clad approve <id>  or  clad deny <id>`)
     console.log('')
   }
 }

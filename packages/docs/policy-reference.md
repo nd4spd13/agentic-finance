@@ -299,7 +299,7 @@ The HTTP endpoint to POST escalations to.
 ```yaml
 escalation:
   channel: webhook
-  webhook_url: "https://example.com/guardian/escalate"
+  webhook_url: "https://example.com/clad/escalate"
 ```
 
 **`timeout`** (number, default: 300)
@@ -471,7 +471,7 @@ agents:
           - new_merchant: true
           - category: sensitive-category
         channel: webhook
-        webhook_url: "https://internal.example.com/guardian/escalate"
+        webhook_url: "https://internal.example.com/clad/escalate"
         timeout: 600
         default_on_timeout: deny
       schedule:
