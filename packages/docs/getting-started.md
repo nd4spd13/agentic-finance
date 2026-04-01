@@ -21,13 +21,19 @@ pnpm install
 pnpm build
 ```
 
+Add pnpm's global bin directory to your shell PATH (one-time setup):
+
+```bash
+pnpm setup
+```
+
 Link the `clad` command globally:
 
 ```bash
 pnpm install-cli
 ```
 
-Verify the installation:
+Restart your terminal (or run `source ~/.zshrc`), then verify:
 
 ```bash
 clad --version
@@ -272,9 +278,10 @@ clad decisions --limit 20
 
 ### "Command not found: clad"
 
-Re-run the link step from the repo root:
+Ensure pnpm's global bin is in your PATH, re-link, then restart your terminal:
 
 ```bash
+pnpm setup
 pnpm install-cli
 ```
 

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
-    "install-cli": "npm install -g ./packages/cli",
+    "install-cli": "pnpm --filter @clad/cli link --global",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint packages --ext .ts",
