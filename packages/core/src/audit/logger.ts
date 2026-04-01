@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'sqlite'
+import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'crypto'
 import { nanoid } from 'nanoid'
 import type { AuditRecord } from '../types/index.js'

@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'sqlite'
+import { DatabaseSync } from 'node:sqlite'
 import { nanoid } from 'nanoid'
 import type { ApprovalRecord } from '../types/index.js'
 
