@@ -1,4 +1,5 @@
-import { evaluate, type PolicyConfig, type DataProvider } from '@clad/core'
+import { evaluate } from '@clad/core'
+import type { ToolContext } from '../types.js'
 
 export const name = 'clad_get_balances'
 export const description = 'Get account balances filtered by agent policy'
@@ -11,15 +12,9 @@ export const inputSchema = {
   required: ['user_id'],
 }
 
-export interface Context {
-  agentId: string
-  policy: PolicyConfig
-  provider: DataProvider
-}
-
 export async function handler(
   args: { user_id: string; account_type?: string },
-  context: Context
+  context: ToolContext
 ) {
   const result = await evaluate(context.agentId, {
     type: 'data_request',

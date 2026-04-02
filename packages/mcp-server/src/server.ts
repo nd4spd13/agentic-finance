@@ -5,6 +5,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import { parsePolicy, DummyDataProvider, AuditLogger, ApprovalQueue } from '@clad/core'
+import type { ToolDefinition } from './types.js'
 
 // Import all tool handlers
 import * as getBalances from './tools/clad_get_balances.js'
@@ -13,7 +14,7 @@ import * as safeToSpend from './tools/clad_safe_to_spend.js'
 import * as requestAction from './tools/clad_request_action.js'
 import * as auditLog from './tools/clad_audit_log.js'
 
-const tools = [getBalances, getTransactions, safeToSpend, requestAction, auditLog]
+const tools: ToolDefinition[] = [getBalances, getTransactions, safeToSpend, requestAction, auditLog]
 
 async function main() {
   const server = new Server(
@@ -58,7 +59,7 @@ async function main() {
     const context = { agentId, policy, provider, auditLogger, approvalQueue }
 
     try {
-      const result = await (tool as any).handler(args as any, context as any)
+      const result = await tool.handler(args ?? {}, context)
       // Log to audit trail
       auditLogger.logRequest(agentId, name, 'allow', JSON.stringify(args))
       return result

@@ -1,4 +1,5 @@
-import { evaluate, type PolicyConfig, type DataProvider } from '@clad/core'
+import { evaluate } from '@clad/core'
+import type { ToolContext } from '../types.js'
 
 export const name = 'clad_safe_to_spend'
 export const description = 'Compute safe-to-spend amount using balance and recurring charges'
@@ -11,15 +12,9 @@ export const inputSchema = {
   required: ['user_id', 'account_id'],
 }
 
-export interface Context {
-  agentId: string
-  policy: PolicyConfig
-  provider: DataProvider
-}
-
 export async function handler(
   args: { user_id: string; account_id: string },
-  context: Context
+  context: ToolContext
 ) {
   const result = await evaluate(context.agentId, {
     type: 'data_request',

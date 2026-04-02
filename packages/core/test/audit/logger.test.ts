@@ -121,7 +121,7 @@ describe('Audit Logger', () => {
 
       const start = Date.now()
       for (let i = 0; i < 1000; i++) {
-        logger.logRequest(`agent${i % 5}`, `tool${i % 10}`, ['allow', 'deny', 'escalate'][i % 3] as any, `Test ${i}`)
+        logger.logRequest(`agent${i % 5}`, `tool${i % 10}`, ['allow', 'deny', 'escalate'][i % 3], `Test ${i}`)
       }
       const elapsed = Date.now() - start
 

@@ -1,6 +1,17 @@
 import { DatabaseSync } from 'node:sqlite'
 import { nanoid } from 'nanoid'
-import type { ApprovalRecord } from '../types/index.js'
+import type { ApprovalRecord, ApprovalStatus } from '../types/index.js'
+
+interface ApprovalRow {
+  id: string
+  agent_id: string
+  tool_name: string
+  trigger_reason: string
+  status: string
+  created_at: string
+  expires_at: string
+  resolved_at: string | null
+}
 
 export class ApprovalQueue {
   private db: DatabaseSync
@@ -112,7 +123,7 @@ export class ApprovalQueue {
 
   get(id: string): ApprovalRecord {
     const stmt = this.db.prepare('SELECT * FROM approvals WHERE id = ?')
-    const row = stmt.get(id) as any
+    const row = stmt.get(id) as unknown as ApprovalRow | undefined
 
     if (!row) {
       throw new Error(`Approval ${id} not found`)
@@ -123,10 +134,10 @@ export class ApprovalQueue {
       agent_id: row.agent_id,
       tool_name: row.tool_name,
       trigger_reason: row.trigger_reason,
-      status: row.status,
+      status: row.status as ApprovalStatus,
       created_at: row.created_at,
       expires_at: row.expires_at,
-      resolved_at: row.resolved_at,
+      resolved_at: row.resolved_at ?? undefined,
     }
 
     // Auto-expire if pending and past expiry
@@ -159,7 +170,7 @@ export class ApprovalQueue {
     query += ' ORDER BY created_at DESC'
 
     const stmt = this.db.prepare(query)
-    const rows = stmt.all(...params) as any[]
+    const rows = stmt.all(...params) as unknown as ApprovalRow[]
 
     // Auto-expire pending records that are past their expiry
     const now = new Date()
@@ -169,10 +180,10 @@ export class ApprovalQueue {
         agent_id: row.agent_id,
         tool_name: row.tool_name,
         trigger_reason: row.trigger_reason,
-        status: row.status as ApprovalRecord['status'],
+        status: row.status as ApprovalStatus,
         created_at: row.created_at,
         expires_at: row.expires_at,
-        resolved_at: row.resolved_at,
+        resolved_at: row.resolved_at ?? undefined,
       }
       if (record.status === 'pending' && now > new Date(record.expires_at)) {
         const updateStmt = this.db.prepare('UPDATE approvals SET status = ? WHERE id = ?')
@@ -181,6 +192,10 @@ export class ApprovalQueue {
       }
       return record
     })
+  }
+
+  close(): void {
+    this.db.close()
   }
 
   private addTimeout(baseTime: string, timeoutStr: string): string {

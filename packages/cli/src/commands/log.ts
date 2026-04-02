@@ -89,6 +89,12 @@ export function logExportCommand(outputFile: string, opts: LogOptions = {}): voi
   const isCsv = outputFile.endsWith('.csv')
 
   if (isCsv) {
+    const csvEscape = (field: string): string => {
+      if (field.includes(',') || field.includes('"') || field.includes('\n')) {
+        return `"${field.replace(/"/g, '""')}"`
+      }
+      return field
+    }
     const header = 'id,timestamp,agent_id,event_type,tool_name,decision,reason,receipt_hash,previous_hash'
     const rows = records.map(r =>
       [
@@ -98,7 +104,7 @@ export function logExportCommand(outputFile: string, opts: LogOptions = {}): voi
         r.event_type,
         r.tool_name ?? '',
         r.decision ?? '',
-        (r.reason ?? '').replace(/,/g, ';'),
+        csvEscape(r.reason ?? ''),
         r.receipt_hash,
         r.previous_hash,
       ].join(',')

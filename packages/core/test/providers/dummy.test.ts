@@ -1,10 +1,4 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'fs'
-import { join } from 'path'
-import { fileURLToPath } from 'url'
-
-const __dirname = fileURLToPath(new URL('.', import.meta.url))
-const fixturesDir = join(__dirname, '../../../../fixtures/dummy-data')
 
 describe('DummyDataProvider', () => {
   it('returns 3 realistic accounts (checking, savings, credit)', async () => {

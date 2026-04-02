@@ -1,4 +1,5 @@
-import { evaluate, type PolicyConfig, type AuditLogger } from '@clad/core'
+import { evaluate } from '@clad/core'
+import type { ToolContext } from '../types.js'
 
 export const name = 'clad_audit_log'
 export const description = 'Query the audit log with filters'
@@ -14,15 +15,9 @@ export const inputSchema = {
   required: [],
 }
 
-export interface Context {
-  agentId: string
-  policy: PolicyConfig
-  auditLogger: AuditLogger
-}
-
 export async function handler(
   args: { agent_id?: string; tool_name?: string; decision?: string; start_time?: string; end_time?: string },
-  context: Context
+  context: ToolContext
 ) {
   // Evaluate if agent has audit read permissions
   const result = await evaluate(context.agentId, {
@@ -34,7 +29,7 @@ export async function handler(
     return { content: [{ type: 'text', text: `Denied: ${result.reason}` }] }
   }
 
-  const filters: any = {}
+  const filters: Parameters<typeof context.auditLogger.getRecords>[0] = {}
   if (args.agent_id) filters.agent_id = args.agent_id
   if (args.tool_name) filters.tool_name = args.tool_name
   if (args.decision) filters.decision = args.decision
