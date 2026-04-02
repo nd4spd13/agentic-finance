@@ -62,8 +62,8 @@ export async function statusCommand(): Promise<void> {
       } else {
         console.log(`Approvals: ✓ none pending`)
       }
-    } catch {
-      console.log(`Approvals: (db not initialized)`)
+    } catch (err) {
+      console.log(`Approvals: (db error: ${err instanceof Error ? err.message : String(err)})`)
     }
   } else {
     console.log(`Approvals: (not initialized)`)
@@ -75,8 +75,8 @@ export async function statusCommand(): Promise<void> {
       const logger = new AuditLogger(config.audit_db)
       const records = logger.getRecords()
       console.log(`Audit log: ${records.length} record${records.length !== 1 ? 's' : ''}`)
-    } catch {
-      console.log(`Audit log: (db not initialized)`)
+    } catch (err) {
+      console.log(`Audit log: (db error: ${err instanceof Error ? err.message : String(err)})`)
     }
   } else {
     console.log(`Audit log: (not initialized)`)

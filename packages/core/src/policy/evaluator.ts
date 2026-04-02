@@ -4,13 +4,15 @@ import {
   PolicyDecision,
   ConstraintRecord,
   AgentPermissions,
+  ScheduleConfig,
+  EscalationTrigger,
 } from '../types/index.js'
 
 export async function evaluate(
   agentId: string,
-  request: Record<string, any>,
+  request: Record<string, unknown>,
   policy: PolicyConfig,
-  context: Record<string, any>
+  context: Record<string, unknown>
 ): Promise<PolicyEvaluation> {
   const checks_performed: string[] = []
   const constraints_applied: ConstraintRecord[] = []
@@ -39,13 +41,6 @@ export async function evaluate(
       constraints_applied: [],
     }
   }
-
-  // Check if agent has any base permissions (escalation and audit are modifiers, not base permissions)
-  const hasAccounts = !!permissions.accounts
-  const hasTransactions = !!permissions.transactions
-  const hasSpending = !!permissions.spending
-  const hasSchedule = !!permissions.schedule
-  const hasAnyBasePermission = hasAccounts || hasTransactions || hasSpending || hasSchedule
 
   // 2. Global rules (checked BEFORE agent rules)
   checks_performed.push('global_rules')
@@ -85,7 +80,7 @@ export async function evaluate(
   // 4. Account visibility check
   if (request.resource === 'accounts' && permissions.accounts?.visible) {
     if (request.account_type !== undefined) {
-      if (!permissions.accounts.visible.includes(request.account_type)) {
+      if (!permissions.accounts.visible.includes(request.account_type as string)) {
         return {
           decision: 'deny',
           reason: `account type "${request.account_type}" not in visible list`,
@@ -110,7 +105,7 @@ export async function evaluate(
   // 5. Transaction visibility check
   checks_performed.push('transaction_visibility')
   if (permissions.transactions?.lookback_days && request.age_days !== undefined) {
-    if (request.age_days > permissions.transactions.lookback_days) {
+    if ((request.age_days as number) > permissions.transactions.lookback_days) {
       return {
         decision: 'deny',
         reason: `transaction age ${request.age_days} days exceeds lookback window ${permissions.transactions.lookback_days}`,
@@ -197,9 +192,9 @@ export async function evaluate(
 }
 
 function checkGlobalRules(
-  request: Record<string, any>,
+  request: Record<string, unknown>,
   policy: PolicyConfig,
-  context: Record<string, any>
+  context: Record<string, unknown>
 ): { decision: PolicyDecision; reason: string; policy_rule: string } | null {
   const global = policy.global
 
@@ -209,7 +204,7 @@ function checkGlobalRules(
 
   // max_concurrent_agents
   if (global.max_concurrent_agents !== undefined && context.concurrent_agents !== undefined) {
-    if (context.concurrent_agents > global.max_concurrent_agents) {
+    if ((context.concurrent_agents as number) > global.max_concurrent_agents) {
       return {
         decision: 'deny',
         reason: `concurrent agents (${context.concurrent_agents}) exceeds limit (${global.max_concurrent_agents})`,
@@ -220,7 +215,7 @@ function checkGlobalRules(
 
   // max_total_daily_spend
   if (global.max_total_daily_spend !== undefined && request.amount !== undefined) {
-    const total_spend = (context.total_daily_spend || 0) + request.amount
+    const total_spend = ((context.total_daily_spend as number) || 0) + (request.amount as number)
     if (total_spend > global.max_total_daily_spend) {
       return {
         decision: 'deny',
@@ -234,7 +229,7 @@ function checkGlobalRules(
   if (
     global.global_blocked_categories &&
     request.category &&
-    global.global_blocked_categories.includes(request.category)
+    global.global_blocked_categories.includes(request.category as string)
   ) {
     return {
       decision: 'deny',
@@ -247,7 +242,7 @@ function checkGlobalRules(
   if (
     global.global_blocked_merchants &&
     request.merchant &&
-    global.global_blocked_merchants.includes(request.merchant)
+    global.global_blocked_merchants.includes(request.merchant as string)
   ) {
     return {
       decision: 'deny',
@@ -260,14 +255,14 @@ function checkGlobalRules(
 }
 
 function checkSchedule(
-  schedule: Record<string, any>,
-  context: Record<string, any>
+  schedule: ScheduleConfig,
+  context: Record<string, unknown>
 ): { decision: PolicyDecision; reason: string; policy_rule: string } | null {
   const behavior = schedule.behavior_outside_schedule || 'deny'
 
   // Check blackout_dates
   if (schedule.blackout_dates && context.current_date) {
-    if (schedule.blackout_dates.includes(context.current_date)) {
+    if (schedule.blackout_dates.includes(context.current_date as string)) {
       const decision: PolicyDecision = behavior === 'escalate' ? 'escalate' : 'deny'
       return {
         decision,
@@ -279,7 +274,7 @@ function checkSchedule(
 
   // Check active_days
   if (schedule.active_days && context.current_day) {
-    const dayLower = context.current_day.toLowerCase()
+    const dayLower = (context.current_day as string).toLowerCase()
     if (!schedule.active_days.map((d: string) => d.toLowerCase()).includes(dayLower)) {
       const decision: PolicyDecision = behavior === 'escalate' ? 'escalate' : 'deny'
       return {
@@ -293,7 +288,7 @@ function checkSchedule(
   // Check active_hours
   if (schedule.active_hours && context.current_time) {
     const [start, end] = schedule.active_hours.split('-')
-    if (!isTimeInRange(context.current_time, start, end)) {
+    if (!isTimeInRange(context.current_time as string, start, end)) {
       const decision: PolicyDecision = behavior === 'escalate' ? 'escalate' : 'deny'
       return {
         decision,
@@ -327,9 +322,9 @@ function timeToMinutes(time: string): number {
 }
 
 function checkSpendingLimits(
-  request: Record<string, any>,
+  request: Record<string, unknown>,
   permissions: AgentPermissions,
-  context: Record<string, any>
+  context: Record<string, unknown>
 ): { decision: PolicyDecision; reason: string; policy_rule: string } | null {
   const spending = permissions.spending
 
@@ -339,7 +334,7 @@ function checkSpendingLimits(
 
   // max_per_transaction: boundary is <= allows
   if (spending.max_per_transaction !== undefined && request.amount !== undefined) {
-    if (request.amount > spending.max_per_transaction) {
+    if ((request.amount as number) > spending.max_per_transaction) {
       return {
         decision: 'deny',
         reason: `amount $${request.amount} exceeds max_per_transaction $${spending.max_per_transaction}`,
@@ -350,8 +345,8 @@ function checkSpendingLimits(
 
   // max_daily
   if (spending.max_daily !== undefined && request.amount !== undefined) {
-    const today_spend = context.today_spend || 0
-    if (today_spend + request.amount > spending.max_daily) {
+    const today_spend = ((context.today_spend as number) || 0)
+    if (today_spend + (request.amount as number) > spending.max_daily) {
       return {
         decision: 'deny',
         reason: `daily spend ($${today_spend} + $${request.amount}) exceeds limit $${spending.max_daily}`,
@@ -376,7 +371,7 @@ function checkSpendingLimits(
     if (request.merchant !== undefined) {
       // merchants.allow: If NOT in allow list → deny
       if (allow && allow.length > 0) {
-        if (!allow.includes(request.merchant)) {
+        if (!allow.includes(request.merchant as string)) {
           return {
             decision: 'deny',
             reason: `merchant "${request.merchant}" not in allow list`,
@@ -387,7 +382,7 @@ function checkSpendingLimits(
 
       // merchants.block: If IN block list → deny
       if (block && block.length > 0) {
-        if (block.includes(request.merchant)) {
+        if (block.includes(request.merchant as string)) {
           return {
             decision: 'deny',
             reason: `merchant "${request.merchant}" is blocked`,
@@ -402,7 +397,7 @@ function checkSpendingLimits(
   if (spending.categories && request.category !== undefined) {
     // categories.block: If IN block list → deny
     if (spending.categories.block && spending.categories.block.length > 0) {
-      if (spending.categories.block.includes(request.category)) {
+      if (spending.categories.block.includes(request.category as string)) {
         return {
           decision: 'deny',
           reason: `category "${request.category}" is blocked`,
@@ -416,30 +411,32 @@ function checkSpendingLimits(
 }
 
 function checkEscalationTriggers(
-  request: Record<string, any>,
-  triggers: Array<Record<string, any>>,
-  context: Record<string, any>
+  request: Record<string, unknown>,
+  triggers: EscalationTrigger[],
+  context: Record<string, unknown>
 ): boolean {
   // Multiple triggers use OR logic (any match → escalate)
   for (const trigger of triggers) {
+    const t = trigger as Record<string, unknown>
+
     // amount_exceeds: STRICT greater-than: $50 does NOT trigger amount_exceeds:50, $51 does
-    if (trigger.amount_exceeds !== undefined && request.amount !== undefined) {
-      if (request.amount > trigger.amount_exceeds) {
+    if (t.amount_exceeds !== undefined && request.amount !== undefined) {
+      if ((request.amount as number) > (t.amount_exceeds as number)) {
         return true
       }
     }
 
     // new_merchant
-    if (trigger.new_merchant === true && request.merchant !== undefined) {
-      const known_merchants = context.known_merchants || []
-      if (!known_merchants.includes(request.merchant)) {
+    if (t.new_merchant === true && request.merchant !== undefined) {
+      const known_merchants = (context.known_merchants as string[]) || []
+      if (!known_merchants.includes(request.merchant as string)) {
         return true
       }
     }
 
     // category
-    if (trigger.category && Array.isArray(trigger.category) && request.category !== undefined) {
-      if (trigger.category.includes(request.category)) {
+    if (t.category && Array.isArray(t.category) && request.category !== undefined) {
+      if ((t.category as string[]).includes(request.category as string)) {
         return true
       }
     }

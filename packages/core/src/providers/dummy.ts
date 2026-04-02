@@ -641,13 +641,13 @@ export class DummyDataProvider implements DataProvider {
     },
   ]
 
-  async getAccounts(userId: string): Promise<Account[]> {
+  async getAccounts(_userId: string): Promise<Account[]> {
     // Return a copy to ensure determinism
     return JSON.parse(JSON.stringify(this.accounts))
   }
 
   async getTransactions(
-    userId: string,
+    _userId: string,
     accountId: string,
     opts?: TransactionQueryOpts
   ): Promise<Transaction[]> {
@@ -666,7 +666,7 @@ export class DummyDataProvider implements DataProvider {
     return JSON.parse(JSON.stringify(filtered))
   }
 
-  async getBalance(userId: string, accountId: string): Promise<Balance> {
+  async getBalance(_userId: string, accountId: string): Promise<Balance> {
     const account = this.accounts.find(a => a.id === accountId)
     if (!account) {
       throw new Error(`Account ${accountId} not found`)
@@ -681,7 +681,7 @@ export class DummyDataProvider implements DataProvider {
     }
   }
 
-  async getRecurringCharges(userId: string, accountId: string): Promise<RecurringCharge[]> {
+  async getRecurringCharges(_userId: string, _accountId: string): Promise<RecurringCharge[]> {
     // Return a fixed set of recurring charges for the account
     const charges: RecurringCharge[] = [
       {

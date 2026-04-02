@@ -6,7 +6,7 @@
 import { existsSync, writeFileSync, readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { dirname, resolve, join } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { loadConfig } from '../config.js'
 
 function getServerPath(): string {

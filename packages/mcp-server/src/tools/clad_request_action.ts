@@ -1,4 +1,5 @@
-import { evaluate, type PolicyConfig, type DataProvider, type ApprovalQueue } from '@clad/core'
+import { evaluate } from '@clad/core'
+import type { ToolContext } from '../types.js'
 
 export const name = 'clad_request_action'
 export const description = 'Request a spending action, evaluated by policy → allow/deny/escalate'
@@ -13,16 +14,9 @@ export const inputSchema = {
   required: ['amount', 'merchant', 'category'],
 }
 
-export interface Context {
-  agentId: string
-  policy: PolicyConfig
-  provider: DataProvider
-  approvalQueue: ApprovalQueue
-}
-
 export async function handler(
   args: { amount: number; merchant: string; category: string; description?: string },
-  context: Context
+  context: ToolContext
 ) {
   const result = await evaluate(context.agentId, {
     type: 'spending_request',

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { PolicyEvaluation, PolicyConfig, AgentPermissions } from '../../src/index.js'
+import { PolicyConfig } from '../../src/index.js'
 
 describe('Policy Evaluator', () => {
   describe('Data Visibility Tests', () => {

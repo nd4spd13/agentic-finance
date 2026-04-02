@@ -1,4 +1,5 @@
-import { evaluate, type PolicyConfig, type DataProvider, type TransactionQueryOpts } from '@clad/core'
+import { evaluate, type TransactionQueryOpts } from '@clad/core'
+import type { ToolContext } from '../types.js'
 
 export const name = 'clad_get_transactions'
 export const description = 'Get transactions with policy-based redaction'
@@ -14,15 +15,9 @@ export const inputSchema = {
   required: ['user_id', 'account_id'],
 }
 
-export interface Context {
-  agentId: string
-  policy: PolicyConfig
-  provider: DataProvider
-}
-
 export async function handler(
   args: { user_id: string; account_id: string; start_date?: string; end_date?: string; count?: number },
-  context: Context
+  context: ToolContext
 ) {
   const result = await evaluate(context.agentId, {
     type: 'data_request',

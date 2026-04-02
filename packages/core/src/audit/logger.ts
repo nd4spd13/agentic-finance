@@ -3,6 +3,19 @@ import { createHash } from 'crypto'
 import { nanoid } from 'nanoid'
 import type { AuditRecord } from '../types/index.js'
 
+interface AuditRow {
+  id: string
+  timestamp: string
+  agent_id: string
+  event_type: string
+  tool_name: string
+  decision: string
+  reason: string
+  payload: string
+  receipt_hash: string
+  previous_hash: string
+}
+
 const GENESIS_HASH = '0'.repeat(64)
 
 export class AuditLogger {
@@ -158,7 +171,7 @@ export class AuditLogger {
     end_time?: Date
   }): AuditRecord[] {
     let query = 'SELECT * FROM audit_records WHERE 1=1'
-    const params: any[] = []
+    const params: string[] = []
 
     if (filters?.agent_id) {
       query += ' AND agent_id = ?'
@@ -184,17 +197,17 @@ export class AuditLogger {
     query += ' ORDER BY timestamp ASC'
 
     const stmt = this.db.prepare(query)
-    const rows = stmt.all(...params) as any[]
+    const rows = stmt.all(...params) as unknown as AuditRow[]
 
     return rows.map(row => ({
       id: row.id,
       timestamp: row.timestamp,
       agent_id: row.agent_id,
-      event_type: row.event_type,
-      tool_name: row.tool_name,
-      decision: row.decision,
-      reason: row.reason,
-      payload: row.payload,
+      event_type: row.event_type as AuditRecord['event_type'],
+      tool_name: row.tool_name || undefined,
+      decision: (row.decision || undefined) as AuditRecord['decision'],
+      reason: row.reason || undefined,
+      payload: row.payload || undefined,
       receipt_hash: row.receipt_hash,
       previous_hash: row.previous_hash,
     }))
@@ -258,6 +271,10 @@ export class AuditLogger {
         this.lastHash = GENESIS_HASH
       }
     }
+  }
+
+  close(): void {
+    this.db.close()
   }
 
   private computeHash(

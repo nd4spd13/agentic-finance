@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 
 // Dynamic import of ajv to handle ESM module
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let Ajv: any
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -34,10 +35,10 @@ export async function parsePolicy(filePath: string): Promise<PolicyConfig> {
   }
 
   // Parse YAML
-  let parsed: any
+  let parsed: unknown
   try {
     parsed = parseYaml(content)
-  } catch (error: any) {
+  } catch (error: unknown) {
     throw new Error(`Failed to parse YAML: ${error instanceof Error ? error.message : String(error)}`)
   }
 
@@ -52,7 +53,7 @@ export async function parsePolicy(filePath: string): Promise<PolicyConfig> {
   const validate = ajv.compile(schema)
 
   if (!validate(parsed)) {
-    const errors = validate.errors?.map((err: any) => `${err.instancePath || 'root'}: ${err.message}`).join('; ')
+    const errors = validate.errors?.map((err: { instancePath?: string; message?: string }) => `${err.instancePath || 'root'}: ${err.message}`).join('; ')
     throw new Error(`Policy validation failed: ${errors}`)
   }
 
