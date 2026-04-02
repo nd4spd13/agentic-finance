@@ -17,6 +17,7 @@ import {
   denyCommand,
   lockdownCommand,
 } from './commands/approvals.js'
+import { uiCommand } from './commands/ui.js'
 
 const program = new Command()
 
@@ -142,6 +143,15 @@ program
   .description('Immediately deny all pending approvals')
   .action(() => {
     lockdownCommand()
+  })
+
+// ── clad ui ──────────────────────────────────────────────────────────────
+program
+  .command('ui')
+  .description('Open the local policy editor UI in your browser')
+  .option('-p, --port <number>', 'Port to listen on', (v) => parseInt(v, 10), 3456)
+  .action(async (opts: { port: number }) => {
+    await uiCommand({ port: opts.port })
   })
 
 program.parseAsync(process.argv).catch((err) => {
