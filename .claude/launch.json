@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "Clad UI (static preview)",
+      "runtimeExecutable": "/usr/local/bin/node",
+      "runtimeArgs": ["packages/cli/static/serve-preview.mjs"],
+      "port": 3456
+    },
+    {
       "name": "Docs Site (Vitepress)",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["exec", "pnpm", "--", "dev"],

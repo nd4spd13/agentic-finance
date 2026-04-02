@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Clad — Policy Editor</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
+    .tag { display: inline-flex; align-items: center; background: #e0e7ff; color: #3730a3; border-radius: 4px; padding: 1px 6px; font-size: 12px; gap: 4px; }
+    .tag button { line-height: 1; color: #6366f1; cursor: pointer; }
+    pre.yaml { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 12px; white-space: pre; }
+    .keyword { color: #7c3aed; }
+    .string  { color: #0f766e; }
+    .number  { color: #b45309; }
+    .bool    { color: #1d4ed8; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900 h-screen overflow-hidden">
+<div id="root"></div>
+
+<script>
+/* ============================================================
+   Minimal Babel-free JSX runtime using React.createElement
+   ============================================================ */
+const { createElement: h, useState, useEffect, useCallback, useRef, Fragment } = React
+
+/* ── YAML highlighter ─────────────────────────────────────── */
+function highlightYaml(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/(^|\n)(\s*)([\w_]+)(\s*:)/g, '$1$2<span class="keyword">$3</span>$4')
+    .replace(/:\s*("[^"]*"|'[^']*')/g, ': <span class="string">$1</span>')
+    .replace(/:\s*(\btrue\b|\bfalse\b)/g, ': <span class="bool">$1</span>')
+    .replace(/:\s*(\d+(?:\.\d+)?)\s*$/gm, ': <span class="number">$1</span>')
+    .replace(/- ("[^"]*"|'[^']*')/g, '- <span class="string">$1</span>')
+}
+
+/* ── Tag input ────────────────────────────────────────────── */
+function TagInput({ values = [], onChange, placeholder = 'Add…' }) {
+  const [input, setInput] = useState('')
+  function add() {
+    const v = input.trim()
+    if (v && !values.includes(v)) onChange([...values, v])
+    setInput('')
+  }
+  function remove(v) { onChange(values.filter(x => x !== v)) }
+  return h('div', { className: 'flex flex-wrap gap-1 items-center border rounded px-2 py-1 bg-white min-h-[34px]' },
+    values.map(v => h('span', { key: v, className: 'tag' }, v,
+      h('button', { onClick: () => remove(v), type: 'button' }, '×')
+    )),
+    h('input', {
+      className: 'flex-1 outline-none text-sm min-w-[80px]',
+      value: input,
+      placeholder,
+      onChange: e => setInput(e.target.value),
+      onKeyDown: e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } },
+      onBlur: add
+    })
+  )
+}
+
+/* ── Toggle switch ────────────────────────────────────────── */
+function Toggle({ checked, onChange, label }) {
+  return h('label', { className: 'flex items-center gap-2 cursor-pointer select-none' },
+    h('div', { className: 'relative' },
+      h('input', { type: 'checkbox', className: 'sr-only', checked: !!checked, onChange: e => onChange(e.target.checked) }),
+      h('div', { className: `w-10 h-5 rounded-full transition-colors ${checked ? 'bg-brand-500' : 'bg-gray-300'}` }),
+      h('div', { className: `absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${checked ? 'translate-x-5' : ''}` })
+    ),
+    label && h('span', { className: 'text-sm text-gray-700' }, label)
+  )
+}
+
+/* ── Collapsible section ──────────────────────────────────── */
+function Section({ title, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return h('div', { className: 'border rounded mb-2' },
+    h('button', {
+      type: 'button',
+      className: 'w-full flex justify-between items-center px-3 py-2 text-sm font-medium text-left hover:bg-gray-50',
+      onClick: () => setOpen(o => !o)
+    },
+      h('span', null, title),
+      h('span', { className: 'text-gray-400' }, open ? '▲' : '▼')
+    ),
+    open && h('div', { className: 'px-3 py-3 border-t space-y-3' }, children)
+  )
+}
+
+/* ── Field row ────────────────────────────────────────────── */
+function Field({ label, children }) {
+  return h('div', { className: 'flex items-start gap-3' },
+    h('label', { className: 'w-44 shrink-0 text-sm text-gray-600 pt-1' }, label),
+    h('div', { className: 'flex-1' }, children)
+  )
+}
+
+function NumInput({ value, onChange, placeholder = '' }) {
+  return h('input', {
+    type: 'number',
+    className: 'border rounded px-2 py-1 text-sm w-full',
+    value: value ?? '',
+    placeholder,
+    onChange: e => {
+      const v = e.target.value
+      onChange(v === '' ? undefined : Number(v))
+    }
+  })
+}
+
+function TextInput({ value, onChange, placeholder = '' }) {
+  return h('input', {
+    type: 'text',
+    className: 'border rounded px-2 py-1 text-sm w-full',
+    value: value ?? '',
+    placeholder,
+    onChange: e => onChange(e.target.value || undefined)
+  })
+}
+
+function Select({ value, onChange, options }) {
+  return h('select', {
+    className: 'border rounded px-2 py-1 text-sm',
+    value: value ?? '',
+    onChange: e => onChange(e.target.value || undefined)
+  },
+    h('option', { value: '' }, '—'),
+    options.map(o => h('option', { key: o.value, value: o.value }, o.label))
+  )
+}
+
+/* ── IANA timezone list (common subset) ───────────────────── */
+const TIMEZONES = [
+  'America/New_York','America/Chicago','America/Denver','America/Los_Angeles',
+  'America/Phoenix','America/Anchorage','America/Adak','Pacific/Honolulu',
+  'America/Toronto','America/Vancouver','America/Sao_Paulo','America/Buenos_Aires',
+  'Europe/London','Europe/Paris','Europe/Berlin','Europe/Moscow',
+  'Africa/Cairo','Africa/Johannesburg',
+  'Asia/Dubai','Asia/Kolkata','Asia/Dhaka','Asia/Bangkok','Asia/Singapore',
+  'Asia/Shanghai','Asia/Tokyo','Asia/Seoul',
+  'Australia/Sydney','Australia/Melbourne','Pacific/Auckland','UTC'
+]
+
+const DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
+const ACCOUNT_TYPES = ['checking','savings','credit','loan','investment']
+
+/* ── deep clone / set utility ─────────────────────────────── */
+function deepClone(x) { return JSON.parse(JSON.stringify(x)) }
+function setIn(obj, path, value) {
+  const result = deepClone(obj)
+  let cur = result
+  for (let i = 0; i < path.length - 1; i++) {
+    if (cur[path[i]] === undefined || cur[path[i]] === null) cur[path[i]] = {}
+    cur = cur[path[i]]
+  }
+  if (value === undefined) {
+    delete cur[path[path.length - 1]]
+  } else {
+    cur[path[path.length - 1]] = value
+  }
+  return result
+}
+function getIn(obj, path) {
+  let cur = obj
+  for (const k of path) {
+    if (cur == null) return undefined
+    cur = cur[k]
+  }
+  return cur
+}
+
+/* ── Trigger types ────────────────────────────────────────── */
+const TRIGGER_TYPES = [
+  { value: 'amount_exceeds', label: 'Amount exceeds', inputType: 'number' },
+  { value: 'new_merchant', label: 'New merchant', inputType: 'boolean' },
+  { value: 'new_category', label: 'New category', inputType: 'boolean' },
+  { value: 'category', label: 'Category list', inputType: 'tags' },
+  { value: 'merchant', label: 'Merchant list', inputType: 'tags' },
+  { value: 'daily_spend_exceeds_pct', label: 'Daily spend % exceeds', inputType: 'number' },
+]
+
+function triggerKey(trigger) { return Object.keys(trigger)[0] }
+function triggerVal(trigger) { return Object.values(trigger)[0] }
+
+function TriggerRow({ trigger, onChange, onRemove }) {
+  const key = triggerKey(trigger)
+  const val = triggerVal(trigger)
+  const def = TRIGGER_TYPES.find(t => t.value === key) || TRIGGER_TYPES[0]
+
+  function changeType(newKey) {
+    const newDef = TRIGGER_TYPES.find(t => t.value === newKey)
+    const defaultVal = newDef?.inputType === 'boolean' ? true : newDef?.inputType === 'tags' ? [] : 0
+    onChange({ [newKey]: defaultVal })
+  }
+
+  return h('div', { className: 'flex items-center gap-2' },
+    h('select', {
+      className: 'border rounded px-2 py-1 text-sm',
+      value: key,
+      onChange: e => changeType(e.target.value)
+    }, TRIGGER_TYPES.map(t => h('option', { key: t.value, value: t.value }, t.label))),
+    def.inputType === 'number' && h('input', {
+      type: 'number',
+      className: 'border rounded px-2 py-1 text-sm w-24',
+      value: val ?? 0,
+      onChange: e => onChange({ [key]: Number(e.target.value) })
+    }),
+    def.inputType === 'boolean' && h(Toggle, { checked: val, onChange: v => onChange({ [key]: v }) }),
+    def.inputType === 'tags' && h('div', { className: 'flex-1' },
+      h(TagInput, {
+        values: Array.isArray(val) ? val : [],
+        onChange: v => onChange({ [key]: v })
+      })
+    ),
+    h('button', {
+      type: 'button',
+      className: 'text-red-400 hover:text-red-600 text-lg leading-none',
+      onClick: onRemove
+    }, '×')
+  )
+}
+
+/* ── Agent Editor ─────────────────────────────────────────── */
+function AgentEditor({ agentId, agent, onChange }) {
+  const p = agent.permissions || {}
+
+  function updatePerm(path, value) {
+    const next = deepClone(agent)
+    const base = next.permissions || {}
+    setIn(base, path, value)
+    // Clean empty objects
+    if (value === undefined) pruneEmpty(base)
+    next.permissions = base
+    onChange(next)
+  }
+
+  function pruneEmpty(obj) {
+    for (const k of Object.keys(obj)) {
+      if (typeof obj[k] === 'object' && obj[k] !== null && !Array.isArray(obj[k])) {
+        pruneEmpty(obj[k])
+        if (Object.keys(obj[k]).length === 0) delete obj[k]
+      }
+    }
+  }
+
+  // Accounts
+  const acc = p.accounts || {}
+  const tx = p.transactions || {}
+  const sp = p.spending || {}
+  const esc = p.escalation || {}
+  const sched = p.schedule || {}
+  const audit = p.audit || {}
+
+  return h('div', { className: 'space-y-1' },
+    // Description
+    h('div', { className: 'mb-3' },
+      h('label', { className: 'block text-xs font-semibold text-gray-500 uppercase mb-1' }, 'Description'),
+      h('textarea', {
+        className: 'w-full border rounded px-2 py-1 text-sm resize-none',
+        rows: 2,
+        value: agent.description || '',
+        onChange: e => onChange({ ...agent, description: e.target.value })
+      })
+    ),
+
+    /* 1. Accounts */
+    h(Section, { title: '1. Accounts' },
+      h(Field, { label: 'Visible account types' },
+        h('div', { className: 'flex flex-wrap gap-2' },
+          ACCOUNT_TYPES.map(type => h('label', { key: type, className: 'flex items-center gap-1 text-sm cursor-pointer' },
+            h('input', {
+              type: 'checkbox',
+              checked: (acc.visible || []).includes(type),
+              onChange: e => {
+                const cur = acc.visible || []
+                updatePerm(['accounts', 'visible'], e.target.checked ? [...cur, type] : cur.filter(v => v !== type))
+              }
+            }), type
+          ))
+        )
+      ),
+      h(Field, { label: 'Balance visible' },
+        h(Toggle, { checked: acc.balance, onChange: v => updatePerm(['accounts', 'balance'], v) })
+      ),
+      h(Field, { label: 'Account number' },
+        h(Toggle, { checked: acc.account_number, onChange: v => updatePerm(['accounts', 'account_number'], v) })
+      ),
+      h(Field, { label: 'Routing number' },
+        h(Toggle, { checked: acc.routing_number, onChange: v => updatePerm(['accounts', 'routing_number'], v) })
+      )
+    ),
+
+    /* 2. Transactions */
+    h(Section, { title: '2. Transactions' },
+      h(Field, { label: 'Can read transactions' },
+        h(Toggle, { checked: tx.read, onChange: v => updatePerm(['transactions', 'read'], v) })
+      ),
+      h(Field, { label: 'Lookback days' },
+        h(NumInput, { value: tx.lookback_days, placeholder: '30', onChange: v => updatePerm(['transactions', 'lookback_days'], v) })
+      ),
+      h(Field, { label: 'Amount visibility cap ($)' },
+        h(NumInput, { value: tx.amount_visibility_cap, placeholder: 'No cap', onChange: v => updatePerm(['transactions', 'amount_visibility_cap'], v) })
+      ),
+      h(Field, { label: 'Description visible' },
+        h(Toggle, { checked: tx.description_visibility, onChange: v => updatePerm(['transactions', 'description_visibility'], v) })
+      )
+    ),
+
+    /* 3. Spending */
+    h(Section, { title: '3. Spending' },
+      h('div', { className: 'grid grid-cols-2 gap-3 mb-3' },
+        h(Field, { label: 'Max per transaction ($)' },
+          h(NumInput, { value: sp.max_per_transaction, onChange: v => updatePerm(['spending', 'max_per_transaction'], v) })
+        ),
+        h(Field, { label: 'Max daily ($)' },
+          h(NumInput, { value: sp.max_daily, onChange: v => updatePerm(['spending', 'max_daily'], v) })
+        ),
+        h(Field, { label: 'Max weekly ($)' },
+          h(NumInput, { value: sp.max_weekly, onChange: v => updatePerm(['spending', 'max_weekly'], v) })
+        ),
+        h(Field, { label: 'Max monthly ($)' },
+          h(NumInput, { value: sp.max_monthly, onChange: v => updatePerm(['spending', 'max_monthly'], v) })
+        )
+      ),
+      h(Field, { label: 'Merchants: allow' },
+        h(TagInput, { values: getIn(sp, ['merchants', 'allow']) || [], onChange: v => updatePerm(['spending', 'merchants', 'allow'], v.length ? v : undefined) })
+      ),
+      h(Field, { label: 'Merchants: block' },
+        h(TagInput, { values: getIn(sp, ['merchants', 'block']) || [], onChange: v => updatePerm(['spending', 'merchants', 'block'], v.length ? v : undefined) })
+      ),
+      h(Field, { label: 'Categories: allow' },
+        h(TagInput, { values: getIn(sp, ['categories', 'allow']) || [], onChange: v => updatePerm(['spending', 'categories', 'allow'], v.length ? v : undefined) })
+      ),
+      h(Field, { label: 'Categories: block' },
+        h(TagInput, { values: getIn(sp, ['categories', 'block']) || [], onChange: v => updatePerm(['spending', 'categories', 'block'], v.length ? v : undefined) })
+      ),
+      h(Field, { label: 'Require itemization' },
+        h(Toggle, { checked: sp.require_itemization, onChange: v => updatePerm(['spending', 'require_itemization'], v) })
+      )
+    ),
+
+    /* 4. Escalation */
+    h(Section, { title: '4. Escalation' },
+      h('div', { className: 'mb-3' },
+        h('div', { className: 'text-xs font-medium text-gray-500 uppercase mb-1' }, 'Triggers'),
+        h('div', { className: 'space-y-2' },
+          (esc.triggers || []).map((trigger, i) =>
+            h(TriggerRow, {
+              key: i,
+              trigger,
+              onChange: updated => {
+                const triggers = [...(esc.triggers || [])]
+                triggers[i] = updated
+                updatePerm(['escalation', 'triggers'], triggers)
+              },
+              onRemove: () => {
+                const triggers = (esc.triggers || []).filter((_, j) => j !== i)
+                updatePerm(['escalation', 'triggers'], triggers.length ? triggers : undefined)
+              }
+            })
+          ),
+          h('button', {
+            type: 'button',
+            className: 'text-sm text-brand-600 hover:underline mt-1',
+            onClick: () => {
+              const triggers = [...(esc.triggers || []), { amount_exceeds: 0 }]
+              updatePerm(['escalation', 'triggers'], triggers)
+            }
+          }, '+ Add trigger')
+        )
+      ),
+      h(Field, { label: 'Channel' },
+        h(Select, {
+          value: esc.channel,
+          onChange: v => updatePerm(['escalation', 'channel'], v),
+          options: [{ value: 'cli', label: 'CLI' }, { value: 'webhook', label: 'Webhook' }]
+        })
+      ),
+      h(Field, { label: 'Timeout' },
+        h(TextInput, { value: esc.timeout, placeholder: '5m', onChange: v => updatePerm(['escalation', 'timeout'], v) })
+      ),
+      h(Field, { label: 'Default on timeout' },
+        h(Select, {
+          value: esc.default_on_timeout,
+          onChange: v => updatePerm(['escalation', 'default_on_timeout'], v),
+          options: [{ value: 'deny', label: 'Deny' }, { value: 'allow', label: 'Allow' }]
+        })
+      )
+    ),
+
+    /* 5. Schedule */
+    h(Section, { title: '5. Schedule' },
+      h(Field, { label: 'Active hours (HH:MM-HH:MM)' },
+        h(TextInput, { value: sched.active_hours, placeholder: '09:00-22:00', onChange: v => updatePerm(['schedule', 'active_hours'], v) })
+      ),
+      h(Field, { label: 'Active days' },
+        h('div', { className: 'flex flex-wrap gap-2' },
+          DAYS.map(day => h('label', { key: day, className: 'flex items-center gap-1 text-sm cursor-pointer capitalize' },
+            h('input', {
+              type: 'checkbox',
+              checked: (sched.active_days || []).includes(day),
+              onChange: e => {
+                const cur = sched.active_days || []
+                updatePerm(['schedule', 'active_days'], e.target.checked ? [...cur, day] : cur.filter(d => d !== day))
+              }
+            }), day.slice(0, 3)
+          ))
+        )
+      ),
+      h(Field, { label: 'Timezone' },
+        h('select', {
+          className: 'border rounded px-2 py-1 text-sm w-full',
+          value: sched.timezone || '',
+          onChange: e => updatePerm(['schedule', 'timezone'], e.target.value || undefined)
+        },
+          h('option', { value: '' }, '— none —'),
+          TIMEZONES.map(tz => h('option', { key: tz, value: tz }, tz))
+        )
+      ),
+      h(Field, { label: 'Blackout dates (YYYY-MM-DD)' },
+        h(TagInput, {
+          values: sched.blackout_dates || [],
+          placeholder: '2026-12-25',
+          onChange: v => updatePerm(['schedule', 'blackout_dates'], v.length ? v : undefined)
+        })
+      ),
+      h(Field, { label: 'Outside schedule' },
+        h(Select, {
+          value: sched.behavior_outside_schedule,
+          onChange: v => updatePerm(['schedule', 'behavior_outside_schedule'], v),
+          options: [{ value: 'deny', label: 'Deny' }, { value: 'escalate', label: 'Escalate' }]
+        })
+      )
+    ),
+
+    /* 6. Audit */
+    h(Section, { title: '6. Audit' },
+      h(Field, { label: 'Log all queries' },
+        h(Toggle, { checked: audit.log_all_queries, onChange: v => updatePerm(['audit', 'log_all_queries'], v) })
+      ),
+      h(Field, { label: 'Log policy evaluations' },
+        h(Toggle, { checked: audit.log_policy_evaluations, onChange: v => updatePerm(['audit', 'log_policy_evaluations'], v) })
+      ),
+      h(Field, { label: 'Retention' },
+        h(TextInput, { value: audit.retention, placeholder: '90d', onChange: v => updatePerm(['audit', 'retention'], v) })
+      )
+    )
+  )
+}
+
+/* ── Global Rules Editor ──────────────────────────────────── */
+function GlobalEditor({ global: g = {}, onChange }) {
+  function upd(key, value) { onChange({ ...g, [key]: value }) }
+  return h('div', { className: 'space-y-3' },
+    h('div', { className: 'grid grid-cols-2 gap-3' },
+      h(Field, { label: 'Max daily spend ($)' },
+        h(NumInput, { value: g.max_total_daily_spend, onChange: v => upd('max_total_daily_spend', v) })
+      ),
+      h(Field, { label: 'Max weekly spend ($)' },
+        h(NumInput, { value: g.max_total_weekly_spend, onChange: v => upd('max_total_weekly_spend', v) })
+      ),
+      h(Field, { label: 'Max monthly spend ($)' },
+        h(NumInput, { value: g.max_total_monthly_spend, onChange: v => upd('max_total_monthly_spend', v) })
+      ),
+      h(Field, { label: 'Max concurrent agents' },
+        h(NumInput, { value: g.max_concurrent_agents, onChange: v => upd('max_concurrent_agents', v) })
+      ),
+      h(Field, { label: 'Max pending escalations' },
+        h(NumInput, { value: g.max_pending_escalations, onChange: v => upd('max_pending_escalations', v) })
+      )
+    ),
+    h(Field, { label: 'Blocked categories' },
+      h(TagInput, { values: g.global_blocked_categories || [], onChange: v => upd('global_blocked_categories', v.length ? v : undefined) })
+    ),
+    h(Field, { label: 'Blocked merchants' },
+      h(TagInput, { values: g.global_blocked_merchants || [], onChange: v => upd('global_blocked_merchants', v.length ? v : undefined) })
+    )
+  )
+}
+
+/* ── Main App ─────────────────────────────────────────────── */
+function App() {
+  const [policy, setPolicy] = useState(null)
+  const [selectedAgent, setSelectedAgent] = useState(null) // agent id or 'global'
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
+  const [saveOk, setSaveOk] = useState(false)
+  const [addingAgent, setAddingAgent] = useState(false)
+  const [newAgentName, setNewAgentName] = useState('')
+  const [deletingAgent, setDeletingAgent] = useState(null)
+
+  // Load on mount
+  useEffect(() => {
+    fetch('/api/policy')
+      .then(r => r.json())
+      .then(data => {
+        setPolicy(data.policy || { agents: {} })
+        setLoading(false)
+      })
+      .catch(() => {
+        setPolicy({ agents: {} })
+        setLoading(false)
+      })
+  }, [])
+
+  // Derived YAML
+  const yamlText = policy ? jsyaml.dump(policy, { lineWidth: -1 }) : ''
+
+  function updateAgent(id, agent) {
+    setPolicy(prev => ({ ...prev, agents: { ...prev.agents, [id]: agent } }))
+    setSaveOk(false)
+    setSaveError(null)
+  }
+
+  function addAgent() {
+    const id = newAgentName.trim()
+    if (!id) return
+    setPolicy(prev => ({
+      ...prev,
+      agents: {
+        ...prev.agents,
+        [id]: { description: '', permissions: {} }
+      }
+    }))
+    setSelectedAgent(id)
+    setNewAgentName('')
+    setAddingAgent(false)
+  }
+
+  function deleteAgent(id) {
+    const agents = { ...policy.agents }
+    delete agents[id]
+    setPolicy(prev => ({ ...prev, agents }))
+    if (selectedAgent === id) setSelectedAgent(null)
+    setDeletingAgent(null)
+  }
+
+  async function save() {
+    setSaving(true)
+    setSaveError(null)
+    setSaveOk(false)
+    try {
+      const res = await fetch('/api/policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy })
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setSaveOk(true)
+        setTimeout(() => setSaveOk(false), 3000)
+      } else {
+        setSaveError(data.error || JSON.stringify(data.errors))
+      }
+    } catch (e) {
+      setSaveError(String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return h('div', { className: 'flex items-center justify-center h-screen text-gray-500' }, 'Loading policy…')
+  }
+
+  const agents = policy?.agents || {}
+  const agentIds = Object.keys(agents)
+  const permCount = (id) => {
+    const p = agents[id]?.permissions || {}
+    return Object.keys(p).length
+  }
+
+  return h('div', { className: 'flex h-screen overflow-hidden' },
+
+    /* ── Left panel ─────────────────────────────────────── */
+    h('div', { className: 'w-64 bg-white border-r flex flex-col shrink-0' },
+      h('div', { className: 'px-4 py-3 border-b' },
+        h('div', { className: 'text-xs font-bold text-brand-600 tracking-widest uppercase' }, 'Clad'),
+        h('div', { className: 'text-sm text-gray-500' }, 'Policy Editor')
+      ),
+      h('div', { className: 'flex-1 overflow-y-auto scrollbar-thin p-2 space-y-1' },
+        /* Global Rules card */
+        h('div', {
+          className: `rounded px-3 py-2 cursor-pointer text-sm border ${selectedAgent === 'global' ? 'bg-brand-500 text-white border-brand-500' : 'hover:bg-gray-50 border-transparent'}`,
+          onClick: () => setSelectedAgent('global')
+        },
+          h('div', { className: 'font-medium' }, 'Global Rules'),
+          h('div', { className: `text-xs ${selectedAgent === 'global' ? 'text-indigo-200' : 'text-gray-400'}` }, 'Org-wide limits')
+        ),
+
+        h('div', { className: 'text-xs font-semibold text-gray-400 uppercase px-1 pt-2 pb-1' }, 'Agents'),
+
+        agentIds.map(id =>
+          h('div', {
+            key: id,
+            className: `group relative rounded px-3 py-2 cursor-pointer text-sm border ${selectedAgent === id ? 'bg-brand-500 text-white border-brand-500' : 'hover:bg-gray-50 border-transparent'}`,
+            onClick: () => setSelectedAgent(id)
+          },
+            h('div', { className: 'font-medium pr-6 truncate' }, id),
+            h('div', { className: `text-xs ${selectedAgent === id ? 'text-indigo-200' : 'text-gray-400'}` },
+              `${permCount(id)} section${permCount(id) !== 1 ? 's' : ''}`
+            ),
+            h('button', {
+              type: 'button',
+              className: `absolute right-2 top-2 opacity-0 group-hover:opacity-100 text-xs ${selectedAgent === id ? 'text-indigo-200 hover:text-white' : 'text-gray-400 hover:text-red-500'}`,
+              onClick: e => { e.stopPropagation(); setDeletingAgent(id) }
+            }, '🗑')
+          )
+        ),
+
+        addingAgent
+          ? h('div', { className: 'flex gap-1 px-1' },
+              h('input', {
+                autoFocus: true,
+                className: 'flex-1 border rounded px-2 py-1 text-sm',
+                placeholder: 'agent-id',
+                value: newAgentName,
+                onChange: e => setNewAgentName(e.target.value),
+                onKeyDown: e => {
+                  if (e.key === 'Enter') addAgent()
+                  if (e.key === 'Escape') { setAddingAgent(false); setNewAgentName('') }
+                }
+              }),
+              h('button', { type: 'button', className: 'text-sm text-brand-600 px-1', onClick: addAgent }, '✓')
+            )
+          : h('button', {
+              type: 'button',
+              className: 'text-sm text-brand-600 hover:underline px-1',
+              onClick: () => setAddingAgent(true)
+            }, '+ Add Agent')
+      )
+    ),
+
+    /* ── Center panel ───────────────────────────────────── */
+    h('div', { className: 'flex-1 overflow-y-auto scrollbar-thin' },
+      h('div', { className: 'p-4 max-w-2xl' },
+        selectedAgent === null && h('div', { className: 'text-gray-400 text-sm mt-8 text-center' },
+          'Select an agent or Global Rules to edit'
+        ),
+        selectedAgent === 'global' && h(Fragment, null,
+          h('h2', { className: 'text-base font-semibold mb-4' }, 'Global Rules'),
+          h(GlobalEditor, {
+            global: policy?.global,
+            onChange: g => { setPolicy(prev => ({ ...prev, global: g })); setSaveOk(false); setSaveError(null) }
+          })
+        ),
+        selectedAgent && selectedAgent !== 'global' && agents[selectedAgent] && h(Fragment, null,
+          h('h2', { className: 'text-base font-semibold mb-4' }, selectedAgent),
+          h(AgentEditor, {
+            agentId: selectedAgent,
+            agent: agents[selectedAgent],
+            onChange: updated => updateAgent(selectedAgent, updated)
+          })
+        )
+      )
+    ),
+
+    /* ── Right panel — YAML preview ─────────────────────── */
+    h('div', { className: 'w-80 bg-gray-900 flex flex-col shrink-0 border-l' },
+      h('div', { className: 'px-3 py-2 border-b border-gray-700 flex items-center justify-between' },
+        h('span', { className: 'text-xs text-gray-400 font-mono uppercase tracking-widest' }, 'policy.yaml'),
+        saveOk && h('span', { className: 'text-xs text-green-400' }, '✓ Saved'),
+      ),
+      h('div', { className: 'flex-1 overflow-auto scrollbar-thin p-3' },
+        h('pre', {
+          className: 'yaml text-gray-200 text-xs',
+          dangerouslySetInnerHTML: { __html: highlightYaml(yamlText) }
+        })
+      ),
+      saveError && h('div', { className: 'px-3 py-2 bg-red-900 border-t border-red-700 text-xs text-red-200 overflow-auto max-h-32' },
+        h('div', { className: 'font-semibold mb-1' }, 'Validation error'),
+        saveError
+      ),
+      h('div', { className: 'px-3 py-3 border-t border-gray-700' },
+        h('button', {
+          type: 'button',
+          className: `w-full py-2 rounded text-sm font-medium transition-colors ${saving ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-brand-500 hover:bg-brand-600 text-white'}`,
+          onClick: save,
+          disabled: saving
+        }, saving ? 'Saving…' : 'Save to disk')
+      )
+    ),
+
+    /* ── Delete confirmation modal ──────────────────────── */
+    deletingAgent && h('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50' },
+      h('div', { className: 'bg-white rounded-lg shadow-xl p-6 w-80' },
+        h('h3', { className: 'font-semibold mb-2' }, 'Delete agent?'),
+        h('p', { className: 'text-sm text-gray-600 mb-4' }, `Remove "${deletingAgent}" from the policy?`),
+        h('div', { className: 'flex gap-2 justify-end' },
+          h('button', { type: 'button', className: 'px-3 py-1.5 text-sm border rounded', onClick: () => setDeletingAgent(null) }, 'Cancel'),
+          h('button', { type: 'button', className: 'px-3 py-1.5 text-sm bg-red-500 text-white rounded', onClick: () => deleteAgent(deletingAgent) }, 'Delete')
+        )
+      )
+    )
+  )
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(App))
+</script>
+</body>
+</html>
