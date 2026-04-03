@@ -9,11 +9,11 @@
  * Diagnostic output goes to stderr only.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync, unlinkSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
-import { loadConfig } from '../config.js'
+import { loadConfig, ensureConfigDir } from '../config.js'
 
 function getServerPath(): string {
   const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -44,12 +44,21 @@ export function serveCommand(opts: { agentId?: string } = {}): void {
     env,
   })
 
+  ensureConfigDir()
+  writeFileSync(config.server_pid_file, String(child.pid), 'utf-8')
+
+  const cleanup = () => {
+    try { unlinkSync(config.server_pid_file) } catch { /* already gone */ }
+  }
+
   child.on('error', (err) => {
+    cleanup()
     process.stderr.write(`clad serve: failed to start server: ${err.message}\n`)
     process.exit(1)
   })
 
   child.on('exit', (code) => {
+    cleanup()
     process.exit(code ?? 0)
   })
 }
