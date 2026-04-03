@@ -26,7 +26,7 @@ Initialize a policy file for your project:
 clad init
 ```
 
-This creates a `clad-policy.yaml` in the current directory. Edit it by hand, or open the visual policy editor:
+This creates a `cpolicy.yaml` in a .clad directory. Edit it by hand, or open the visual policy editor:
 
 ```bash
 clad ui
