@@ -2,6 +2,16 @@
   "name": "@clad/core",
   "version": "0.1.0",
   "type": "module",
+  "license": "Apache-2.0",
+  "author": "Christopher Brown",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nd4spd13/agentic-finance.git",
+    "directory": "packages/core"
+  },
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

@@ -1,3 +1,8 @@
+// Copyright 2024 CRSPY Inc.
+// SPDX-License-Identifier: Apache-2.0
+// Licensed under the Apache License, Version 2.0. See LICENSE in the
+// repository root for the full license text.
+
 export interface PolicyConfig {
   agents: Record<string, AgentPolicy>
   global?: GlobalPolicy

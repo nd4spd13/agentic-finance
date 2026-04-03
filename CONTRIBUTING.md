@@ -1,38 +1,76 @@
-# Contributing
+# Contributing to Clad
 
-## Dev Setup
+Thanks for your interest in contributing. This document covers how to get set up, how we work, and what we expect in pull requests.
+
+## Dev setup
 
 Requirements: Node.js 22+, pnpm
 
 ```bash
-git clone https://github.com/yourusername/clad.git
-cd clad
+git clone https://github.com/nd4spd13/agentic-finance.git
+cd agentic-finance
 pnpm install
 pnpm build
-pnpm install-cli   # links the clad binary globally
 ```
 
-Or run the CLI directly without linking:
+Link the CLI globally so you can run `clad` during development:
+
+```bash
+pnpm install-cli
+```
+
+Or run it directly without linking:
 
 ```bash
 node packages/cli/dist/index.js <command>
 ```
 
-## Tests
+## Project structure
 
-```bash
-pnpm test
+```
+packages/
+  core/        — policy engine, evaluator, audit logger, approval queue
+  cli/         — clad CLI (init, validate, inspect, mcp, ui)
+  mcp-server/  — MCP server that exposes Clad tools to agents
+  docs/        — VitePress documentation site
 ```
 
-## Project Structure
+## Running tests
 
-- `packages/core` — policy engine, approval queue, audit logger
-- `packages/cli` — `clad` CLI
-- `packages/mcp-server` — MCP server
-- `packages/docs` — VitePress documentation site
+```bash
+pnpm test          # run all tests once
+pnpm test:watch    # watch mode
+```
 
-## Commits
+Tests use [Vitest](https://vitest.dev/). We follow TDD — write tests first, then implementation.
+
+## Making changes
+
+1. Find or file a Linear issue for the work (issues are tracked in the **CRS** project).
+2. Create a branch using the Linear issue ID: `{ISSUE_ID}/{kebab-case-title}` (e.g. `crs-42/add-merchant-wildcard-matching`).
+3. Make your changes with tests.
+4. Open a pull request against `main`.
+
+## Commit style
 
 Follow the convention: `type(TICKET): description`
 
-Examples: `fix(CRS-50): ...`, `feat(CRS-42): ...`, `test(CRS-49): ...`
+```
+feat(CRS-42): add merchant wildcard matching
+fix(CRS-50): handle missing schedule field gracefully
+test(CRS-49): cover audit log tamper detection
+docs(CRS-51): update getting-started for npm install flow
+```
+
+Types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`
+
+## Code style
+
+- ESM-only — all imports use explicit `.js` extensions
+- Strict TypeScript — no `any`, no `ts-ignore` without justification
+- No default exports (named exports only)
+- Run `pnpm lint` and `pnpm format` before pushing
+
+## License
+
+By contributing, you agree your contributions will be licensed under the Apache 2.0 license that covers this project.

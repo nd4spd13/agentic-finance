@@ -90,7 +90,34 @@ global:
 
 ## Edit Your Policy
 
-Open `clad.yaml` and customize it for your use case:
+### Option A — Visual editor (recommended)
+
+Run the built-in policy editor UI:
+
+```bash
+clad ui
+```
+
+This starts a local web app at `http://localhost:3456` and opens your browser automatically. It reads your current `clad.yaml`, presents every setting as a form, and writes changes back to disk when you click **Save**. A live YAML preview updates in real-time as you edit.
+
+The editor covers all policy fields:
+- **Accounts** — visible account types, balance/routing number visibility
+- **Transactions** — read access, lookback window, amount visibility cap
+- **Spending** — per-transaction, daily, weekly, and monthly limits; merchant and category allow/block lists
+- **Escalation** — trigger conditions, channel (CLI/webhook), timeout, and fallback behavior
+- **Schedule** — active hours, active days, timezone, blackout dates
+- **Audit** — logging and retention settings
+- **Global rules** — org-wide spend caps and agent concurrency limits
+
+Use `--port` to change the default port:
+
+```bash
+clad ui --port 8080
+```
+
+### Option B — Edit by hand
+
+Open `clad.yaml` directly and customize it for your use case:
 
 **Example: Read-only agent with spending limits**
 
