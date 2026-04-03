@@ -176,45 +176,45 @@ agents:
         default_on_timeout: deny
 ```
 
-## Start the Server
-
-Start Clad in the foreground:
-
-```bash
-clad start --foreground
-```
-
-You should see output like:
-
-```
-Clad MCP Server
-Listening on stdio
-Loaded policy from ./clad.yaml
-Ready to accept connections
-```
-
-For production, run it as a background service or with a process manager like `pm2`:
-
-```bash
-pm2 start clad -- start
-pm2 save
-pm2 startup
-```
-
 ## Connect Your MCP Agent
 
-Clad works with any MCP-compatible agent. Below is an example using Claude Desktop — the same JSON structure applies to any MCP client.
+MCP clients (Claude Desktop, Claude Code, etc.) launch `clad serve` as a subprocess using a minimal environment — your shell PATH is **not** inherited. This means bare commands like `clad` or `node` will fail with "command not found". You must use **full absolute paths** in your MCP config.
 
-### Claude Desktop — macOS/Linux
+### Find your paths
 
-Edit `~/.config/Claude/claude_desktop_config.json`:
+```bash
+# Full path to node
+node -e "process.stdout.write(process.execPath)"
+# e.g. /usr/local/bin/node
+
+# Full path to the clad CLI entry point (if building from source)
+# It's packages/cli/dist/index.js in your clone
+echo "$(pwd)/packages/cli/dist/index.js"
+```
+
+### Claude Code (`~/.claude/.mcp.json`)
 
 ```json
 {
   "mcpServers": {
     "clad": {
-      "command": "clad",
-      "args": ["serve"]
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve"]
+    }
+  }
+}
+```
+
+### Claude Desktop — macOS/Linux
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `~/.config/Claude/claude_desktop_config.json` (Linux):
+
+```json
+{
+  "mcpServers": {
+    "clad": {
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve"]
     }
   }
 }
@@ -228,12 +228,18 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
 {
   "mcpServers": {
     "clad": {
-      "command": "clad",
-      "args": ["serve"]
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["C:\\path\\to\\clad\\packages\\cli\\dist\\index.js", "serve"]
     }
   }
 }
 ```
+
+Restart your MCP client after editing the config.
+
+::: tip You do not need to run `clad start` first
+`clad serve` is a stdio transport — your MCP client launches it automatically as a subprocess. `clad start` is for running a background daemon (not used for MCP).
+:::
 
 ### Multi-agent setup
 
@@ -243,25 +249,25 @@ If your policy defines multiple agents with different permission profiles, pin e
 {
   "mcpServers": {
     "clad-financial-advisor": {
-      "command": "clad",
-      "args": ["serve", "--agent-id", "financial-advisor"]
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve", "--agent-id", "financial-advisor"]
     },
     "clad-receipt-scanner": {
-      "command": "clad",
-      "args": ["serve", "--agent-id", "receipt-scanner"]
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve", "--agent-id", "receipt-scanner"]
     }
   }
 }
 ```
 
-You can also set the agent via environment variable if you prefer:
+You can also set the agent via environment variable:
 
 ```json
 {
   "mcpServers": {
     "clad-financial-advisor": {
-      "command": "clad",
-      "args": ["serve"],
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve"],
       "env": {
         "CLAD_AGENT_ID": "financial-advisor"
       }
@@ -270,9 +276,7 @@ You can also set the agent via environment variable if you prefer:
 }
 ```
 
-The `--agent-id` flag takes precedence over the `CLAD_AGENT_ID` environment variable. If the agent ID isn't found in your policy, Clad will log a warning and deny all requests from that instance.
-
-After editing, restart Claude Desktop for the changes to take effect.
+The `--agent-id` flag takes precedence over `CLAD_AGENT_ID`. If the agent ID isn't found in your policy, Clad will log a warning and deny all requests from that instance.
 
 ## Verify the Connection
 
@@ -342,21 +346,23 @@ clad deny <id>
 
 ## Troubleshooting
 
-### "Command not found: clad"
+### "Command not found: clad" or "exec: node: not found" in MCP
 
-Ensure pnpm's global bin is in your PATH, re-link, then restart your terminal:
+MCP clients do not inherit your shell PATH. The fix is to use full absolute paths in your MCP config `command` field:
 
 ```bash
-pnpm setup
-pnpm install-cli
+# Find the full path to node
+node -e "process.stdout.write(process.execPath)"
 ```
 
-### "MCP Server not responding"
+Use that value (e.g. `/usr/local/bin/node`) as `command` in your MCP config, and the full path to `packages/cli/dist/index.js` as the first element of `args`. See [Connect Your MCP Agent](#connect-your-mcp-agent) above.
 
-1. Verify the server is running: `clad status`
-2. Check that your MCP client config points to the correct command
-3. Restart your MCP agent (e.g. Claude Desktop)
-4. Check logs: `clad log`
+### "MCP Server not responding" or "MCP does not exist"
+
+1. Check that `command` and `args[0]` in your MCP config are **absolute paths** (not bare `clad` or `node`)
+2. Verify the `dist/` directory exists — run `pnpm build` if not
+3. Restart your MCP client after any config change
+4. Check for errors: `clad log`
 
 ### "Policy validation failed"
 

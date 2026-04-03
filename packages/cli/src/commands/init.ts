@@ -67,7 +67,10 @@ export async function initCommand(): Promise<void> {
   console.log('\nNext steps:')
   console.log('  1. Edit your policy:  ' + policyPath)
   console.log('  2. Validate it:       clad policy validate')
-  console.log('  3. Start the server:  clad start')
-  console.log('\nFor Claude Desktop integration, add to your MCP settings:')
-  console.log('  "clad": { "command": "clad", "args": ["start"] }\n')
+  console.log('  3. Start the server:  clad serve')
+  console.log('\nFor MCP integration (Claude Desktop, Claude Code, etc.):')
+  console.log('  Find your node path: $(which node)  or  $(node -e "process.stdout.write(process.execPath)")')
+  console.log('  Then add to your MCP config:')
+  console.log('  "clad": { "command": "<full-path-to-node>", "args": ["<full-path-to-clad-cli>/packages/cli/dist/index.js", "serve"] }')
+  console.log('  See https://clad.dev/getting-started for full setup instructions.\n')
 }

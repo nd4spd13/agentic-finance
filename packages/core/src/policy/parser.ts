@@ -49,7 +49,7 @@ export async function parsePolicy(filePath: string): Promise<PolicyConfig> {
 
   // Validate against schema
   const AjvClass = await getAjv()
-  const ajv = new AjvClass()
+  const ajv = new AjvClass({ strict: false })
   const validate = ajv.compile(schema)
 
   if (!validate(parsed)) {

@@ -40,13 +40,29 @@ Save the new clad-policy file, and if needed, check it using:
 clad policy validate
 ```
 
-Start the MCP server so your agent can use the Clad tools:
+Register the MCP server with your agent (Claude Desktop, Claude Code, etc.):
 
 ```bash
-clad start --foreground
+# Find the full path to node — you'll need it below
+node -e "process.stdout.write(process.execPath)"
 ```
 
-Point your Claude Desktop (or other MCP-compatible client) at the server and your agent will operate within the policy you defined.
+Add Clad to your MCP config (e.g. `~/.claude/.mcp.json` for Claude Code, or `~/Library/Application Support/Claude/claude_desktop_config.json` for Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "clad": {
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve"]
+    }
+  }
+}
+```
+
+> **Important:** MCP clients launch server processes with a minimal environment — `clad` and `node` may not be in PATH. Always use **full absolute paths** for both `command` and the script path in `args`. See [Getting Started](packages/docs/getting-started.md) for detailed setup instructions.
+
+Restart your MCP client after editing the config. Your agent will now operate within the policy you defined.
 
 ### Policy file example
 

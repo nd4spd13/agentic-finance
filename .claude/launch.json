@@ -9,9 +9,8 @@
     },
     {
       "name": "Docs Site (Vitepress)",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["exec", "pnpm", "--", "dev"],
-      "cwd": "packages/docs",
+      "runtimeExecutable": "/usr/local/bin/node",
+      "runtimeArgs": ["packages/docs/node_modules/vitepress/bin/vitepress.js", "dev", "packages/docs", "--port", "5174"],
       "port": 5174
     },
     {

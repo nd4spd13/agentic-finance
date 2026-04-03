@@ -11,8 +11,9 @@ The Model Context Protocol (MCP) allows Claude to use external tools and service
 ### Prerequisites
 
 - Claude Desktop installed
-- Clad installed and configured with a `clad.yaml` policy
-- The `clad` CLI command available in your PATH (or you know its full path)
+- Clad built from source (`pnpm install && pnpm build`)
+- The full path to `node` on your system (run `node -e "process.stdout.write(process.execPath)"`)
+- The full path to `packages/cli/dist/index.js` in your Clad clone
 
 ### Step 1: Find Your Configuration File
 
@@ -62,80 +63,42 @@ Open the configuration file in your text editor. It should look like this initia
 }
 ```
 
-Add the Clad server configuration:
+Add the Clad server configuration.
 
+::: warning Always use full absolute paths
+Claude Desktop launches MCP servers with a minimal environment that does **not** inherit your shell PATH. Using bare `clad` or `node` will fail with "command not found". You must provide full absolute paths.
+:::
+
+**macOS/Linux:**
 ```json
 {
   "mcpServers": {
     "clad": {
-      "command": "clad",
-      "args": ["serve"]
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve"]
     }
   }
 }
 ```
 
-If `clad` is not in your PATH, provide the full path:
+Find your node path with:
+```bash
+node -e "process.stdout.write(process.execPath)"
+```
 
+**Windows:**
 ```json
 {
   "mcpServers": {
     "clad": {
-      "command": "/usr/local/bin/clad",
-      "args": ["serve"]
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["C:\\path\\to\\clad\\packages\\cli\\dist\\index.js", "serve"]
     }
   }
 }
 ```
 
-On Windows:
-```json
-{
-  "mcpServers": {
-    "clad": {
-      "command": "C:\\Users\\YourUsername\\AppData\\Local\\clad\\bin\\clad.exe",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-### Step 3: Verify the Clad Server is Running
-
-Before starting Claude, make sure Clad is running:
-
-```bash
-clad status
-```
-
-Expected output:
-
-```
-Clad Status
-====================
-MCP Server: running
-Policy loaded: clad.yaml
-Agents configured: 3
-Connected clients: 0
-Audit logs: /path/to/audit.log
-```
-
-If the server is not running, start it:
-
-```bash
-# In one terminal, start Clad
-clad start --foreground
-```
-
-Keep this terminal open while using Claude.
-
-Alternatively, run it as a background service:
-
-```bash
-clad start
-```
-
-### Step 4: Restart Claude Desktop
+### Step 3: Restart Claude Desktop
 
 For the configuration changes to take effect, close and reopen Claude Desktop.
 
@@ -166,32 +129,42 @@ If you see an error like "Clad is not available," check:
 
 ### Troubleshooting
 
-#### "Clad is not available"
+#### "Clad is not available" or "MCP does not exist"
 
-**Check 1: Is Clad running?**
+**Check 1: Are you using full absolute paths?**
+
+Claude Desktop does not inherit your shell PATH. Using `"command": "clad"` or `"command": "node"` will fail silently.
+
+Fix: use full paths in your config:
 ```bash
-clad status
+# Find node
+node -e "process.stdout.write(process.execPath)"
+# => /usr/local/bin/node
 ```
 
-If not running, start it:
-```bash
-clad start
+Your config should look like:
+```json
+{
+  "mcpServers": {
+    "clad": {
+      "command": "/usr/local/bin/node",
+      "args": ["/absolute/path/to/clad/packages/cli/dist/index.js", "serve"]
+    }
+  }
+}
 ```
 
-**Check 2: Is the config file correct?**
+**Check 2: Is the dist directory built?**
 
-Validate the JSON:
+```bash
+cd /path/to/clad && pnpm build
+```
+
+**Check 3: Is the config file JSON valid?**
+
 ```bash
 python3 -m json.tool ~/.config/Claude/claude_desktop_config.json
 ```
-
-**Check 3: Is the clad command in PATH?**
-
-```bash
-which clad
-```
-
-If not found, use the full path in the config file.
 
 **Check 4: Did you restart Claude?**
 
@@ -221,8 +194,8 @@ If you have multiple agents, specify which one Claude should use in the MCP conf
 {
   "mcpServers": {
     "clad": {
-      "command": "clad",
-      "args": ["serve", "--agent-id", "my-agent-name"]
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve", "--agent-id", "my-agent-name"]
     }
   }
 }
@@ -230,13 +203,7 @@ If you have multiple agents, specify which one Claude should use in the MCP conf
 
 #### "Connection refused on port 3000"
 
-Clad is running but not accessible. Make sure it's running on stdio (not HTTP):
-
-```bash
-clad start --foreground
-```
-
-The `--foreground` flag starts Clad on stdio, which MCP uses.
+Clad's MCP transport is stdio, not HTTP — there is no port to connect to. If you see this error, your MCP client is misconfigured. Make sure `args` includes `"serve"` (not a port number), and that you're using the stdio transport path in your config.
 
 #### Logs are empty or missing
 
@@ -280,12 +247,12 @@ If you have multiple agents in your policy, configure separate MCP server entrie
 {
   "mcpServers": {
     "clad-analyst": {
-      "command": "clad",
-      "args": ["serve", "--agent-id", "analyst-agent"]
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve", "--agent-id", "analyst-agent"]
     },
     "clad-spender": {
-      "command": "clad",
-      "args": ["serve", "--agent-id", "spender-agent"]
+      "command": "/usr/local/bin/node",
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve", "--agent-id", "spender-agent"]
     }
   }
 }
