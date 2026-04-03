@@ -3,11 +3,11 @@
  * Spawns the MCP server process with config-derived env vars
  */
 
-import { existsSync, writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
-import { loadConfig } from '../config.js'
+import { loadConfig, ensureConfigDir } from '../config.js'
 
 function getServerPath(): string {
   // Resolve server relative to this package
@@ -52,22 +52,47 @@ export function startCommand(opts: { foreground?: boolean } = {}): void {
   }
 
   if (opts.foreground) {
-    // Foreground mode (for MCP stdio transport — Claude Desktop uses this)
-    console.log(`Starting Clad MCP server (foreground)...`)
-    console.log(`  Policy:  ${config.policy_path}`)
-    console.log(`  Audit:   ${config.audit_db}`)
-    console.log(`  Approvals: ${config.approval_db}`)
+    // Foreground mode (for MCP stdio transport — Claude Desktop uses this).
+    // IMPORTANT: zero bytes to stdout before server connects — any stray output
+    // corrupts the MCP JSON-RPC protocol. Diagnostics go to stderr only.
+    process.stderr.write(`[clad] starting MCP server (foreground)\n`)
+    process.stderr.write(`[clad]   policy:    ${config.policy_path}\n`)
+    process.stderr.write(`[clad]   audit:     ${config.audit_db}\n`)
+    process.stderr.write(`[clad]   approvals: ${config.approval_db}\n`)
 
     const child = spawn(process.execPath, [serverPath], {
       stdio: 'inherit',
       env,
     })
 
+    ensureConfigDir()
+    writeFileSync(config.server_pid_file, String(child.pid), 'utf-8')
+
+    const cleanup = () => {
+      try { unlinkSync(config.server_pid_file) } catch { /* already gone */ }
+    }
+
+    child.on('error', (err) => {
+      cleanup()
+      process.stderr.write(`clad start: failed to start server: ${err.message}\n`)
+      process.exit(1)
+    })
+
     child.on('exit', (code) => {
+      cleanup()
       process.exit(code ?? 0)
     })
   } else {
-    // Background mode (daemon)
+    // Background (daemon) mode — requires the MCP server to use a non-stdio
+    // transport (e.g. HTTP/SSE). The current server uses StdioServerTransport,
+    // which exits immediately when stdin is /dev/null. Use `clad serve` for
+    // stdio-based MCP clients, or `clad start --foreground` for a kept-alive
+    // foreground process.
+    process.stderr.write(
+      `[clad] warning: background mode is not supported with the stdio transport.\n` +
+      `[clad] use 'clad serve' to start the MCP server for stdio-based clients.\n`
+    )
+
     const child = spawn(process.execPath, [serverPath], {
       detached: true,
       stdio: 'ignore',
@@ -77,6 +102,7 @@ export function startCommand(opts: { foreground?: boolean } = {}): void {
     child.unref()
 
     if (child.pid) {
+      ensureConfigDir()
       writeFileSync(config.server_pid_file, String(child.pid), 'utf-8')
       console.log(`✓ Clad started (PID ${child.pid})`)
       console.log(`  Policy:  ${config.policy_path}`)
