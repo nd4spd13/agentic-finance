@@ -244,11 +244,9 @@ function AgentEditor({ agentId, agent, onChange }) {
 
   function updatePerm(path, value) {
     const next = deepClone(agent)
-    const base = next.permissions || {}
-    setIn(base, path, value)
-    // Clean empty objects
-    if (value === undefined) pruneEmpty(base)
-    next.permissions = base
+    let perms = setIn(next.permissions || {}, path, value)
+    if (value === undefined) pruneEmpty(perms)
+    next.permissions = perms
     onChange(next)
   }
 
