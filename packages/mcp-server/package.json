@@ -2,6 +2,10 @@
   "name": "@clad/mcp-server",
   "version": "0.1.0",
   "type": "module",
+  "license": "UNLICENSED",
+  "files": [
+    "dist"
+  ],
   "main": "./dist/server.js",
   "scripts": {
     "build": "tsc",

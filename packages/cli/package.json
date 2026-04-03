@@ -2,6 +2,11 @@
   "name": "@clad/cli",
   "version": "0.1.0",
   "type": "module",
+  "license": "UNLICENSED",
+  "files": [
+    "dist",
+    "static"
+  ],
   "bin": {
     "clad": "./dist/index.js"
   },

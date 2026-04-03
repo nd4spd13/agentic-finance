@@ -2,6 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Clad Policy Configuration",
   "description": "Schema for financial permissions middleware policies",
+  "license": "Apache-2.0",
   "type": "object",
   "required": ["agents"],
   "properties": {
