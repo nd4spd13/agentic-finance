@@ -66,9 +66,11 @@ export function startCommand(opts: { foreground?: boolean } = {}): void {
     })
 
     ensureConfigDir()
+    process.stderr.write(`[clad start] writing PID ${child.pid} to ${config.server_pid_file}\n`)
     writeFileSync(config.server_pid_file, String(child.pid), 'utf-8')
 
     const cleanup = () => {
+      process.stderr.write(`[clad start] cleaning up PID file ${config.server_pid_file}\n`)
       try { unlinkSync(config.server_pid_file) } catch { /* already gone */ }
     }
 
@@ -79,6 +81,7 @@ export function startCommand(opts: { foreground?: boolean } = {}): void {
     })
 
     child.on('exit', (code) => {
+      process.stderr.write(`[clad start] server exited with code ${code}\n`)
       cleanup()
       process.exit(code ?? 0)
     })
