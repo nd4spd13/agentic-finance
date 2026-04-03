@@ -34,8 +34,10 @@ clad ui
 
 This starts a local web UI at `http://localhost:3456` where you can configure agents, spending limits, merchant rules, schedules, and escalation settings — with a live YAML preview and one-click save.
 
-Save the new clad-policy file, and if needed, check it using ```bash
-clad ui
+Save the new clad-policy file, and if needed, check it using:
+
+```bash
+clad validate
 ```
 
 Start the MCP server so your agent can use the Clad tools:
