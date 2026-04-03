@@ -2,7 +2,13 @@
   "name": "@clad/cli",
   "version": "0.1.0",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
+  "author": "Christopher Brown",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nd4spd13/agentic-finance.git",
+    "directory": "packages/cli"
+  },
   "files": [
     "dist",
     "static"
