@@ -26,7 +26,13 @@ Initialize a policy file for your project:
 clad init
 ```
 
-This creates a `clad-policy.yaml` in the current directory. Open it to set your rules — spending limits, allowed merchants, time-based restrictions, and escalation thresholds.
+This creates a `clad-policy.yaml` in the current directory. Edit it by hand, or open the visual policy editor:
+
+```bash
+clad ui
+```
+
+This starts a local web UI at `http://localhost:3456` where you can configure agents, spending limits, merchant rules, schedules, and escalation settings — with a live YAML preview and one-click save.
 
 Start the MCP server so your agent can use the Clad tools:
 

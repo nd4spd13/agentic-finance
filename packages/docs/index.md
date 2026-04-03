@@ -34,6 +34,10 @@ features:
     title: Fine-Grained Control
     details: Enforce constraints at multiple levels—per-transaction, daily, weekly, monthly. Control by merchant, category, or amount.
 
+  - icon: 🖥️
+    title: Visual Policy Editor
+    details: Run `clad ui` to open a local web UI with live YAML preview. Edit agents, limits, schedules, and escalation rules through a form — no YAML expertise required.
+
   - icon: 🏗️
     title: Standards-Aligned
     details: Spending constraints aligned with Google's Agent Payments Protocol (AP2). Time-window controls and escalation routing built on established agentic permission patterns.
@@ -115,6 +119,9 @@ clad status
 ```
 
 ## Key Features
+
+### Visual Policy Editor
+Run `clad ui` to open a local web UI at `http://localhost:3456`. Edit every policy field through a form with a live YAML preview — no YAML expertise required. Saves directly to your `policy.yaml` on disk.
 
 ### Policy-as-Code
 Write financial policies in YAML. No compilation, no deployment—just commit and reload.
