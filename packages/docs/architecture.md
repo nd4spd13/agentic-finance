@@ -126,7 +126,7 @@ Command-line interface for:
 - `clad reload` - Reload policy from disk
 - `clad escalate` - Approve/deny escalations
 - `clad audit-log` - View decision history
-- `clad validate` - Validate policy syntax
+- `clad policy validate` - Validate policy syntax
 
 ## Security Model
 

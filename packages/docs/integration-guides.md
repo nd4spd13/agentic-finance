@@ -202,7 +202,7 @@ Close Claude completely and reopen it.
 Your `clad.yaml` has errors. Validate it:
 
 ```bash
-clad validate clad.yaml
+clad policy validate clad.yaml
 ```
 
 Fix any errors reported and restart Clad.

@@ -361,7 +361,7 @@ pnpm install-cli
 Ensure your `clad.yaml` is valid YAML and all required fields are present. Use a YAML validator:
 
 ```bash
-clad validate clad.yaml
+clad policy validate clad.yaml
 ```
 
 ### Escalations not triggering
