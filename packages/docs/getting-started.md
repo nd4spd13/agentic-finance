@@ -305,37 +305,39 @@ The agent will call the `clad_get_balances` tool, which is checked against your 
 ### View the Audit Log
 
 ```bash
-clad audit-log
+clad log
 ```
 
-Shows all decisions with timestamps, agents, accounts, and reasons.
+Shows all decisions with timestamps, agents, accounts, and reasons. Filter by agent (`-a`), decision (`-d allow|deny|escalate`), or limit results (`-n 20`):
+
+```bash
+clad log -n 20
+clad log -a my-agent -d deny
+```
 
 ### List Configured Agents
 
 ```bash
-clad agents list
+clad policy show
 ```
 
 ### Reload the Policy
 
-Edit `clad.yaml` and reload without restarting:
+Edit `clad.yaml` — the MCP server re-reads the policy on every request, so changes take effect immediately without a restart.
+
+### Review and Action Escalations
+
+List pending escalations:
 
 ```bash
-clad reload
+clad approvals
 ```
 
-### Escalate a Decision
-
-Manually escalate a pending decision:
+Approve or deny by ID:
 
 ```bash
-clad escalate <decision-id>
-```
-
-### Check Recent Decisions
-
-```bash
-clad decisions --limit 20
+clad approve <id>
+clad deny <id>
 ```
 
 ## Troubleshooting
@@ -354,14 +356,14 @@ pnpm install-cli
 1. Verify the server is running: `clad status`
 2. Check that your MCP client config points to the correct command
 3. Restart your MCP agent (e.g. Claude Desktop)
-4. Check logs: `clad logs`
+4. Check logs: `clad log`
 
 ### "Policy validation failed"
 
 Ensure your `clad.yaml` is valid YAML and all required fields are present. Use a YAML validator:
 
 ```bash
-clad validate clad.yaml
+clad policy validate clad.yaml
 ```
 
 ### Escalations not triggering

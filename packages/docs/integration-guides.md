@@ -202,7 +202,7 @@ Close Claude completely and reopen it.
 Your `clad.yaml` has errors. Validate it:
 
 ```bash
-clad validate clad.yaml
+clad policy validate clad.yaml
 ```
 
 Fix any errors reported and restart Clad.
@@ -212,7 +212,7 @@ Fix any errors reported and restart Clad.
 The agent ID that Claude is using doesn't match your policy. Claude uses the default agent name from your policy. Check your `clad.yaml`:
 
 ```bash
-clad agents list
+clad policy show
 ```
 
 If you have multiple agents, specify which one Claude should use in the MCP config:
@@ -222,7 +222,7 @@ If you have multiple agents, specify which one Claude should use in the MCP conf
   "mcpServers": {
     "clad": {
       "command": "clad",
-      "args": ["serve", "--agent", "my-agent-name"]
+      "args": ["serve", "--agent-id", "my-agent-name"]
     }
   }
 }
@@ -240,16 +240,16 @@ The `--foreground` flag starts Clad on stdio, which MCP uses.
 
 #### Logs are empty or missing
 
-Check Clad's log output:
+Check Clad's audit log:
 
 ```bash
-clad logs
+clad log
 ```
 
-For live logs while Clad is running:
+Filter to recent entries:
 
 ```bash
-clad logs --follow
+clad log -n 50
 ```
 
 ### Using Clad in Claude
@@ -270,33 +270,22 @@ Once integrated, you can ask Claude natural language questions about your financ
 
 If the transaction requires approval (escalation), Claude will tell you:
 
-> "This transaction requires human approval. Escalation ID: esc-00042. You can approve it with: `clad escalate esc-00042 --approve`"
+> "This transaction requires human approval. Escalation ID: esc-00042. You can approve it with: `clad approve esc-00042`"
 
 ### Advanced: Multiple Agents
 
-If you have multiple agents in your policy, you can run separate Clad instances for each:
+If you have multiple agents in your policy, configure separate MCP server entries in your Claude config — each pinned to a different agent ID:
 
-**Terminal 1 (Analyst agent):**
-```bash
-clad start --agent analyst-agent --port 3001
-```
-
-**Terminal 2 (Spender agent):**
-```bash
-clad start --agent spender-agent --port 3002
-```
-
-**Claude config:**
 ```json
 {
   "mcpServers": {
     "clad-analyst": {
       "command": "clad",
-      "args": ["serve", "--agent", "analyst-agent"]
+      "args": ["serve", "--agent-id", "analyst-agent"]
     },
     "clad-spender": {
       "command": "clad",
-      "args": ["serve", "--agent", "spender-agent"]
+      "args": ["serve", "--agent-id", "spender-agent"]
     }
   }
 }

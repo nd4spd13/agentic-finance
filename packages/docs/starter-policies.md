@@ -136,7 +136,7 @@ global:
 1. Copy this YAML to `clad.yaml`
 2. Adjust `max_per_transaction`, `max_daily`, `max_weekly` to your comfort level
 3. Update merchant and category lists to match your vendor ecosystem
-4. Run `clad reload`
+4. Save — the MCP server picks up the new policy on the next request
 5. Test by asking Claude to make a purchase
 
 **Claude integration:**
@@ -296,7 +296,7 @@ app.post('/clad/escalate', express.json(), async (req, res) => {
 2. Update the `webhook_url` to your approval endpoint
 3. Customize account IDs, merchants, categories
 4. Update blackout dates to match your holidays
-5. Run `clad reload`
+5. Save — the MCP server picks up the new policy on the next request
 6. Set up your webhook endpoint to handle approvals
 
 **Claude integration:**
@@ -357,11 +357,11 @@ Then configure Claude for each:
   "mcpServers": {
     "clad-analyst": {
       "command": "clad",
-      "args": ["serve", "--agent", "analyst"]
+      "args": ["serve", "--agent-id", "analyst"]
     },
     "clad-procurement": {
       "command": "clad",
-      "args": ["serve", "--agent", "procurement"]
+      "args": ["serve", "--agent-id", "procurement"]
     }
   }
 }

@@ -123,10 +123,13 @@ Command-line interface for:
 - `clad init` - Create default policy
 - `clad serve` - Start MCP server
 - `clad status` - Check server status
-- `clad reload` - Reload policy from disk
-- `clad escalate` - Approve/deny escalations
-- `clad audit-log` - View decision history
-- `clad validate` - Validate policy syntax
+- `clad policy validate` - Validate policy syntax
+- `clad policy show` - Display parsed policy as JSON
+- `clad log` - View audit log (filter by agent, decision, tool)
+- `clad approvals` - List pending escalations
+- `clad approve <id>` / `clad deny <id>` - Action an escalation
+- `clad lockdown` - Deny all pending escalations immediately
+- `clad ui` - Open the local policy editor UI
 
 ## Security Model
 
@@ -263,9 +266,9 @@ When evaluating spending, Clad checks constraints in this order:
 1. Agent makes request
 2. Clad evaluates, triggers escalation
 3. Escalation stored in approval queue
-4. User sees in CLI: clad escalate --list
-5. User reviews: clad escalate <id> --show
-6. User decides: clad escalate <id> --approve
+4. User sees in CLI: clad approvals
+5. User reviews: clad approvals
+6. User decides: clad approve <id> or clad deny <id>
 7. Clad records decision in audit log
 ```
 
@@ -284,9 +287,7 @@ When evaluating spending, Clad checks constraints in this order:
 ## Performance Considerations
 
 **Policy Loading**
-- Policy file loaded and parsed at startup
-- Cached in memory
-- `clad reload` re-parses and updates
+- Policy file read from disk on every MCP request — changes take effect immediately
 - No persistent database required (audit logs stored separately)
 
 **Decision Latency**
@@ -366,20 +367,13 @@ clad start --foreground
 
 ### Multi-Agent Deployment
 
-For multiple agents with separate policies:
+For multiple agents, configure separate MCP server entries in your client config — each pinned to a different agent ID via `--agent-id`:
 
-```bash
-# Terminal 1
-clad start --agent analyst --port 3001 --foreground
-
-# Terminal 2
-clad start --agent spender --port 3002 --foreground
-
-# MCP client config (example: Claude Desktop)
+```json
 {
   "mcpServers": {
-    "clad-analyst": { "command": "clad", "args": ["serve", "--agent", "analyst"] },
-    "clad-spender": { "command": "clad", "args": ["serve", "--agent", "spender"] }
+    "clad-analyst": { "command": "clad", "args": ["serve", "--agent-id", "analyst"] },
+    "clad-spender": { "command": "clad", "args": ["serve", "--agent-id", "spender"] }
   }
 }
 ```
