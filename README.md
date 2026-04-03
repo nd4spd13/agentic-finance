@@ -37,13 +37,13 @@ This starts a local web UI at `http://localhost:3456` where you can configure ag
 Save the new clad-policy file, and if needed, check it using:
 
 ```bash
-clad validate
+clad policy validate
 ```
 
 Start the MCP server so your agent can use the Clad tools:
 
 ```bash
-clad mcp
+clad start --foreground
 ```
 
 Point your Claude Desktop (or other MCP-compatible client) at the server and your agent will operate within the policy you defined.
