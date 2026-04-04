@@ -6,14 +6,13 @@ export const description = 'Get account balances filtered by agent policy'
 export const inputSchema = {
   type: 'object' as const,
   properties: {
-    user_id: { type: 'string', description: 'User ID' },
-    account_type: { type: 'string', description: 'Account type filter (optional)' },
+    account_type: { type: 'string', description: 'Account type filter (e.g. "checking", "savings", "credit"). Optional — returns all accounts if omitted.' },
   },
-  required: ['user_id'],
+  required: [] as string[],
 }
 
 export async function handler(
-  args: { user_id: string; account_type?: string },
+  args: { account_type?: string },
   context: ToolContext
 ) {
   const result = await evaluate(context.agentId, {
@@ -25,11 +24,11 @@ export async function handler(
     return { content: [{ type: 'text', text: `Denied: ${result.reason}` }] }
   }
 
-  const accounts = await context.provider.getAccounts(args.user_id)
+  const accounts = await context.provider.getAccounts(context.agentId)
   const filtered = accounts.filter(a => !args.account_type || a.type === args.account_type)
 
   const balances = await Promise.all(
-    filtered.map(a => context.provider.getBalance(args.user_id, a.id))
+    filtered.map(a => context.provider.getBalance(context.agentId, a.id))
   )
 
   return { content: [{ type: 'text', text: JSON.stringify(balances, null, 2) }] }
