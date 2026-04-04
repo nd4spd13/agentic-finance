@@ -14,19 +14,28 @@ Clad sits between your AI agent and financial APIs, enforcing spending limits, m
 
 ## Quickstart
 
-**Requirements:** Node.js 22+
+**Requirements:** Node.js 22+, pnpm
+
+### For developers (clone + run)
+
+```bash
+git clone https://github.com/nd4spd13/agentic-finance.git
+cd agentic-finance
+pnpm install && pnpm build
+```
+
+The repo includes a project-level `.mcp.json` and an example policy at `examples/policy.yaml`. Open the project in Claude Code (or restart if already open) and approve the Clad MCP when prompted — the 5 Clad tools will be available immediately.
+
+To customize the policy, edit `examples/policy.yaml` or run `clad init` to create your own at `~/.clad/policy.yaml`.
+
+### For users (npm install)
 
 ```bash
 npm install -g @clad/cli
-```
-
-Initialize a policy file for your project:
-
-```bash
 clad init
 ```
 
-This creates a `cpolicy.yaml` in a .clad directory. Edit it by hand, or open the visual policy editor:
+This creates a starter policy at `~/.clad/policy.yaml`. Edit it by hand, or open the visual policy editor:
 
 ```bash
 clad ui
@@ -34,33 +43,29 @@ clad ui
 
 This starts a local web UI at `http://localhost:3456` where you can configure agents, spending limits, merchant rules, schedules, and escalation settings — with a live YAML preview and one-click save.
 
-Save the new clad-policy file, and if needed, check it using:
+Validate your policy:
 
 ```bash
 clad policy validate
 ```
 
-Register the MCP server with your agent (Claude Desktop, Claude Code, etc.):
-
-```bash
-# Find the full path to node — you'll need it below
-node -e "process.stdout.write(process.execPath)"
-```
-
-Add Clad to your MCP config (e.g. `~/.claude/.mcp.json` for Claude Code, or `~/Library/Application Support/Claude/claude_desktop_config.json` for Claude Desktop):
+Register the MCP server with your agent. Add Clad to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "clad": {
       "command": "/usr/local/bin/node",
-      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve"]
+      "args": ["/path/to/clad/packages/cli/dist/index.js", "serve"],
+      "env": {
+        "CLAD_AGENT_ID": "finance-agent"
+      }
     }
   }
 }
 ```
 
-> **Important:** MCP clients launch server processes with a minimal environment — `clad` and `node` may not be in PATH. Always use **full absolute paths** for both `command` and the script path in `args`. See [Getting Started](packages/docs/getting-started.md) for detailed setup instructions.
+> **Important:** MCP clients launch server processes with a minimal environment — `clad` and `node` may not be in PATH. Use **full absolute paths** for both `command` and the script in `args`. Run `node -e "process.stdout.write(process.execPath)"` to find your node path.
 
 Restart your MCP client after editing the config. Your agent will now operate within the policy you defined.
 
