@@ -6,14 +6,13 @@ export const description = 'Compute safe-to-spend amount using balance and recur
 export const inputSchema = {
   type: 'object' as const,
   properties: {
-    user_id: { type: 'string', description: 'User ID' },
-    account_id: { type: 'string', description: 'Account ID' },
+    account_id: { type: 'string', description: 'Account ID (e.g. "acc_checking_001")' },
   },
-  required: ['user_id', 'account_id'],
+  required: ['account_id'],
 }
 
 export async function handler(
-  args: { user_id: string; account_id: string },
+  args: { account_id: string },
   context: ToolContext
 ) {
   const result = await evaluate(context.agentId, {
@@ -25,12 +24,12 @@ export async function handler(
     return { content: [{ type: 'text', text: `Denied: ${result.reason}` }] }
   }
 
-  const balance = await context.provider.getBalance(args.user_id, args.account_id)
+  const balance = await context.provider.getBalance(context.agentId, args.account_id)
 
   // Calculate upcoming recurring charges for next 30 days
   let recurringAmount = 0
   if (context.provider.getRecurringCharges) {
-    const charges = await context.provider.getRecurringCharges(args.user_id, args.account_id)
+    const charges = await context.provider.getRecurringCharges(context.agentId, args.account_id)
     // Sum charges due within next 30 days
     const now = new Date()
     const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
