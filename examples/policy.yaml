@@ -1,0 +1,44 @@
+# Clad Example Policy
+#
+# This policy ships with the repo so the MCP server works out of the box.
+# Edit it or run `clad init` to create your own at ~/.clad/policy.yaml.
+#
+# Docs: https://clad.dev/policy-reference
+
+agents:
+  finance-agent:
+    description: Demo agent with read access and basic spending limits
+    permissions:
+      accounts:
+        visible:
+          - checking-001
+          - savings-001
+        balance: true
+        account_number: false
+        routing_number: false
+      transactions:
+        read: true
+        description_visibility: true
+        lookback_days: 30
+      spending:
+        max_per_transaction: 100
+        max_daily: 500
+        max_weekly: 2000
+        max_monthly: 5000
+        require_itemization: false
+      escalation:
+        triggers:
+          - amount_exceeds: 50
+        channel: cli
+        timeout: 5m
+        default_on_timeout: deny
+      audit:
+        log_all_queries: true
+        log_policy_evaluations: true
+        retention: 90d
+
+global:
+  max_total_daily_spend: 10000
+  max_concurrent_agents: 5
+  require_human_approval_above: 1000
+  default_escalation_timeout: 300

@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
@@ -30,6 +32,14 @@ async function main() {
   // Agent ID resolution: CLI arg (CLAD_AGENT_ID_ARG) > env var > default
   // CLAD_AGENT_ID_ARG is set by `clad serve --agent-id` before spawning this process
   const agentId = process.env.CLAD_AGENT_ID_ARG ?? process.env.CLAD_AGENT_ID ?? 'default-agent'
+
+  // Ensure parent directories exist for database files
+  for (const dbPath of [auditDbPath, approvalDbPath]) {
+    const dir = dirname(dbPath)
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+  }
 
   process.stderr.write(`[clad server] loading policy from ${policyPath}\n`)
   const policy = await parsePolicy(policyPath)
