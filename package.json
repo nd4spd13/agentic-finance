@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
+    "mcp:setup": "node scripts/setup-mcp.js",
     "install-cli": "pnpm --dir packages/cli link --global",
     "test": "vitest run",
     "test:watch": "vitest",

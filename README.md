@@ -21,10 +21,10 @@ Clad sits between your AI agent and financial APIs, enforcing spending limits, m
 ```bash
 git clone https://github.com/nd4spd13/agentic-finance.git
 cd agentic-finance
-pnpm install && pnpm build
+pnpm install && pnpm build && pnpm mcp:setup
 ```
 
-The repo includes a project-level `.mcp.json` and an example policy at `examples/policy.yaml`. Open the project in Claude Code (or restart if already open) and approve the Clad MCP when prompted — the 5 Clad tools will be available immediately.
+`mcp:setup` generates a `.mcp.json` with the correct absolute paths for your machine. Open the project in Claude Code (or restart if already open) and approve the Clad MCP when prompted — the 5 Clad tools will be available immediately.
 
 To customize the policy, edit `examples/policy.yaml` or run `clad init` to create your own at `~/.clad/policy.yaml`.
 
