@@ -23,13 +23,20 @@ export async function statusCommand(): Promise<void> {
   // Server status
   let serverStatus = 'stopped'
   let serverPid: number | null = null
+  console.log(`[debug] checking PID file: ${config.server_pid_file}`)
   if (existsSync(config.server_pid_file)) {
     const pidStr = readFileSync(config.server_pid_file, 'utf-8').trim()
     const pid = parseInt(pidStr, 10)
+    console.log(`[debug] PID file found, contents: "${pidStr}", parsed PID: ${pid}`)
     if (!isNaN(pid) && isRunning(pid)) {
       serverStatus = 'running'
       serverPid = pid
+      console.log(`[debug] process ${pid} is alive → running`)
+    } else {
+      console.log(`[debug] process ${pid} is NOT alive → stopped (stale PID file)`)
     }
+  } else {
+    console.log(`[debug] PID file does not exist → stopped`)
   }
 
   const statusIcon = serverStatus === 'running' ? '🟢' : '🔴'

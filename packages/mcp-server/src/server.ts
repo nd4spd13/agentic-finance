@@ -17,6 +17,8 @@ import * as auditLog from './tools/clad_audit_log.js'
 const tools: ToolDefinition[] = [getBalances, getTransactions, safeToSpend, requestAction, auditLog]
 
 async function main() {
+  process.stderr.write(`[clad server] starting (PID ${process.pid})\n`)
+
   const server = new Server(
     { name: 'clad', version: '0.1.0' },
     { capabilities: { tools: {} } }
@@ -29,7 +31,9 @@ async function main() {
   // CLAD_AGENT_ID_ARG is set by `clad serve --agent-id` before spawning this process
   const agentId = process.env.CLAD_AGENT_ID_ARG ?? process.env.CLAD_AGENT_ID ?? 'default-agent'
 
+  process.stderr.write(`[clad server] loading policy from ${policyPath}\n`)
   const policy = await parsePolicy(policyPath)
+  process.stderr.write(`[clad server] policy loaded (${Object.keys(policy.agents ?? {}).length} agents)\n`)
   const provider = new DummyDataProvider()
   const auditLogger = new AuditLogger(auditDbPath)
   const approvalQueue = new ApprovalQueue(approvalDbPath)
@@ -70,7 +74,12 @@ async function main() {
   })
 
   const transport = new StdioServerTransport()
+  process.stderr.write(`[clad server] connecting stdio transport\n`)
   await server.connect(transport)
+  process.stderr.write(`[clad server] MCP server ready\n`)
 }
 
-main().catch(console.error)
+main().catch((err) => {
+  process.stderr.write(`[clad server] fatal: ${err}\n`)
+  process.exit(1)
+})
