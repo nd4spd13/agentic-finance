@@ -106,7 +106,7 @@ Clad includes 5 MCP tools for interfacing with your banking data:
 |---|---|--|
 | `clad_get_balances` | Fetch account balances | Filtered list of account balances |
 | `clad_get_transactions` | Fetch transaction history | Filtered list of transactions |
-| `clad_safe_to_spend` | Check available spending | Available balance minus recurring obligations *future feature* |
+| `clad_safe_to_spend` | Check available spending | Available balance minus recurring obligations (future feature) |
 | `clad_request_action` | Request a transaction | Allow/Deny/Escalate decision |
 | `clad_audit_log` | Fetch decision audit log | List of recent decisions |
 
