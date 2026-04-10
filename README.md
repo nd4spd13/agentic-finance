@@ -4,7 +4,10 @@
 
 Clad sits between your AI agent and financial APIs, enforcing spending limits, merchant restrictions, category rules, and approval workflows — all defined in a human-readable YAML policy file.
 
-> **Demo video:** *(coming soon)*
+> **Demo video:**
+> https://github.com/user-attachments/assets/6c3ade91-3263-442f-a339-7179045d47e0
+
+
 
 ---
 
