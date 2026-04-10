@@ -1,8 +1,8 @@
 # Clad
 
-**Policy-based financial permissions middleware for AI agents.**
+**Policy-based financial permissions for AI agents.**
 
-Clad sits between your AI agent and financial APIs, enforcing spending limits, merchant restrictions, category rules, and approval workflows — all defined in a human-readable YAML policy file.
+Clad sits between your AI agent and your finances, enforcing data access, spending limits, merchant restrictions, category rules, and approval workflows — all defined in a human-readable YAML policy file. Clad acts as your shield between your AI agents and your finances, enabling secure connectivity without the risk of exposed credentials or unfettered access.
 
 > **Demo video:**
 >
@@ -32,14 +32,16 @@ pnpm install && pnpm build && pnpm mcp:setup
 
 To customize the policy, edit `examples/policy.yaml` or run `clad init` to create your own at `~/.clad/policy.yaml`.
 
-### For users (npm install)
+### For users (npm install - coming soon)
 
 ```bash
 npm install -g @clad/cli
 clad init
 ```
 
-This creates a starter policy at `~/.clad/policy.yaml`. Edit it by hand, or open the visual policy editor:
+## Initial Configuration
+
+Clad creates a starter policy at `~/.clad/policy.yaml`. Edit it by hand, or open the visual policy editor:
 
 ```bash
 clad ui
@@ -53,7 +55,7 @@ Validate your policy:
 clad policy validate
 ```
 
-Register the MCP server with your agent. Add Clad to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Register the MCP server with your agent. For Claude on Mac, you can add Clad to your Claude Desktop config at (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
@@ -71,7 +73,7 @@ Register the MCP server with your agent. Add Clad to your Claude Desktop config 
 
 > **Important:** MCP clients launch server processes with a minimal environment — `clad` and `node` may not be in PATH. Use **full absolute paths** for both `command` and the script in `args`. Run `node -e "process.stdout.write(process.execPath)"` to find your node path.
 
-Restart your MCP client after editing the config. Your agent will now operate within the policy you defined.
+Restart your agent client after editing the config. Your agent will now operate within the policy you defined.
 
 ### Policy file example
 
@@ -98,6 +100,16 @@ agents:
         threshold: 200
         notify: owner@example.com
 ```
+## Features
+Clad includes 5 MCP tools for interfacing with your banking data:
+| Tool | Purpose | Returns |
+|---|---|--|
+| `clad_get_balances` | Fetch account balances | Filtered list of account balances |
+| `clad_get_transactions` | Fetch transaction history | Filtered list of transactions |
+| `clad_safe_to_spend` | Check available spending | Available balance minus recurring obligations *future feature* |
+| `clad_request_action` | Request a transaction | Allow/Deny/Escalate decision |
+| `clad_audit_log` | Fetch decision audit log | List of recent decisions |
+
 
 ## Packages
 
@@ -109,7 +121,7 @@ agents:
 
 ## Documentation
 
-Full documentation is in [`packages/docs`](packages/docs/). Run the docs site locally:
+Full documentation is in [`packages/docs`](packages/docs/). Run the docs site locally and access at http://localhost:5173/:
 
 ```bash
 pnpm --filter @clad/docs dev
