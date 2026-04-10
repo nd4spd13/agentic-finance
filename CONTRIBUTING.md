@@ -46,8 +46,8 @@ Tests use [Vitest](https://vitest.dev/). We follow TDD — write tests first, th
 
 ## Making changes
 
-1. Find or file a Linear issue for the work (issues are tracked in the **CRS** project).
-2. Create a branch using the Linear issue ID: `{ISSUE_ID}/{kebab-case-title}` (e.g. `crs-42/add-merchant-wildcard-matching`).
+1. Find or file a Github Issue for the work.
+2. Create a branch using the issue ID: `{ISSUE_ID}/{kebab-case-title}`.
 3. Make your changes with tests.
 4. Open a pull request against `main`.
 
