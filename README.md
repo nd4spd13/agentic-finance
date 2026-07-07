@@ -4,6 +4,8 @@
 
 Clad sits between your AI agent and your finances, enforcing data access, spending limits, merchant restrictions, category rules, and approval workflows — all defined in a human-readable YAML policy file. Clad acts as your shield between your AI agents and your finances, enabling secure connectivity without the risk of exposed credentials or unfettered access.
 
+Real bank data is available today via a [Plaid](https://plaid.com/) integration (Sandbox environment) — see the [Plaid integration guide](packages/docs/integration-guides.md#connecting-a-bank-via-plaid-sandbox) to connect an account.
+
 > **Demo video:**
 >
 https://github.com/user-attachments/assets/6c3ade91-3263-442f-a339-7179045d47e0
@@ -115,9 +117,10 @@ Clad includes 5 MCP tools for interfacing with your banking data:
 
 | Package | Description |
 |---|---|
-| `@clad/cli` | The `clad` CLI — init, validate, inspect, and run the MCP server |
+| `@clad/cli` | The `clad` CLI — init, validate, inspect, connect a bank, and run the MCP server |
 | `@clad/core` | Policy engine, evaluator, audit logger, and approval queue |
 | `@clad/mcp-server` | MCP server exposing Clad tools to AI agents |
+| `@clad/plaid-adapter` | Plaid API integration (Sandbox) — encrypted token store, sync, and graceful degradation |
 
 ## Documentation
 
