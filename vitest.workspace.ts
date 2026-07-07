@@ -4,4 +4,5 @@ export default defineWorkspace([
   'packages/core/vitest.config.ts',
   'packages/mcp-server/vitest.config.ts',
   'packages/plaid-adapter/vitest.config.ts',
+  'packages/cli/vitest.config.ts',
 ])
