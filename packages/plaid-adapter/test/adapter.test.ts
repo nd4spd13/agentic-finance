@@ -1,11 +1,18 @@
-import { describe, it, expect } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FinancialDataProvider } from '@clad/core'
+import { ProviderUnavailableError } from '@clad/core'
 import { PlaidAdapter } from '../src/adapter.js'
 import type { PlaidClientLike } from '../src/plaid-client.types.js'
 import type { StoredItemMeta, TokenStore } from '../src/token-store.types.js'
 
-// Minimal fakes — WP2 only needs a skeleton that type-checks and throws
-// NotImplemented. Real fakes with canned fixtures land in WP3/WP5.
+// Minimal fakes — see test/fixtures/fakes.ts for the richer versions used by
+// adapter-data.test.ts and interchangeability.test.ts. This file just
+// verifies the constructor-injection skeleton from WP2 and that WP5's
+// implementations behave sanely with no stored items / no cache (the
+// "nothing configured yet" state a freshly-scaffolded adapter starts in).
 function makeFakeClient(): PlaidClientLike {
   const notImplemented = () => {
     throw new Error('fake client method not implemented in this test')
@@ -57,11 +64,23 @@ function makeFakeTokenStore(): TokenStore {
 }
 
 describe('PlaidAdapter (skeleton)', () => {
+  let dir: string
+  let dbPath: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'plaid-adapter-skeleton-test-'))
+    dbPath = join(dir, 'plaid.sqlite')
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('satisfies the FinancialDataProvider contract via constructor injection', () => {
     const adapter: FinancialDataProvider = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath: ':memory:',
+      dbPath,
     })
 
     expect(typeof adapter.getAccounts).toBe('function')
@@ -74,45 +93,47 @@ describe('PlaidAdapter (skeleton)', () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath: ':memory:',
+      dbPath,
       userId: 'user123',
     })
     expect(adapter).toBeInstanceOf(PlaidAdapter)
   })
 
-  it('getAccounts throws NotImplemented', async () => {
+  it('getAccounts with no stored items and no cache returns an empty list', async () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath: ':memory:',
+      dbPath,
     })
-    await expect(adapter.getAccounts('user123')).rejects.toThrow(/NotImplemented/)
+    await expect(adapter.getAccounts('user123')).resolves.toEqual([])
   })
 
-  it('getTransactions throws NotImplemented', async () => {
+  it('getTransactions with no stored items and no cache returns an empty list', async () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath: ':memory:',
+      dbPath,
     })
-    await expect(adapter.getTransactions('user123', 'acc_1')).rejects.toThrow(/NotImplemented/)
+    await expect(adapter.getTransactions('user123', 'acc_1')).resolves.toEqual([])
   })
 
-  it('getBalance throws NotImplemented', async () => {
+  it('getBalance throws ProviderUnavailableError for an unknown account with no cache', async () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath: ':memory:',
+      dbPath,
     })
-    await expect(adapter.getBalance('user123', 'acc_1')).rejects.toThrow(/NotImplemented/)
+    await expect(adapter.getBalance('user123', 'acc_1')).rejects.toBeInstanceOf(ProviderUnavailableError)
   })
 
-  it('getRecurringCharges throws NotImplemented', async () => {
+  it('getRecurringCharges throws ProviderUnavailableError for an unknown account', async () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath: ':memory:',
+      dbPath,
     })
-    await expect(adapter.getRecurringCharges('user123', 'acc_1')).rejects.toThrow(/NotImplemented/)
+    await expect(adapter.getRecurringCharges('user123', 'acc_1')).rejects.toBeInstanceOf(
+      ProviderUnavailableError
+    )
   })
 })
