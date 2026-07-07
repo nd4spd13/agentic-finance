@@ -6,8 +6,9 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { parsePolicy, DummyDataProvider, AuditLogger, ApprovalQueue } from '@clad/core'
+import { parsePolicy, AuditLogger, ApprovalQueue } from '@clad/core'
 import type { ToolDefinition } from './types.js'
+import { createProvider } from './provider-factory.js'
 
 // Import all tool handlers
 import * as getBalances from './tools/clad_get_balances.js'
@@ -44,7 +45,7 @@ async function main() {
   process.stderr.write(`[clad server] loading policy from ${policyPath}\n`)
   const policy = await parsePolicy(policyPath)
   process.stderr.write(`[clad server] policy loaded (${Object.keys(policy.agents ?? {}).length} agents)\n`)
-  const provider = new DummyDataProvider()
+  const provider = await createProvider()
   const auditLogger = new AuditLogger(auditDbPath)
   const approvalQueue = new ApprovalQueue(approvalDbPath)
 
