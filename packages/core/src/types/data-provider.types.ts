@@ -1,9 +1,12 @@
-export interface DataProvider {
+export interface FinancialDataProvider {
   getAccounts(userId: string): Promise<Account[]>
   getTransactions(userId: string, accountId: string, opts?: TransactionQueryOpts): Promise<Transaction[]>
   getBalance(userId: string, accountId: string): Promise<Balance>
   getRecurringCharges?(userId: string, accountId: string): Promise<RecurringCharge[]>
 }
+
+/** @deprecated use FinancialDataProvider */
+export type DataProvider = FinancialDataProvider
 
 export interface Account {
   id: string
@@ -14,6 +17,7 @@ export interface Account {
   balance_current: number
   balance_available?: number
   currency: string
+  stale?: boolean
 }
 
 export interface Transaction {
@@ -25,6 +29,7 @@ export interface Transaction {
   merchant_name?: string
   category?: string[]
   pending: boolean
+  stale?: boolean
 }
 
 export interface Balance {
@@ -33,6 +38,7 @@ export interface Balance {
   available?: number
   currency: string
   last_updated: string
+  stale?: boolean
 }
 
 export interface TransactionQueryOpts {
