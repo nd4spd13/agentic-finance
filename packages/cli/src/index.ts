@@ -18,6 +18,7 @@ import {
   lockdownCommand,
 } from './commands/approvals.js'
 import { uiCommand } from './commands/ui.js'
+import { connectCommand } from './commands/connect.js'
 
 const program = new Command()
 
@@ -143,6 +144,16 @@ program
   .description('Immediately deny all pending approvals')
   .action(() => {
     lockdownCommand()
+  })
+
+// ── clad connect ─────────────────────────────────────────────────────────
+program
+  .command('connect')
+  .description('Link a bank account via Plaid and store its encrypted token locally')
+  .option('--sandbox-auto', 'Auto-link a Plaid sandbox Item without a browser (requires PLAID_ENV=sandbox)')
+  .option('--use', "Set the provider to 'plaid' in config after a successful connection")
+  .action(async (opts: { sandboxAuto?: boolean; use?: boolean }) => {
+    await connectCommand({ sandboxAuto: opts.sandboxAuto, use: opts.use })
   })
 
 // ── clad ui ──────────────────────────────────────────────────────────────

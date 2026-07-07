@@ -1,0 +1,38 @@
+{
+  "name": "@clad/plaid-adapter",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Christopher Brown",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nd4spd13/agentic-finance.git",
+    "directory": "packages/plaid-adapter"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run test/integration/sandbox.integration.test.ts"
+  },
+  "dependencies": {
+    "@clad/core": "workspace:*",
+    "axios": "^1.7.4",
+    "plaid": "^43.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^1.6.0"
+  }
+}

@@ -1,9 +1,9 @@
-import type { PolicyConfig, DataProvider, AuditLogger, ApprovalQueue } from '@clad/core'
+import type { PolicyConfig, FinancialDataProvider, AuditLogger, ApprovalQueue } from '@clad/core'
 
 export interface ToolContext {
   agentId: string
   policy: PolicyConfig
-  provider: DataProvider
+  provider: FinancialDataProvider
   auditLogger: AuditLogger
   approvalQueue: ApprovalQueue
 }

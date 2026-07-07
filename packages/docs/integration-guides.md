@@ -301,6 +301,100 @@ Your webhook endpoint should respond with:
 
 ---
 
+## Connecting a bank via Plaid (sandbox)
+
+Clad ships a [Plaid](https://plaid.com/) adapter (`@clad/plaid-adapter`) that implements the same `FinancialDataProvider` interface as the built-in dummy data provider. Today it is wired up and tested against **Plaid's Sandbox environment only** — production Plaid access is gated behind a compliance review (tracked as CRS-43) and is not yet available.
+
+### Required environment variables
+
+Plaid credentials are read from the environment only — they are **never** written to `~/.clad/config.json` or any other file on disk.
+
+```bash
+# .env (or export these in your shell before running `clad connect` / `clad serve`)
+PLAID_CLIENT_ID=your-sandbox-client-id
+PLAID_SECRET=your-sandbox-secret
+PLAID_ENV=sandbox
+
+# Encrypts the Plaid access token store at rest. Pick a strong passphrase and
+# keep it out of version control. If unset, `clad connect` will prompt for it
+# interactively (input is not echoed to the terminal).
+CLAD_TOKEN_PASSPHRASE=a-long-random-passphrase
+```
+
+Get sandbox credentials from the [Plaid Dashboard](https://dashboard.plaid.com/) (a free Plaid account is sufficient — sandbox does not touch real bank data).
+
+### `clad connect` walkthrough
+
+`clad connect` drives Plaid Link and stores the resulting access token, encrypted, via `SqliteTokenStore`. It never prints or logs the token itself.
+
+**Interactive browser flow** (mirrors what an end user would see in production):
+
+```bash
+export PLAID_CLIENT_ID=... PLAID_SECRET=... PLAID_ENV=sandbox
+clad connect
+```
+
+This opens your system browser to a locally-hosted page that embeds Plaid Link. Pick a sandbox institution (e.g. "First Platypus Bank") and use Plaid's [sandbox test credentials](https://plaid.com/docs/sandbox/test-credentials/) (`user_good` / `pass_good`) to complete the flow. On success, Clad exchanges the `public_token` for an `access_token` server-side and stores it — the callback server binds to `127.0.0.1` only and is gated behind a single-use random path segment.
+
+**Non-interactive sandbox flow** (useful for scripts, CI smoke tests, or this repo's manual test procedures) — mints and exchanges a sandbox `public_token` with no browser involved:
+
+```bash
+export PLAID_CLIENT_ID=... PLAID_SECRET=... PLAID_ENV=sandbox
+clad connect --sandbox-auto
+```
+
+`--sandbox-auto` refuses to run unless `PLAID_ENV=sandbox`, so it can never accidentally touch a real account.
+
+Both flows print the linked institution name and (for the browser flow) masked account details — never the access token:
+
+```
+✓ Connected: First Platypus Bank
+  Item: item-abc123...
+  Linked accounts:
+    - Plaid Checking (checking) ••••0000
+```
+
+Add `--use` to also flip your local config's `provider` field to `'plaid'` in the same step:
+
+```bash
+clad connect --sandbox-auto --use
+```
+
+### The passphrase model
+
+Access tokens are encrypted at rest with **AES-256-GCM**, under a key derived from `CLAD_TOKEN_PASSPHRASE` via **scrypt** (a memory-hard KDF, resistant to brute-force/GPU attacks). The database file (`plaid.sqlite`, or the path set by `plaid_db` in `config.json`) only ever contains ciphertext, an IV, and a GCM auth tag — reopening the store with the wrong passphrase fails a key-check and raises `TokenStoreKeyError`, whose message carries no secret material.
+
+Today the passphrase is supplied via `CLAD_TOKEN_PASSPHRASE` (or an interactive prompt). **OS-keychain integration (macOS Keychain, Windows Credential Manager, etc.) is deferred** — tracked as future work — so for now you are responsible for keeping the passphrase itself somewhere safe (a password manager, a secrets manager, etc.). Losing it means losing access to any stored Plaid items; you would need to `clad connect` again.
+
+### Switching the provider to Plaid
+
+Clad's `~/.clad/config.json` has a `provider` field (`'dummy'` by default, or `'plaid'`). There are three ways to set it:
+
+1. **`clad connect --use`** — sets `provider: 'plaid'` in `config.json` after a successful connection.
+2. **Edit `config.json` directly** — set `"provider": "plaid"`.
+3. **`CLAD_PROVIDER` environment variable** — when set, it overrides whatever is in `config.json` for that process.
+
+`clad serve` reads `config.json` and forwards `provider` to the MCP server subprocess as `CLAD_PROVIDER`; if you invoke `packages/mcp-server/dist/server.js` directly (bypassing the CLI), it reads `CLAD_PROVIDER` from its own environment with no config file involved — so at that layer, the environment variable is authoritative.
+
+When `CLAD_PROVIDER=plaid`, the server also requires `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV`, and `CLAD_TOKEN_PASSPHRASE` in its environment, and fails fast at startup naming any that are missing. The token store / cache database path comes from `CLAD_PLAID_DB` (forwarded from `plaid_db` in `config.json` by `clad serve`), defaulting to `~/.clad/plaid.sqlite`. A wrong passphrase also fails fast at startup (`TokenStoreKeyError`) rather than serving with an unreadable token store.
+
+### Stale-data semantics
+
+Plaid calls can fail transiently (network issues, Plaid outages, rate limits). `PlaidAdapter` degrades gracefully instead of hard-failing every request:
+
+- If a Plaid API call fails but a **cached** copy of the requested data exists (from a previous successful sync), the adapter serves the cache with `stale: true` set on each returned `Account` / `Balance` / `Transaction`. Callers (including MCP tool responses) can surface this to the agent or user.
+- If a Plaid API call fails and **no cache exists yet** (e.g. the very first call after connecting, before anything has synced), the adapter throws `ProviderUnavailableError` — there is nothing sensible to serve.
+- Re-authentication failures (Plaid's `ITEM_LOGIN_REQUIRED`) always throw `ProviderAuthError` immediately rather than degrading, since serving stale data would hide the fact that the user needs to reconnect the item.
+
+### What never leaves your device
+
+- **Access tokens are encrypted at rest** (AES-256-GCM, scrypt-derived key) and are never written to disk in plaintext, logged, or printed by any Clad command.
+- **MCP clients never see tokens.** Agents talking to Clad over MCP only ever receive `Account` / `Balance` / `Transaction` / `RecurringCharge` data — the token store is not reachable from the MCP tool surface.
+- **All data is local.** The only outbound network calls Clad makes are to Plaid's API (to sync accounts/transactions/recurring charges); everything else — the policy engine, audit log, approval queue, and token store — lives on your machine.
+- Any error message that could embed request/response data (which, for Plaid/axios errors, can include secrets) is passed through `redactSecrets` before it is thrown, logged, or displayed.
+
+---
+
 ## Programmatic Integration
 
 If you're building a custom application (not Claude Desktop), you can integrate Clad directly:

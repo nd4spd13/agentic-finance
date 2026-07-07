@@ -1,5 +1,5 @@
 import type {
-  DataProvider,
+  FinancialDataProvider,
   Account,
   Transaction,
   Balance,
@@ -7,7 +7,7 @@ import type {
   TransactionQueryOpts,
 } from '../types/index.js'
 
-export class DummyDataProvider implements DataProvider {
+export class DummyDataProvider implements FinancialDataProvider {
   private accounts: Account[] = [
     {
       id: 'acc_checking_001',

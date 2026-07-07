@@ -309,20 +309,41 @@ When evaluating spending, Clad checks constraints in this order:
 
 ### Custom Data Providers
 
-Clad provides a data provider interface:
+All financial data flows through a single interface, `FinancialDataProvider` (`@clad/core`):
 
 ```typescript
-interface DataProvider {
-  getBalances(account_ids: string[]): Promise<Balance[]>;
-  getTransactions(account_id: string, params: QueryParams): Promise<Transaction[]>;
-  // Add more methods as needed
+interface FinancialDataProvider {
+  getAccounts(userId: string): Promise<Account[]>;
+  getTransactions(userId: string, accountId: string, opts?: TransactionQueryOpts): Promise<Transaction[]>;
+  getBalance(userId: string, accountId: string): Promise<Balance>;
+  getRecurringCharges?(userId: string, accountId: string): Promise<RecurringCharge[]>;
 }
 ```
 
-Implementations:
-- Plaid integration (production)
-- Test mock provider (development)
-- Custom bank API integration
+`Account`, `Balance`, and `Transaction` all carry an optional `stale?: boolean` flag, so a provider can degrade to cached data (during an upstream outage, say) without changing its return shape.
+
+```
+                 ┌───────────────────────────┐
+                 │   FinancialDataProvider    │  (@clad/core)
+                 └─────────────┬──────────────┘
+                                │ implements
+              ┌─────────────────┼──────────────────┐
+              │                 │                  │
+   ┌──────────▼─────────┐ ┌─────▼──────────┐  ┌────▼─────────────────┐
+   │  DummyDataProvider  │ │  PlaidAdapter   │  │  (future) MX /       │
+   │  (@clad/core)       │ │  (@clad/plaid-  │  │  Finicity adapters   │
+   │  in-memory fixtures │ │   adapter)      │  │  — same interface,   │
+   │                     │ │  sandbox-only   │  │  plug in the same    │
+   │                     │ │  today          │  │  way                 │
+   └─────────────────────┘ └─────────────────┘  └───────────────────────┘
+```
+
+The MCP server selects an implementation at boot via `createProvider()` (`packages/mcp-server/src/provider-factory.ts`), based on `CLAD_PROVIDER` (`'dummy'` by default). Because every provider satisfies the same interface, swapping `DummyDataProvider` for `PlaidAdapter` — or, in the future, an MX or Finicity adapter — requires no changes anywhere else in the stack: the policy engine, MCP tools, and audit logger all operate purely in terms of `Account` / `Balance` / `Transaction` / `RecurringCharge`, never a provider-specific shape.
+
+Current implementations:
+- **`DummyDataProvider`** (`@clad/core`) — in-memory fixture data, used by default for development and demos.
+- **`PlaidAdapter`** (`@clad/plaid-adapter`) — real Plaid API integration (Sandbox only today; see the [Plaid integration guide](/integration-guides#connecting-a-bank-via-plaid-sandbox)). Implements sync-then-read transaction retrieval, an encrypted-at-rest token store, and graceful degradation to cached data.
+- **Future**: MX, Finicity, or other aggregator adapters can be added as new packages implementing `FinancialDataProvider`, without touching the policy engine or MCP layer.
 
 ### Custom Escalation Handlers
 

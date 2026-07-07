@@ -29,10 +29,11 @@ node packages/cli/dist/index.js <command>
 
 ```
 packages/
-  core/        — policy engine, evaluator, audit logger, approval queue
-  cli/         — clad CLI (init, validate, inspect, mcp, ui)
-  mcp-server/  — MCP server that exposes Clad tools to agents
-  docs/        — VitePress documentation site
+  core/           — policy engine, evaluator, audit logger, approval queue
+  cli/            — clad CLI (init, validate, inspect, connect, mcp, ui)
+  mcp-server/     — MCP server that exposes Clad tools to agents
+  plaid-adapter/  — Plaid API integration (Sandbox): encrypted token store, Link flow, sync/cache, degradation
+  docs/           — VitePress documentation site
 ```
 
 ## Running tests

@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@clad/core": "workspace:*",
+    "@clad/plaid-adapter": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
