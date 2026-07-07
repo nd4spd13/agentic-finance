@@ -1,6 +1,8 @@
 export { PlaidAdapter } from './adapter.js'
 export type { PlaidAdapterOptions } from './adapter.js'
 export type { PlaidClientLike } from './plaid-client.types.js'
+export { createPlaidClient } from './plaid-client.js'
+export type { CreatePlaidClientOptions } from './plaid-client.js'
 export type { TokenStore, StoredItemMeta, StoredItemInput } from './token-store.types.js'
 export { deriveKey, encrypt, decrypt } from './crypto.js'
 export type { EncryptedPayload } from './crypto.js'

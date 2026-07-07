@@ -376,9 +376,7 @@ Clad's `~/.clad/config.json` has a `provider` field (`'dummy'` by default, or `'
 
 `clad serve` reads `config.json` and forwards `provider` to the MCP server subprocess as `CLAD_PROVIDER`; if you invoke `packages/mcp-server/dist/server.js` directly (bypassing the CLI), it reads `CLAD_PROVIDER` from its own environment with no config file involved — so at that layer, the environment variable is authoritative.
 
-::: warning Current limitation
-As of this release, the `'plaid'` branch of the MCP server's provider factory (`packages/mcp-server/src/provider-factory.ts`) validates that Plaid credentials are present but does not yet construct a live `PlaidAdapter` — it fails fast with a clear "not yet implemented" error. `@clad/plaid-adapter` itself is fully implemented and covered by unit, interchangeability, and sandbox integration tests (see below); only the final `clad serve` boot-time wiring is outstanding. Track this before relying on `CLAD_PROVIDER=plaid` end-to-end via `clad serve`.
-:::
+When `CLAD_PROVIDER=plaid`, the server also requires `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV`, and `CLAD_TOKEN_PASSPHRASE` in its environment, and fails fast at startup naming any that are missing. The token store / cache database path comes from `CLAD_PLAID_DB` (forwarded from `plaid_db` in `config.json` by `clad serve`), defaulting to `~/.clad/plaid.sqlite`. A wrong passphrase also fails fast at startup (`TokenStoreKeyError`) rather than serving with an unreadable token store.
 
 ### Stale-data semantics
 
