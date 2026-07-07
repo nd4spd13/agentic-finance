@@ -6,7 +6,19 @@ export { deriveKey, encrypt, decrypt } from './crypto.js'
 export type { EncryptedPayload } from './crypto.js'
 export { SqliteTokenStore } from './token-store.js'
 export type { SqliteTokenStoreOptions } from './token-store.js'
-export { TokenStoreKeyError } from './errors.js'
+export { TokenStoreKeyError, LinkFlowError } from './errors.js'
+export {
+  createLinkToken,
+  runLinkFlow,
+  runSandboxAutoFlow,
+} from './link.js'
+export type {
+  CreateLinkTokenOptions,
+  RunLinkFlowOptions,
+  RunSandboxAutoFlowOptions,
+  LinkFlowResult,
+  LinkedAccount,
+} from './link.js'
 export { PlaidCache } from './cache.js'
 export type { CachedAccount, CachedTransaction } from './cache.js'
 export { mapAccount, mapAccountType, mapRecurringCharge, mapTransaction } from './mapping.js'
