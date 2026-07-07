@@ -34,6 +34,14 @@ describe('Config', () => {
     expect(cfg.approval_db).toContain(TEST_DIR)
   })
 
+  it('defaultConfig defaults provider to dummy and plaid_db under CLAD_CONFIG_DIR', async () => {
+    const { defaultConfig } = await import('../src/config.js')
+    const cfg = defaultConfig()
+    expect(cfg.provider).toBe('dummy')
+    expect(cfg.plaid_db).toContain(TEST_DIR)
+    expect(cfg.plaid_db.endsWith('plaid.sqlite')).toBe(true)
+  })
+
   it('saveConfig + loadConfig roundtrip', async () => {
     const { saveConfig, loadConfig, defaultConfig } = await import('../src/config.js')
     const cfg = defaultConfig()
@@ -43,11 +51,37 @@ describe('Config', () => {
     expect(loaded.audit_db).toBe(cfg.audit_db)
   })
 
+  it('saveConfig + loadConfig roundtrip preserves provider and plaid_db', async () => {
+    const { saveConfig, loadConfig, defaultConfig } = await import('../src/config.js')
+    const cfg = { ...defaultConfig(), provider: 'plaid' as const, plaid_db: join(TEST_DIR, 'custom-plaid.sqlite') }
+    saveConfig(cfg)
+    const loaded = loadConfig()
+    expect(loaded.provider).toBe('plaid')
+    expect(loaded.plaid_db).toBe(cfg.plaid_db)
+  })
+
   it('loadConfig returns defaults when no config file exists', async () => {
     const { loadConfig, defaultConfig } = await import('../src/config.js')
     const defaults = defaultConfig()
     const loaded = loadConfig()
     expect(loaded.audit_db).toBe(defaults.audit_db)
+    expect(loaded.provider).toBe('dummy')
+    expect(loaded.plaid_db).toBe(defaults.plaid_db)
+  })
+
+  it('loadConfig defaults provider and plaid_db when absent from an existing config.json', async () => {
+    const { loadConfig, getConfigPath, ensureConfigDir, defaultConfig } = await import('../src/config.js')
+    ensureConfigDir()
+    // Simulate a config.json written before provider/plaid_db existed.
+    const legacyConfig = defaultConfig() as Record<string, unknown>
+    delete legacyConfig.provider
+    delete legacyConfig.plaid_db
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(getConfigPath(), JSON.stringify(legacyConfig, null, 2) + '\n', 'utf-8')
+
+    const loaded = loadConfig()
+    expect(loaded.provider).toBe('dummy')
+    expect(loaded.plaid_db).toBe(defaultConfig().plaid_db)
   })
 })
 
