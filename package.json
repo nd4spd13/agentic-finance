@@ -8,6 +8,7 @@
     "install-cli": "pnpm --dir packages/cli link --global",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "pnpm --filter @clad/plaid-adapter test:integration",
     "lint": "eslint packages --ext .ts",
     "format": "prettier --write packages"
   },
