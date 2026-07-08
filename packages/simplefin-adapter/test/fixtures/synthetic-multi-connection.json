@@ -1,0 +1,57 @@
+{
+  "_provenance": "SYNTHETIC (hand-written for SF4, not captured from a live Bridge response). Every real SF1 capture only ever linked one institution (a single `connections[]` entry, `fixture-conn-demo`, shared by every account), so conn_id -> connections resolution across *multiple* institutions under one access URL/item was never exercised live. This fixture adds a second connection and an account whose conn_id does not resolve to any connection at all, to exercise both the multi-institution join and the tolerate-gracefully-when-unresolvable path.",
+  "errlist": [],
+  "accounts": [
+    {
+      "id": "fixture-acct-bank-a",
+      "name": "Bank A Checking",
+      "currency": "USD",
+      "balance": "500.00",
+      "available-balance": "500.00",
+      "balance-date": 1783555200,
+      "transactions": [],
+      "holdings": [],
+      "conn_id": "fixture-conn-bank-a"
+    },
+    {
+      "id": "fixture-acct-bank-b",
+      "name": "Bank B Savings",
+      "currency": "USD",
+      "balance": "750.00",
+      "available-balance": "750.00",
+      "balance-date": 1783555200,
+      "transactions": [],
+      "holdings": [],
+      "conn_id": "fixture-conn-bank-b"
+    },
+    {
+      "id": "fixture-acct-unresolvable",
+      "name": "Orphaned Account",
+      "currency": "USD",
+      "balance": "10.00",
+      "available-balance": "10.00",
+      "balance-date": 1783555200,
+      "transactions": [],
+      "holdings": [],
+      "conn_id": "fixture-conn-does-not-exist"
+    }
+  ],
+  "connections": [
+    {
+      "conn_id": "fixture-conn-bank-a",
+      "name": "Bank A",
+      "org_id": "fixture-org-bank-a",
+      "org_name": "Bank A Financial",
+      "org_url": "https://bank-a.example.org",
+      "sfin_url": "https://bank-a.example.org/simplefin"
+    },
+    {
+      "conn_id": "fixture-conn-bank-b",
+      "name": "Bank B",
+      "org_id": "fixture-org-bank-b",
+      "org_name": "Bank B Trust",
+      "org_url": "https://bank-b.example.org",
+      "sfin_url": "https://bank-b.example.org/simplefin"
+    }
+  ]
+}
