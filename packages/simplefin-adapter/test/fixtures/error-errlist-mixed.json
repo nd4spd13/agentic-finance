@@ -1,0 +1,31 @@
+{
+  "errlist": [
+    "con.auth: re-authentication is required at the institution for fixture-conn-demo",
+    "act.unrecognized-subcode: a made-up act.* subcode this client has never seen before",
+    "gen.rate_limited: soft rate-limit warning, no action required",
+    "an unstructured warning string with no gen./con./act. prefix at all"
+  ],
+  "accounts": [
+    {
+      "id": "fixture-acct-checking",
+      "name": "SimpleFIN Checking",
+      "currency": "USD",
+      "balance": "24668.87",
+      "available-balance": "24668.87",
+      "balance-date": 1783555200,
+      "transactions": [],
+      "holdings": [],
+      "conn_id": "fixture-conn-demo"
+    }
+  ],
+  "connections": [
+    {
+      "conn_id": "fixture-conn-demo",
+      "name": "SimpleFIN Demo",
+      "org_id": "fixture-org-demo",
+      "org_name": "SimpleFIN Bridge",
+      "org_url": "https://beta-bridge.simplefin.org",
+      "sfin_url": "https://beta-bridge.simplefin.org/simplefin"
+    }
+  ]
+}
