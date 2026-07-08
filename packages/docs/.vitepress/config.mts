@@ -20,6 +20,11 @@ export default defineConfig({
       { text: 'Guides', items: [
         { text: 'Integration Guide', link: '/integration-guides' },
         { text: 'Starter Policies', link: '/starter-policies' },
+      ]},
+      { text: 'Roadmap', items: [
+        { text: 'Product Roadmap', link: '/roadmap' },
+        { text: 'Plan: Desktop App', link: '/plans/desktop-app' },
+        { text: 'Plan: SimpleFIN Adapter', link: '/plans/simplefin-adapter' },
       ]}
     ],
 
@@ -55,6 +60,14 @@ export default defineConfig({
           text: 'Architecture',
           items: [
             { text: 'System Overview', link: '/architecture' }
+          ]
+        },
+        {
+          text: 'Roadmap & Plans',
+          items: [
+            { text: 'Product Roadmap', link: '/roadmap' },
+            { text: 'Plan: Desktop App', link: '/plans/desktop-app' },
+            { text: 'Plan: SimpleFIN Adapter', link: '/plans/simplefin-adapter' }
           ]
         }
       ]
