@@ -34,6 +34,16 @@
 export type CladProvider = 'dummy' | 'plaid'
 export type PlaidEnvName = 'sandbox' | 'production'
 
+/**
+ * `'unset'` — nothing saved yet. `'set'` — saved and currently readable.
+ * `'undecryptable'` — a sealed file exists but can't be unlocked right now
+ * (D1 manual QA finding 3 — see `plaid-secrets.ts`'s module doc: typically a
+ * packaged, differently code-signed build unable to open ciphertext a dev
+ * build wrote). Never implies the credential values themselves cross IPC —
+ * only this three-way state does.
+ */
+export type PlaidCredentialsStatus = 'unset' | 'set' | 'undecryptable'
+
 /** Display-safe view of `~/.clad/config.json` — paths and non-secret settings only. */
 export interface DisplayConfig {
   configDir: string
@@ -43,8 +53,8 @@ export interface DisplayConfig {
   plaidDbPath: string
   provider: CladProvider
   plaidEnv: PlaidEnvName
-  /** Whether Plaid credentials are currently sealed in safeStorage — never their value. */
-  hasPlaidCredentials: boolean
+  /** Whether Plaid credentials are currently set, unset, or sealed-but-unreadable — never their value. */
+  plaidCredentialsStatus: PlaidCredentialsStatus
   /** D1.3: whether closing the main window hides it (tray stays alive) instead of quitting. */
   closeToTray: boolean
 }
@@ -72,12 +82,21 @@ export interface OperationResult {
 // ---- Migration (D1.1) ------------------------------------------------------
 
 /**
- * Whether a pre-existing CLI-managed token store was detected with no
- * desktop passphrase custody resolved yet — see "Spike results" (S0.3) in
- * packages/docs/plans/desktop-app.md and `passphrase.ts`'s module doc.
+ * `'cli-store-detected'` — a pre-existing CLI-managed token store was found
+ * with no desktop passphrase custody resolved yet (the original migration
+ * case — see "Spike results" S0.3 in packages/docs/plans/desktop-app.md).
+ * `'passphrase-undecryptable'` — a desktop-managed passphrase WAS sealed,
+ * but this OS keychain can no longer open it (D1 manual QA finding 3 — see
+ * `passphrase.ts`'s `PassphraseSource` doc). Both route to the same
+ * `MigrationPrompt` UI (enter a known passphrase, or start fresh) since the
+ * mechanics are identical; only the explanatory copy differs.
  */
+export type MigrationReason = 'cli-store-detected' | 'passphrase-undecryptable'
+
+/** Whether the one-time migration/recovery prompt needs to show, and why. */
 export interface MigrationStatus {
   needed: boolean
+  reason?: MigrationReason
   plaidDbPath: string
 }
 

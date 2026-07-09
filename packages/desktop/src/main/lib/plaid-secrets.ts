@@ -11,9 +11,21 @@
  * it (same `sealed-file.ts` primitives, same DI-for-testability shape).
  *
  * `load()` is main-process-only. Its return value must never cross the IPC
- * boundary — only `has()` (a boolean) is safe to expose to the renderer
- * (security checklist item 1: "Renderer never receives tokens, passphrases,
- * or Plaid credentials").
+ * boundary — only `status()`/`has()` (never credential values) are safe to
+ * expose to the renderer (security checklist item 1: "Renderer never
+ * receives tokens, passphrases, or Plaid credentials").
+ *
+ * D1 manual QA finding 3: a packaged (differently code-signed) build can't
+ * decrypt ciphertext a dev build wrote — macOS Keychain ACLs are tied to the
+ * app's code-signing identity, which changes on every unsigned rebuild. The
+ * original `has()` only checked file *existence*, so this case looked
+ * identical to "never set" from the renderer's point of view: Settings
+ * silently showed "Not set", with no indication anything had gone wrong.
+ * `status()` below distinguishes the two so the UI can show an actionable
+ * message instead (`SettingsForm.tsx`) — the re-enter/reset action is just
+ * the existing save()/clear(), which always overwrite unconditionally
+ * (`writeSealed`/`deleteSealed` never read-before-write), so no separate
+ * "reset" IPC path is needed.
  */
 
 import { join } from 'node:path'
@@ -26,6 +38,16 @@ export interface PlaidCredentials {
   secret: string
 }
 
+/**
+ * `'unset'` — nothing saved yet. `'set'` — saved and currently readable.
+ * `'undecryptable'` — a sealed file exists but can't be turned back into
+ * valid credentials right now (decrypt failure, or garbage after decrypt).
+ * Intentionally a standalone copy of the shape mirrored in `shared/ipc.ts`
+ * (that file can't import from `src/main/**` — see its own module doc), same
+ * pattern already used for `McpServerState`.
+ */
+export type PlaidCredentialsStatus = 'unset' | 'set' | 'undecryptable'
+
 export class PlaidSecretsStore {
   private readonly filePath: string
 
@@ -33,9 +55,15 @@ export class PlaidSecretsStore {
     this.filePath = join(userDataDir, CREDENTIALS_FILENAME)
   }
 
-  /** Display-safe: whether credentials are set, never their value. */
+  /** Display-safe: whether a sealed credentials file exists at all (does not imply it's readable — see `status()`). */
   has(): boolean {
     return sealedFileExists(this.filePath)
+  }
+
+  /** Display-safe: distinguishes "nothing saved" from "saved but can't be unlocked right now" — never the credential values themselves. */
+  status(): PlaidCredentialsStatus {
+    if (!sealedFileExists(this.filePath)) return 'unset'
+    return this.load() !== null ? 'set' : 'undecryptable'
   }
 
   save(creds: PlaidCredentials): { ok: boolean; error?: string } {

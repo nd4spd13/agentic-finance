@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SqliteTokenStore } from '@clad/plaid-adapter'
@@ -103,6 +103,53 @@ describe('PassphraseCustody', () => {
 
     expect(result.source).toBe('generated')
     expect(passphrase).not.toBe('old-cli-passphrase')
+  })
+
+  /**
+   * Regression tests for D1 manual QA finding 3: a sealed passphrase file
+   * that exists but can't be decrypted (e.g. a packaged, differently
+   * code-signed build can't open ciphertext a dev build wrote) used to be
+   * silently indistinguishable from a healthy one — `hasCustodyFile()` only
+   * checks existence, so `getOrCreate()`'s old catch-all `'unavailable'`
+   * source conflated "no encryption subsystem at all" with "sealed file
+   * exists but this keychain can't open it", and nothing surfaced the
+   * failure to the user (`computeMigrationStatus` in `index.ts` thought no
+   * migration was needed, since a file was present).
+   */
+  describe('undecryptable custody file', () => {
+    it('probeCustody distinguishes absent / ok / undecryptable without ever writing', () => {
+      const safeStorage = new FakeSafeStorage()
+      const custody = new PassphraseCustody(dir, safeStorage)
+      expect(custody.probeCustody()).toBe('absent')
+      expect(custody.hasCustodyFile()).toBe(false) // probing never creates a file
+
+      custody.getOrCreate()
+      expect(custody.probeCustody()).toBe('ok')
+
+      writeFileSync(join(dir, 'passphrase.bin'), Buffer.from('not-sealed-at-all'))
+      expect(custody.probeCustody()).toBe('undecryptable')
+    })
+
+    it('getOrCreate reports source "undecryptable" (never fabricates a fresh passphrase) when the sealed file exists but decryption fails', () => {
+      const safeStorage = new FakeSafeStorage()
+      const custody = new PassphraseCustody(dir, safeStorage)
+      custody.getOrCreate() // seal a real one first
+      expect(custody.hasCustodyFile()).toBe(true)
+
+      // Corrupt it: bytes FakeSafeStorage.decryptString itself rejects.
+      writeFileSync(join(dir, 'passphrase.bin'), Buffer.from('not-sealed-at-all'))
+
+      const { passphrase, result } = custody.getOrCreate()
+
+      expect(passphrase).toBeNull()
+      expect(result.ok).toBe(false)
+      expect(result.source).toBe('undecryptable')
+      expect(result.error).toBeTruthy()
+      // Never silently regenerates a fresh passphrase over broken custody —
+      // that would permanently orphan whatever token-store data is
+      // encrypted under the lost one.
+      expect(readFileSync(join(dir, 'passphrase.bin')).toString()).toBe('not-sealed-at-all')
+    })
   })
 })
 

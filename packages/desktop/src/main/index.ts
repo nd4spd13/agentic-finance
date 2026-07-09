@@ -125,22 +125,41 @@ function buildDisplayConfig(): DisplayConfig {
     plaidDbPath: config.plaid_db,
     provider: config.provider,
     plaidEnv: config.plaid_env,
-    hasPlaidCredentials: getPlaidSecrets().has(),
+    plaidCredentialsStatus: getPlaidSecrets().status(),
     closeToTray: config.close_to_tray,
   }
 }
 
 /**
- * A CLI-style store is "detected" when the configured `plaid_db` already
- * exists on disk but this app has never resolved passphrase custody for it
- * (no `passphrase.bin` yet). Once custody is resolved — generated or
- * migrated — this is permanently `false` for that install; see
- * `passphrase.ts`'s module doc for the full migration decision.
+ * Two independent reasons the one-time migration/recovery prompt needs to
+ * show (see `MigrationReason` in `shared/ipc.ts`):
+ *
+ *  - `'cli-store-detected'`: the configured `plaid_db` already exists on
+ *    disk but this app has never resolved passphrase custody for it (no
+ *    `passphrase.bin` yet). Once custody is resolved — generated or
+ *    migrated — this is permanently moot for that install; see
+ *    `passphrase.ts`'s module doc for the full migration decision.
+ *  - `'passphrase-undecryptable'` (D1 manual QA finding 3): a passphrase WAS
+ *    sealed, but `probeCustody()` — a read-only check, never `getOrCreate()`
+ *    — finds this OS keychain can no longer open it. Deliberately uses
+ *    `probeCustody()` rather than `getOrCreate()` here: `getOrCreate()` would
+ *    happily fabricate and seal a brand-new random passphrase if no file
+ *    existed yet, which is wrong to risk as a side effect of a status check
+ *    reached from the `cli-store-detected` branch below too.
  */
 function computeMigrationStatus(): MigrationStatus {
   const config = loadConfig()
-  const needed = !getPassphraseCustody().hasCustodyFile() && existsSync(config.plaid_db)
-  return { needed, plaidDbPath: config.plaid_db }
+  const custody = getPassphraseCustody()
+
+  if (custody.hasCustodyFile()) {
+    if (custody.probeCustody() === 'undecryptable') {
+      return { needed: true, reason: 'passphrase-undecryptable', plaidDbPath: config.plaid_db }
+    }
+    return { needed: false, plaidDbPath: config.plaid_db }
+  }
+
+  const needed = existsSync(config.plaid_db)
+  return { needed, reason: needed ? 'cli-store-detected' : undefined, plaidDbPath: config.plaid_db }
 }
 
 // ---- Tray (D1.3) ------------------------------------------------------------

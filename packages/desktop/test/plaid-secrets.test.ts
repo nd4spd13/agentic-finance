@@ -95,4 +95,51 @@ describe('PlaidSecretsStore', () => {
 
     expect(store.load()).toBeNull()
   })
+
+  /**
+   * Regression tests for D1 manual QA finding 3: `has()` alone can't tell
+   * "never set" apart from "sealed file exists but can't be unlocked" (e.g.
+   * a packaged, differently code-signed build can't decrypt ciphertext a
+   * dev build wrote — macOS Keychain ACLs are tied to the signing identity).
+   * `status()` must distinguish all three states so the renderer can show
+   * an actionable message instead of a silent, misleading "Not set."
+   */
+  describe('status()', () => {
+    it('is "unset" before anything is saved', () => {
+      const store = new PlaidSecretsStore(dir, new FakeSafeStorage())
+      expect(store.status()).toBe('unset')
+    })
+
+    it('is "set" after a successful save', () => {
+      const store = new PlaidSecretsStore(dir, new FakeSafeStorage())
+      store.save({ clientId: 'client-123', secret: 'shh-secret' })
+      expect(store.status()).toBe('set')
+    })
+
+    it('is "undecryptable" when the sealed file exists but decryption itself fails (not just malformed JSON after a successful decrypt)', () => {
+      const safeStorage = new FakeSafeStorage()
+      const store = new PlaidSecretsStore(dir, safeStorage)
+      store.save({ clientId: 'client-123', secret: 'shh-secret' })
+
+      // Overwrite with bytes that FakeSafeStorage.decryptString itself
+      // rejects (no 'FAKE:' prefix) — simulates a genuine OS-level decrypt
+      // failure, not merely bad content after a successful decrypt.
+      const filePath = join(dir, 'plaid-credentials.bin')
+      writeFileSync(filePath, Buffer.from('not-sealed-at-all'))
+
+      expect(store.status()).toBe('undecryptable')
+      expect(store.load()).toBeNull()
+    })
+
+    it('is "undecryptable" when decryption succeeds but the plaintext is not valid credentials JSON', () => {
+      const safeStorage = new FakeSafeStorage()
+      const store = new PlaidSecretsStore(dir, safeStorage)
+      store.save({ clientId: 'client-123', secret: 'shh-secret' })
+
+      const filePath = join(dir, 'plaid-credentials.bin')
+      writeFileSync(filePath, safeStorage.encryptString('not json'))
+
+      expect(store.status()).toBe('undecryptable')
+    })
+  })
 })

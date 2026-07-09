@@ -73,7 +73,7 @@ export default function SettingsForm({
         setCredsMessage({ ok: true, text: 'Plaid credentials saved.' })
         setClientId('')
         setSecret('')
-        onConfigChange({ ...config, hasPlaidCredentials: true })
+        onConfigChange({ ...config, plaidCredentialsStatus: 'set' })
       } else {
         setCredsMessage({ ok: false, text: result.error ?? 'Failed to save credentials.' })
       }
@@ -89,7 +89,7 @@ export default function SettingsForm({
       const result = await window.clad.clearPlaidCredentials()
       if (result.ok) {
         setCredsMessage({ ok: true, text: 'Plaid credentials cleared.' })
-        onConfigChange({ ...config, hasPlaidCredentials: false })
+        onConfigChange({ ...config, plaidCredentialsStatus: 'unset' })
       } else {
         setCredsMessage({ ok: false, text: result.error ?? 'Failed to clear credentials.' })
       }
@@ -187,9 +187,16 @@ export default function SettingsForm({
           ). Stored via your OS keychain — never written to a plaintext
           config file.
         </p>
-        <p style={s.mutedText}>
-          Status: {config.hasPlaidCredentials ? 'Credentials saved.' : 'Not set.'}
-        </p>
+        {config.plaidCredentialsStatus === 'undecryptable' ? (
+          <p style={s.warnText}>
+            Stored credentials can&apos;t be unlocked — this usually happens after app updates on unsigned
+            builds. Please re-enter them below.
+          </p>
+        ) : (
+          <p style={s.mutedText}>
+            Status: {config.plaidCredentialsStatus === 'set' ? 'Credentials saved.' : 'Not set.'}
+          </p>
+        )}
         <form onSubmit={handleSaveCredentials}>
           <label style={s.label} htmlFor="plaid-client-id">
             Client ID
@@ -219,7 +226,7 @@ export default function SettingsForm({
           <button type="submit" style={s.button} disabled={savingCreds || !clientId || !secret}>
             Save credentials
           </button>
-          {config.hasPlaidCredentials && (
+          {config.plaidCredentialsStatus !== 'unset' && (
             <button type="button" style={s.buttonDanger} disabled={savingCreds} onClick={handleClearCredentials}>
               Clear
             </button>

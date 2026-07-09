@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { DisplayConfig } from '../../shared/ipc.js'
+import type { DisplayConfig, MigrationReason } from '../../shared/ipc.js'
 import MigrationPrompt from './components/MigrationPrompt.js'
 import SettingsForm from './components/SettingsForm.js'
 import ServerStatusPanel from './components/ServerStatusPanel.js'
@@ -9,7 +9,7 @@ import * as s from './styles.js'
 type LoadState =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'migration-needed'; plaidDbPath: string }
+  | { phase: 'migration-needed'; plaidDbPath: string; reason: MigrationReason }
   | { phase: 'ready'; config: DisplayConfig }
 
 /**
@@ -29,7 +29,11 @@ export default function App(): JSX.Element {
     try {
       const migration = await window.clad.getMigrationStatus()
       if (migration.needed) {
-        setState({ phase: 'migration-needed', plaidDbPath: migration.plaidDbPath })
+        setState({
+          phase: 'migration-needed',
+          plaidDbPath: migration.plaidDbPath,
+          reason: migration.reason ?? 'cli-store-detected',
+        })
         return
       }
       const config = await window.clad.getConfig()
@@ -49,7 +53,7 @@ export default function App(): JSX.Element {
       {state.phase === 'loading' && <p>Loading…</p>}
       {state.phase === 'error' && <p style={s.errorText}>Error: {state.message}</p>}
       {state.phase === 'migration-needed' && (
-        <MigrationPrompt plaidDbPath={state.plaidDbPath} onResolved={load} />
+        <MigrationPrompt plaidDbPath={state.plaidDbPath} reason={state.reason} onResolved={load} />
       )}
       {state.phase === 'ready' && (
         <>

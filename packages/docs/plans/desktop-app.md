@@ -97,7 +97,7 @@ Acceptance for the phase: fresh machine → download app → set Plaid keys (or 
 
 - **D4.1 electron-builder config.** DMG + ZIP targets, app id, icons, `files` allowlist so workspace deps resolve in ASAR.
 - **D4.2 Release workflow.** GitHub Actions: tag → build → draft GitHub Release with artifacts. macOS runner.
-- **D4.3 Unsigned-beta docs.** README install section: download, Gatekeeper "Open Anyway" walkthrough (Sequoia removed right-click-open), `xattr -d com.apple.quarantine` alternative.
+- **D4.3 Unsigned-beta docs.** README install section: download, Gatekeeper "Open Anyway" walkthrough (Sequoia removed right-click-open), `xattr -d com.apple.quarantine` alternative. Also warn: **re-enter credentials after updating.** On unsigned builds, macOS Keychain ACLs are tied to the app's ad-hoc code-signing identity, which changes on every rebuild — a differently-signed build cannot decrypt `safeStorage` ciphertext an earlier build wrote (Plaid credentials, the token-store passphrase). The app surfaces this distinctly ("can't be unlocked" vs. "not set", D1 manual QA finding 3) and offers a re-enter/start-fresh path, but the docs should set expectations up front so it doesn't read as a bug. This caveat goes away once H1 signing (D4.4) lands.
 - **D4.4 (gated on Apple Developer enrollment) Signing + notarization.** Developer ID cert in CI secrets; hardened runtime + entitlements; notarize + staple; enable `electron-updater` (requires signed builds). Keep as a separate PR so unsigned releases keep working.
 
 ## Standing security checklist (apply to every desktop PR)

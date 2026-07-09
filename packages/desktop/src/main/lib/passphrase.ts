@@ -40,7 +40,26 @@ import { getCladCore } from './clad-core.js'
 
 const PASSPHRASE_FILENAME = 'passphrase.bin'
 
-export type PassphraseSource = 'generated' | 'loaded' | 'migrated-from-cli' | 'unavailable'
+/**
+ * `'undecryptable'` (D1 manual QA finding 3): a sealed passphrase file
+ * exists but this OS keychain can't open it right now — e.g. macOS Keychain
+ * ACLs are tied to the app's code-signing identity, which changes on every
+ * unsigned rebuild, so a packaged build can't decrypt ciphertext a dev build
+ * wrote. Distinct from `'unavailable'` (the encryption subsystem itself is
+ * missing/disabled) so callers can route to a "re-enter/reset" prompt
+ * (`computeMigrationStatus` in `index.ts` treats this the same as the
+ * existing CLI-migration-needed case) instead of a generic, unexplained
+ * failure — this used to be silently swallowed: the sealed file's existence
+ * alone made `hasCustodyFile()` true, so `computeMigrationStatus` reported
+ * "no migration needed" and the app just never got a working passphrase,
+ * with nothing surfaced to the user.
+ */
+export type PassphraseSource =
+  | 'generated'
+  | 'loaded'
+  | 'migrated-from-cli'
+  | 'unavailable'
+  | 'undecryptable'
 
 export interface PassphraseResult {
   ok: boolean
@@ -71,6 +90,25 @@ export class PassphraseCustody {
   }
 
   /**
+   * Read-only decrypt check: does a sealed passphrase file exist, and can it
+   * actually be opened right now? Never writes and never generates —
+   * unlike `getOrCreate()`, which would happily fabricate a fresh
+   * passphrase if no file exists yet. `computeMigrationStatus` in
+   * `index.ts` uses this (not `getOrCreate()`) to detect the finding-3
+   * "stale ciphertext" case without risking a spurious fresh-passphrase
+   * generation as a side effect of merely checking.
+   */
+  probeCustody(): 'absent' | 'ok' | 'undecryptable' {
+    if (!this.hasCustodyFile()) return 'absent'
+    try {
+      readSealed(this.filePath, this.safeStorage)
+      return 'ok'
+    } catch {
+      return 'undecryptable'
+    }
+  }
+
+  /**
    * Loads the sealed passphrase if one exists, else generates and seals a
    * fresh random one. Safe to call unconditionally on a brand-new machine
    * (no pre-existing CLI store) — but callers MUST check
@@ -97,15 +135,39 @@ export class PassphraseCustody {
       }
     }
 
-    try {
-      const existing = readSealed(this.filePath, this.safeStorage)
-      if (existing !== null) {
+    if (this.hasCustodyFile()) {
+      try {
+        const existing = readSealed(this.filePath, this.safeStorage)
+        if (existing !== null) {
+          return {
+            passphrase: existing,
+            result: { ok: true, encryptionAvailable: true, source: 'loaded', passphraseFilePath: this.filePath },
+          }
+        }
+        // File vanished between the exists check and the read (rare race)
+        // — fall through to generate a fresh one below, same as if it had
+        // never existed.
+      } catch {
+        // Sealed file exists but this OS keychain can no longer open it —
+        // see the `PassphraseSource` doc comment above. Deliberately does
+        // NOT fall through to generating a fresh passphrase: that would
+        // silently and permanently orphan whatever token-store data is
+        // encrypted under the lost one. No raw OS error text crosses this
+        // boundary (IPC discipline — see index.ts / shared/ipc.ts).
         return {
-          passphrase: existing,
-          result: { ok: true, encryptionAvailable: true, source: 'loaded', passphraseFilePath: this.filePath },
+          passphrase: null,
+          result: {
+            ok: false,
+            encryptionAvailable: true,
+            source: 'undecryptable',
+            passphraseFilePath: this.filePath,
+            error: 'The stored passphrase could not be unlocked by this OS keychain.',
+          },
         }
       }
+    }
 
+    try {
       const passphrase = randomBytes(32).toString('base64')
       writeSealed(this.filePath, passphrase, this.safeStorage)
       return {
