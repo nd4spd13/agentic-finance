@@ -373,7 +373,7 @@ export interface ApprovalFocusRequest {
   id: string
 }
 
-// ---- Connect flow (D3.1 Plaid Link in-app) ---------------------------------
+// ---- Connect flow (D3.1 Plaid Link, D3.2 provider-agnostic connect UI) ----
 
 /**
  * `'idle'` — no flow in progress (nothing started yet, or the last one
@@ -404,6 +404,40 @@ export interface PlaidLinkFlowStatus {
 export interface StartPlaidLinkInput {
   /** Dev-flag-gated sandbox auto-connect (no browser) — see `main/lib/plaid-link-flow.ts`'s `isDevBuild` gate and `connect.ts`'s `--sandbox-auto`. Ignored (and rejected with a clear error) outside a development build or outside `plaidEnv: 'sandbox'`. */
   sandboxAuto?: boolean
+}
+
+/** Display-safe summary of a claimed SimpleFIN account — never the access URL or a raw un-namespaced account id. */
+export interface SimpleFinAccountSummary {
+  id: string
+  name: string
+  institution?: string
+}
+
+export interface SimpleFinConnectResult {
+  ok: boolean
+  itemId?: string
+  accounts?: SimpleFinAccountSummary[]
+  /** Set alongside `ok: true` when the item was saved but the initial account-summary fetch failed — non-fatal (the credential is never lost just because this follow-up fetch failed). */
+  warning?: string
+  /** Display-safe (redacted where derived from stored/thrown data). Set when `ok: false`. */
+  error?: string
+}
+
+/**
+ * `'unavailable'` when the token-store passphrase isn't resolved yet.
+ * Distinct from `'not-connected'` (passphrase resolved, but nothing saved
+ * yet for that provider).
+ */
+export type ProviderConnectionState = 'connected' | 'not-connected' | 'unavailable'
+
+/** Everything the D3.2 "Add connection" screen needs to render its provider list — no secret material, just presence/connection state. */
+export interface ConnectProvidersStatus {
+  /** Reuses the existing D1.1 `plaidCredentialsHas`-shaped check. */
+  plaidCredentialsConfigured: boolean
+  plaidConnection: ProviderConnectionState
+  simplefinConnection: ProviderConnectionState
+  /** Whether the sandbox-auto (no-browser) Plaid dev flag should be shown at all in this build — see `plaid-link-flow.ts`'s `isDevBuild`. */
+  sandboxAutoAvailable: boolean
 }
 
 // ---- Audit log viewer (D2.2) ------------------------------------------------
@@ -475,12 +509,14 @@ export const IPC_CHANNELS = {
   /** Push-only, main -> renderer. See `onApprovalFocusRequested` below. */
   approvalFocusRequested: 'approvals:focusRequested',
   auditLogQuery: 'auditLog:query',
-  // D3.1
+  // D3.1 / D3.2
+  connectGetProvidersStatus: 'connect:getProvidersStatus',
   plaidLinkStart: 'connect:plaidLinkStart',
   plaidLinkCancel: 'connect:plaidLinkCancel',
   plaidLinkGetStatus: 'connect:plaidLinkGetStatus',
   /** Push-only, main -> renderer. See `onPlaidLinkStatusChanged` below. */
   plaidLinkStatusChanged: 'connect:plaidLinkStatusChanged',
+  simplefinConnect: 'connect:simplefinConnect',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -530,6 +566,8 @@ export interface CladBridge {
   onApprovalFocusRequested(callback: (request: ApprovalFocusRequest) => void): () => void
   /** Read-only, paginated, newest-first. Rejects on a genuine read failure (surfaced by the viewer as an error state). */
   queryAuditLog(input: AuditLogQueryInput): Promise<AuditLogPage>
+  /** Provider list + connection state for the D3.2 "Add connection" screen. */
+  getConnectProvidersStatus(): Promise<ConnectProvidersStatus>
   /** Kicks off (or returns the already-`'pending'` status of) the D3.1 in-app Plaid Link flow. Resolves once the flow settles OR immediately with an `'error'` status for a synchronous pre-flight failure (e.g. missing credentials) — the renderer should still subscribe to `onPlaidLinkStatusChanged` for the common case where this takes a while. */
   startPlaidLink(input?: StartPlaidLinkInput): Promise<PlaidLinkFlowStatus>
   /** Stops watching the current flow (if any) and clears a terminal success/error status back to idle. See `plaid-link-flow.ts`'s module doc for what this does/doesn't tear down. */
@@ -537,6 +575,8 @@ export interface CladBridge {
   getPlaidLinkStatus(): Promise<PlaidLinkFlowStatus>
   /** Subscribes to live progress pushes for the Plaid Link flow. Returns an unsubscribe function — same shape as `onMcpStatusChanged`. */
   onPlaidLinkStatusChanged(callback: (status: PlaidLinkFlowStatus) => void): () => void
+  /** Claims a pasted SimpleFIN setup token and stores the resulting access URL — see `simplefin-connect.ts`. The setup token is renderer -> main only; the resulting access URL is never returned. */
+  connectSimpleFin(setupToken: string): Promise<SimpleFinConnectResult>
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */

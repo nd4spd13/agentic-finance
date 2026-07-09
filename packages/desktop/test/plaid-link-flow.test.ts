@@ -96,6 +96,7 @@ function makeConfig(overrides: Partial<CladConfig> = {}): CladConfig {
     provider: 'dummy',
     plaid_db: join(base, 'plaid.sqlite'),
     plaid_env: 'sandbox',
+    simplefin_db: join(base, 'simplefin.sqlite'),
     close_to_tray: true,
     ...overrides,
   }

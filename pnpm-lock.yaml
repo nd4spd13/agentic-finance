@@ -107,6 +107,9 @@ importers:
       '@clad/plaid-adapter':
         specifier: workspace:*
         version: link:../plaid-adapter
+      '@clad/simplefin-adapter':
+        specifier: workspace:*
+        version: link:../simplefin-adapter
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@4.3.6)

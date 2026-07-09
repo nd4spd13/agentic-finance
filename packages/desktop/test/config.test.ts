@@ -41,6 +41,7 @@ describe('config', () => {
     expect(cfg.audit_db).toContain(TEST_DIR)
     expect(cfg.approval_db).toContain(TEST_DIR)
     expect(cfg.plaid_db).toContain(TEST_DIR)
+    expect(cfg.simplefin_db).toContain(TEST_DIR)
   })
 
   it('defaultConfig defaults provider to dummy and plaid_env to sandbox', () => {
@@ -69,6 +70,26 @@ describe('config', () => {
 
     const loaded = loadConfig()
     expect(loaded.plaid_env).toBe('sandbox')
+  })
+
+  it('loadConfig defaults simplefin_db when absent from an existing config.json (pre-D3.2 desktop config)', () => {
+    ensureConfigDir()
+    const legacyConfig = defaultConfig() as Record<string, unknown>
+    delete legacyConfig.simplefin_db
+    writeFileSync(getConfigPath(), JSON.stringify(legacyConfig, null, 2) + '\n', 'utf-8')
+
+    const loaded = loadConfig()
+    expect(loaded.simplefin_db).toBe(defaultConfig().simplefin_db)
+  })
+
+  it('loadConfig honors a CLI-authored simplefin_db path (same field the CLI config has always had)', () => {
+    ensureConfigDir()
+    const customPath = join(TEST_DIR, 'custom-simplefin.sqlite')
+    const cliStyleConfig = { ...defaultConfig(), simplefin_db: customPath }
+    writeFileSync(getConfigPath(), JSON.stringify(cliStyleConfig, null, 2) + '\n', 'utf-8')
+
+    const loaded = loadConfig()
+    expect(loaded.simplefin_db).toBe(customPath)
   })
 
   it('loadConfig rejects an invalid plaid_env value, falling back to the default', () => {

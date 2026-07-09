@@ -60,6 +60,7 @@ const cladBridge: CladBridge = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.approvalFocusRequested, listener)
   },
   queryAuditLog: (input: AuditLogQueryInput) => ipcRenderer.invoke(IPC_CHANNELS.auditLogQuery, input),
+  getConnectProvidersStatus: () => ipcRenderer.invoke(IPC_CHANNELS.connectGetProvidersStatus),
   startPlaidLink: (input?: StartPlaidLinkInput) => ipcRenderer.invoke(IPC_CHANNELS.plaidLinkStart, input),
   cancelPlaidLink: () => ipcRenderer.invoke(IPC_CHANNELS.plaidLinkCancel),
   getPlaidLinkStatus: () => ipcRenderer.invoke(IPC_CHANNELS.plaidLinkGetStatus),
@@ -68,6 +69,7 @@ const cladBridge: CladBridge = {
     ipcRenderer.on(IPC_CHANNELS.plaidLinkStatusChanged, listener)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.plaidLinkStatusChanged, listener)
   },
+  connectSimpleFin: (setupToken: string) => ipcRenderer.invoke(IPC_CHANNELS.simplefinConnect, setupToken),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

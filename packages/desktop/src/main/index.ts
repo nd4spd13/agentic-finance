@@ -39,7 +39,16 @@ import { listApprovals, decideApproval, findNewPendingApprovals } from './lib/ap
 import { queryAuditLog } from './lib/audit-log.js'
 import { DashboardDataStore, type DashboardSnapshot } from './lib/dashboard-data.js'
 import { readPolicy, writePolicy, type PolicyGetResult, type PolicyWriteResult } from './lib/policy-data.js'
-import { PlaidLinkFlowManager, type PlaidLinkFlowStatus } from './lib/plaid-link-flow.js'
+import {
+  PlaidLinkFlowManager,
+  getPlaidConnectionState,
+  type PlaidLinkFlowStatus,
+} from './lib/plaid-link-flow.js'
+import {
+  claimAndStoreSimpleFinToken,
+  getSimpleFinConnectionState,
+  type SimpleFinConnectResult,
+} from './lib/simplefin-connect.js'
 import {
   trayTooltip,
   trayServerStatusMenuLabel,
@@ -74,6 +83,7 @@ import {
   type ApprovalDecisionResult,
   type AuditLogQueryInput,
   type AuditLogPage,
+  type ConnectProvidersStatus,
   type StartPlaidLinkInput,
 } from '../shared/ipc.js'
 
@@ -633,7 +643,21 @@ ipcMain.handle(
     queryAuditLog(loadConfig().audit_db, input.filter ?? {}, input.page, input.pageSize)
 )
 
-// ---- IPC handlers (D3.1 Plaid Link) ----------------------------------------
+// ---- IPC handlers (D3.1 Plaid Link / D3.2 connect UI) ----------------------
+
+ipcMain.handle(IPC_CHANNELS.connectGetProvidersStatus, async (): Promise<ConnectProvidersStatus> => {
+  const deps = { loadConfig, getActivePassphrase: getActiveTokenStorePassphrase }
+  const [plaidConnection, simplefinConnection] = await Promise.all([
+    getPlaidConnectionState(deps),
+    getSimpleFinConnectionState(deps),
+  ])
+  return {
+    plaidCredentialsConfigured: getPlaidSecrets().has(),
+    plaidConnection,
+    simplefinConnection,
+    sandboxAutoAvailable: !app.isPackaged,
+  }
+})
 
 ipcMain.handle(
   IPC_CHANNELS.plaidLinkStart,
@@ -641,6 +665,12 @@ ipcMain.handle(
 )
 ipcMain.handle(IPC_CHANNELS.plaidLinkCancel, (): PlaidLinkFlowStatus => plaidLinkFlow.cancel())
 ipcMain.handle(IPC_CHANNELS.plaidLinkGetStatus, (): PlaidLinkFlowStatus => plaidLinkFlow.getStatus())
+
+ipcMain.handle(
+  IPC_CHANNELS.simplefinConnect,
+  (_event, setupToken: string): Promise<SimpleFinConnectResult> =>
+    claimAndStoreSimpleFinToken(setupToken, { loadConfig, getActivePassphrase: getActiveTokenStorePassphrase })
+)
 
 // ---- App lifecycle ----------------------------------------------------------
 
