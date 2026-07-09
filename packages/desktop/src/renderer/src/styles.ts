@@ -99,3 +99,43 @@ export const pathList: CSSProperties = {
   padding: '0.75rem',
   overflowX: 'auto',
 }
+
+// ---- D2.1 nav + approvals inbox --------------------------------------------
+
+export const navBar: CSSProperties = {
+  display: 'flex',
+  gap: '0.5rem',
+  marginBottom: '1.25rem',
+  borderBottom: '1px solid #ddd',
+  paddingBottom: '0.75rem',
+}
+
+export const navButton: CSSProperties = {
+  padding: '0.4rem 0.75rem',
+  fontSize: 14,
+  borderRadius: 4,
+  border: '1px solid transparent',
+  background: 'transparent',
+  color: '#444',
+  cursor: 'pointer',
+}
+
+export const navButtonActive: CSSProperties = {
+  ...navButton,
+  background: '#1a1a1a',
+  color: '#fff',
+}
+
+/** A single approval/audit row rendered as a bordered block (reuses `pathList`'s look but with a proportional font — monospace doesn't read well for prose like `triggerReason`). */
+export const listItem: CSSProperties = {
+  ...pathList,
+  fontFamily: 'inherit',
+  marginBottom: '0.75rem',
+}
+
+/** Applied to the inbox row a clicked notification points at (see `ApprovalsInbox.tsx`'s `focusApprovalId` prop). */
+export const listItemHighlighted: CSSProperties = {
+  ...listItem,
+  border: '2px solid #1a1a1a',
+  background: '#fff8e1',
+}

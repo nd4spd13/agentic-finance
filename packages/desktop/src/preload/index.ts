@@ -13,6 +13,9 @@ import {
   type SetCloseToTrayInput,
   type SetPlaidCredentialsInput,
   type McpServerStatus,
+  type ApprovalsListInput,
+  type ApprovalDecisionInput,
+  type ApprovalFocusRequest,
 } from '../shared/ipc.js'
 
 const cladBridge: CladBridge = {
@@ -41,6 +44,13 @@ const cladBridge: CladBridge = {
   getClaudeDesktopConnectPreview: (agentId?: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.claudeDesktopGetPreview, agentId),
   connectClaudeDesktop: (agentId?: string) => ipcRenderer.invoke(IPC_CHANNELS.claudeDesktopConnect, agentId),
+  listApprovals: (input?: ApprovalsListInput) => ipcRenderer.invoke(IPC_CHANNELS.approvalsList, input),
+  decideApproval: (input: ApprovalDecisionInput) => ipcRenderer.invoke(IPC_CHANNELS.approvalsDecide, input),
+  onApprovalFocusRequested: (callback: (request: ApprovalFocusRequest) => void) => {
+    const listener = (_event: IpcRendererEvent, request: ApprovalFocusRequest): void => callback(request)
+    ipcRenderer.on(IPC_CHANNELS.approvalFocusRequested, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.approvalFocusRequested, listener)
+  },
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)
