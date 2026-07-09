@@ -121,10 +121,22 @@ export interface ClaudeDesktopConnectPreview {
   configPath: string
   /** Pretty-printed JSON of the config file as it exists today, or `null` if it doesn't exist yet (but Claude Desktop is installed). */
   currentConfigJson: string | null
-  /** Pretty-printed JSON of the config after non-destructively merging in the `clad` MCP server entry. */
+  /** Pretty-printed JSON of the config after non-destructively merging in the `clad` MCP server entry, using `resolvedAgentId` for `CLAD_AGENT_ID`. */
   proposedConfigJson: string
   /** True when `mcpServers.clad` already matches the proposed entry exactly — connecting again would be a no-op. */
   alreadyConnected: boolean
+  /**
+   * Every agent ID found in the policy at the path this entry will point at
+   * (empty when the policy is missing/empty/invalid — see
+   * `agentFallbackReason` below). Length > 1 means the confirmation dialog
+   * should show a selector rather than silently picking one (D1 manual QA
+   * finding 2).
+   */
+  availableAgentIds: string[]
+  /** The agent ID `proposedConfigJson`'s `CLAD_AGENT_ID` was built with — pass this (or a different pick from `availableAgentIds`) back to `getClaudeDesktopConnectPreview`/`connectClaudeDesktop` to keep the two in sync. */
+  resolvedAgentId: string
+  /** Set (and shown to the user) only when `resolvedAgentId` fell back to `'default-agent'` because the policy couldn't supply a real one. */
+  agentFallbackReason?: string
 }
 
 // ---- IPC channel names ----------------------------------------------------
@@ -171,8 +183,10 @@ export interface CladBridge {
    * `ipcRenderer` directly (security checklist: no arbitrary channel access).
    */
   onMcpStatusChanged(callback: (status: McpServerStatus) => void): () => void
-  getClaudeDesktopConnectPreview(): Promise<ClaudeDesktopConnectPreview>
-  connectClaudeDesktop(): Promise<OperationResult>
+  /** `agentId` re-resolves the preview against a specific (e.g. user-picked) agent id instead of the default; omit to get the default resolution. */
+  getClaudeDesktopConnectPreview(agentId?: string): Promise<ClaudeDesktopConnectPreview>
+  /** `agentId` should be whatever the last preview resolved to (`resolvedAgentId`, or the user's picked one) — see `ClaudeDesktopConnectPreview`'s doc comment. */
+  connectClaudeDesktop(agentId?: string): Promise<OperationResult>
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */

@@ -44,6 +44,14 @@
  * constraint ("do NOT write to the user's REAL Claude Desktop config during
  * testing"). `src/main/index.ts` is the only place that calls
  * `claudeDesktopConfigPath(app.getPath('appData'))` to get the real path.
+ *
+ * D1 manual QA finding 2: `buildCladMcpServerEntry` now takes an explicit
+ * `agentId` and always writes it as `CLAD_AGENT_ID` — see
+ * `agent-resolution.ts`'s module doc for why (the previous version wrote no
+ * `CLAD_AGENT_ID` at all, so the spawned server fell back to
+ * `mcp-server/src/server.ts`'s hardcoded `'default-agent'`, which silently
+ * fails every tool call against any real-world policy that doesn't happen to
+ * define an agent by that exact name).
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -65,8 +73,18 @@ export interface McpServerEntry {
  * `ELECTRON_RUN_AS_NODE`, exactly as `mcp-server-manager.ts` spawns its own
  * child — see the S0.4 "Spike results" deviation note) or a fake path in
  * tests.
+ *
+ * `agentId` must be resolved by the caller via
+ * `agent-resolution.ts`'s `resolveClaudeDesktopAgentId` — never omitted and
+ * never passed through unvalidated, since a `CLAD_AGENT_ID` that doesn't
+ * exist in the policy at `config.policy_path` makes the spawned server deny
+ * every request (`policy/evaluator.ts`'s unknown-agent check).
  */
-export function buildCladMcpServerEntry(config: CladConfig, execPath: string): McpServerEntry {
+export function buildCladMcpServerEntry(
+  config: CladConfig,
+  execPath: string,
+  agentId: string
+): McpServerEntry {
   return {
     command: execPath,
     args: [resolveMcpServerEntry()],
@@ -78,6 +96,7 @@ export function buildCladMcpServerEntry(config: CladConfig, execPath: string): M
       CLAD_POLICY_PATH: config.policy_path,
       CLAD_AUDIT_DB: config.audit_db,
       CLAD_APPROVAL_DB: config.approval_db,
+      CLAD_AGENT_ID: agentId,
     },
   }
 }

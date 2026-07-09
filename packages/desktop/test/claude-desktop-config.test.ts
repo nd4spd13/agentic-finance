@@ -48,8 +48,8 @@ afterEach(() => {
 })
 
 describe('buildCladMcpServerEntry', () => {
-  it('builds command/args/env from config + execPath, with only path-shaped env vars', () => {
-    const entry = buildCladMcpServerEntry(fakeConfig(), '/fake/Clad.app/Contents/MacOS/Clad')
+  it('builds command/args/env from config + execPath + agentId, with only path-shaped env vars plus CLAD_AGENT_ID', () => {
+    const entry = buildCladMcpServerEntry(fakeConfig(), '/fake/Clad.app/Contents/MacOS/Clad', 'finance-agent')
 
     expect(entry.command).toBe('/fake/Clad.app/Contents/MacOS/Clad')
     expect(entry.args).toHaveLength(1)
@@ -59,11 +59,26 @@ describe('buildCladMcpServerEntry', () => {
       CLAD_POLICY_PATH: '/fake/.clad/policy.yaml',
       CLAD_AUDIT_DB: '/fake/.clad/audit.sqlite',
       CLAD_APPROVAL_DB: '/fake/.clad/approvals.sqlite',
+      CLAD_AGENT_ID: 'finance-agent',
     })
   })
 
+  /**
+   * Regression test for D1 manual QA finding 2: a prior version of this
+   * function wrote no CLAD_AGENT_ID at all, so the spawned server fell back
+   * to mcp-server/src/server.ts's hardcoded 'default-agent' — which fails
+   * every tool call ("unknown agent: default-agent") against any real-world
+   * policy that doesn't happen to define an agent by that exact name (the
+   * repro: a policy defining only 'analyst' and 'finance-agent').
+   */
+  it('always includes CLAD_AGENT_ID set to the resolved agent id, never omitted', () => {
+    const entry = buildCladMcpServerEntry(fakeConfig(), '/fake/exec', 'analyst')
+
+    expect(entry.env.CLAD_AGENT_ID).toBe('analyst')
+  })
+
   it('never includes Plaid secrets or CLAD_PROVIDER, even when provider is "plaid"', () => {
-    const entry = buildCladMcpServerEntry(fakeConfig({ provider: 'plaid' }), '/fake/exec')
+    const entry = buildCladMcpServerEntry(fakeConfig({ provider: 'plaid' }), '/fake/exec', 'default-agent')
 
     const keys = Object.keys(entry.env)
     expect(keys).not.toContain('CLAD_PROVIDER')
@@ -72,7 +87,7 @@ describe('buildCladMcpServerEntry', () => {
     expect(keys).not.toContain('PLAID_ENV')
     expect(keys).not.toContain('CLAD_TOKEN_PASSPHRASE')
     expect(keys.sort()).toEqual(
-      ['CLAD_APPROVAL_DB', 'CLAD_AUDIT_DB', 'CLAD_POLICY_PATH', 'ELECTRON_RUN_AS_NODE'].sort()
+      ['CLAD_AGENT_ID', 'CLAD_APPROVAL_DB', 'CLAD_AUDIT_DB', 'CLAD_POLICY_PATH', 'ELECTRON_RUN_AS_NODE'].sort()
     )
   })
 })
@@ -216,7 +231,7 @@ describe('writeConfig + full merge round trip', () => {
 
     expect(isClaudeDesktopInstalled(configPath)).toBe(true)
     const existing = readExistingConfig(configPath)
-    const cladEntry = buildCladMcpServerEntry(fakeConfig(), '/new/exec')
+    const cladEntry = buildCladMcpServerEntry(fakeConfig(), '/new/exec', 'default-agent')
     expect(isAlreadyConnected(existing, cladEntry)).toBe(false)
 
     const merged = mergeCladEntry(existing, cladEntry)

@@ -34,6 +34,7 @@ import { getPendingApprovalsCount } from './lib/approvals.js'
 import { trayTooltip, trayServerStatusMenuLabel, trayApprovalsMenuLabel } from './lib/tray-status.js'
 import { shouldQuitOnAllWindowsClosed } from './lib/window-lifecycle.js'
 import { claudeDesktopConfigPath } from './lib/claude-desktop-path.js'
+import { resolveClaudeDesktopAgentId } from './lib/agent-resolution.js'
 import {
   buildCladMcpServerEntry,
   isClaudeDesktopInstalled,
@@ -336,28 +337,50 @@ function getClaudeDesktopConfigPath(): string {
   return claudeDesktopConfigPath(app.getPath('appData'))
 }
 
-function buildClaudeDesktopPreview(): ClaudeDesktopConnectPreview {
+/**
+ * Resolves the agent id + builds the merged config for a given (optional)
+ * user-picked `selectedAgentId` — shared by the preview and the actual write
+ * so they can never disagree about which agent id ends up in `CLAD_AGENT_ID`
+ * (D1 manual QA finding 2). See `agent-resolution.ts`'s module doc.
+ */
+async function computeClaudeDesktopMerge(selectedAgentId: string | undefined): Promise<{
+  configPath: string
+  existing: Record<string, unknown>
+  merged: Record<string, unknown>
+  cladEntry: ReturnType<typeof buildCladMcpServerEntry>
+  resolution: Awaited<ReturnType<typeof resolveClaudeDesktopAgentId>>
+}> {
   const configPath = getClaudeDesktopConfigPath()
-  const installed = isClaudeDesktopInstalled(configPath)
   const existing = readExistingConfig(configPath)
-  const cladEntry = buildCladMcpServerEntry(loadConfig(), process.execPath)
+  const config = loadConfig()
+  const resolution = await resolveClaudeDesktopAgentId(config.policy_path, selectedAgentId)
+  const cladEntry = buildCladMcpServerEntry(config, process.execPath, resolution.agentId)
   const merged = mergeCladEntry(existing, cladEntry)
+  return { configPath, existing, merged, cladEntry, resolution }
+}
+
+async function buildClaudeDesktopPreview(selectedAgentId?: string): Promise<ClaudeDesktopConnectPreview> {
+  const { configPath, existing, merged, cladEntry, resolution } =
+    await computeClaudeDesktopMerge(selectedAgentId)
 
   return {
-    installed,
+    installed: isClaudeDesktopInstalled(configPath),
     configPath,
     currentConfigJson: existsSync(configPath) ? JSON.stringify(existing, null, 2) : null,
     proposedConfigJson: JSON.stringify(merged, null, 2),
     alreadyConnected: isAlreadyConnected(existing, cladEntry),
+    availableAgentIds: resolution.availableAgentIds,
+    resolvedAgentId: resolution.agentId,
+    agentFallbackReason: resolution.fallbackReason,
   }
 }
 
 ipcMain.handle(
   IPC_CHANNELS.claudeDesktopGetPreview,
-  (): ClaudeDesktopConnectPreview => buildClaudeDesktopPreview()
+  (_event, agentId?: string): Promise<ClaudeDesktopConnectPreview> => buildClaudeDesktopPreview(agentId)
 )
 
-ipcMain.handle(IPC_CHANNELS.claudeDesktopConnect, (): OperationResult => {
+ipcMain.handle(IPC_CHANNELS.claudeDesktopConnect, async (_event, agentId?: string): Promise<OperationResult> => {
   try {
     const configPath = getClaudeDesktopConfigPath()
     if (!isClaudeDesktopInstalled(configPath)) {
@@ -367,9 +390,7 @@ ipcMain.handle(IPC_CHANNELS.claudeDesktopConnect, (): OperationResult => {
           'Claude Desktop was not found on this machine (its application-support folder is missing). Install Claude Desktop, launch it at least once, then try again.',
       }
     }
-    const existing = readExistingConfig(configPath)
-    const cladEntry = buildCladMcpServerEntry(loadConfig(), process.execPath)
-    const merged = mergeCladEntry(existing, cladEntry)
+    const { merged } = await computeClaudeDesktopMerge(agentId)
     writeClaudeDesktopConfig(configPath, merged)
     return { ok: true }
   } catch (err) {

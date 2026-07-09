@@ -12,19 +12,28 @@ import * as s from '../styles.js'
  * `clad` entry never carries Plaid secrets (it always runs the demo/dummy
  * provider), and `main/lib/claude-desktop-path.ts` for the per-platform path
  * lookup.
+ *
+ * D1 manual QA finding 2: the entry always needs a real `CLAD_AGENT_ID`
+ * (see `agent-resolution.ts`'s module doc). When the policy defines more
+ * than one agent, an inline selector lets the user pick which one Claude
+ * Desktop's copy of the server should run as, before confirming — picking a
+ * new one re-fetches the preview so `proposedConfigJson` always reflects the
+ * currently-selected agent id.
  */
 export default function ConnectClaudeDesktop(): JSX.Element {
   const [preview, setPreview] = useState<ClaudeDesktopConnectPreview | null>(null)
+  const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
 
-  async function load(): Promise<void> {
+  async function load(agentId?: string): Promise<void> {
     setLoadError(null)
     try {
-      const next = await window.clad.getClaudeDesktopConnectPreview()
+      const next = await window.clad.getClaudeDesktopConnectPreview(agentId)
       setPreview(next)
+      setSelectedAgentId(next.resolvedAgentId)
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err))
     }
@@ -34,11 +43,16 @@ export default function ConnectClaudeDesktop(): JSX.Element {
     load()
   }, [])
 
+  async function handleAgentChange(nextAgentId: string): Promise<void> {
+    setSelectedAgentId(nextAgentId)
+    await load(nextAgentId)
+  }
+
   async function handleConfirm(): Promise<void> {
     setConnecting(true)
     setResult(null)
     try {
-      const res = await window.clad.connectClaudeDesktop()
+      const res = await window.clad.connectClaudeDesktop(selectedAgentId)
       setResult({
         ok: res.ok,
         text: res.ok
@@ -47,7 +61,7 @@ export default function ConnectClaudeDesktop(): JSX.Element {
       })
       if (res.ok) {
         setConfirming(false)
-        await load()
+        await load(selectedAgentId)
       }
     } finally {
       setConnecting(false)
@@ -90,6 +104,35 @@ export default function ConnectClaudeDesktop(): JSX.Element {
 
       {preview && preview.installed && confirming && (
         <div>
+          {preview.agentFallbackReason && <p style={s.warnText}>{preview.agentFallbackReason}</p>}
+
+          {preview.availableAgentIds.length > 1 && (
+            <>
+              <label style={s.label} htmlFor="claude-desktop-agent">
+                Run Claude Desktop&apos;s copy as agent
+              </label>
+              <select
+                id="claude-desktop-agent"
+                style={s.select}
+                value={selectedAgentId ?? preview.resolvedAgentId}
+                disabled={connecting}
+                onChange={(e) => handleAgentChange(e.target.value)}
+              >
+                {preview.availableAgentIds.map((agentId) => (
+                  <option key={agentId} value={agentId}>
+                    {agentId}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+
+          {preview.availableAgentIds.length === 1 && (
+            <p style={s.mutedText}>
+              Will run as the policy&apos;s only agent: <code>{preview.resolvedAgentId}</code>
+            </p>
+          )}
+
           <p style={s.label as React.CSSProperties}>Current config ({preview.configPath})</p>
           <pre style={s.pathList}>{preview.currentConfigJson ?? '(file does not exist yet)'}</pre>
           <p style={s.label as React.CSSProperties}>Proposed config (after connecting)</p>

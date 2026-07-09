@@ -83,6 +83,13 @@ export const mutedText: CSSProperties = {
   fontSize: 13,
 }
 
+/** Actionable-but-not-an-error notices (e.g. "fell back to X, here's why", "can't unlock stored credentials, re-enter them"). Amber — matches ServerStatusPanel's in-progress state color. */
+export const warnText: CSSProperties = {
+  color: '#8a6d00',
+  fontSize: 13,
+  marginTop: '0.25rem',
+}
+
 export const pathList: CSSProperties = {
   fontSize: 13,
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
