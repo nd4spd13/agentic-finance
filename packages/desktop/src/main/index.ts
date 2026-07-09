@@ -32,6 +32,7 @@ import { PlaidSecretsStore } from './lib/plaid-secrets.js'
 import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
 import { getPendingApprovalsCount } from './lib/approvals.js'
 import { trayTooltip, trayServerStatusMenuLabel, trayApprovalsMenuLabel } from './lib/tray-status.js'
+import { shouldQuitOnAllWindowsClosed } from './lib/window-lifecycle.js'
 import { claudeDesktopConfigPath } from './lib/claude-desktop-path.js'
 import {
   buildCladMcpServerEntry,
@@ -440,8 +441,13 @@ if (!gotSingleInstanceLock) {
     })
   })
 
+  // Fixed D1 manual QA finding 1: this used to be the stock Electron
+  // boilerplate `if (process.platform !== 'darwin') app.quit()`, which keyed
+  // quitting off the OS instead of `close_to_tray` — on macOS the app never
+  // quit this way at all, even with `close_to_tray` off. See
+  // `window-lifecycle.ts`'s module doc for the full decision.
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
+    if (shouldQuitOnAllWindowsClosed(loadConfig())) {
       app.quit()
     }
   })
