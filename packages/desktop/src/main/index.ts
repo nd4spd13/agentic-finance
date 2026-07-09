@@ -6,18 +6,23 @@
  * (start/stop/restart, crash backoff, status pushed to the renderer). D1.3:
  * tray/menu-bar presence (server status + pending approvals, single-instance
  * lock, close-to-tray). D1.4: "Connect to Claude Desktop" (non-destructive
- * config merge behind a confirm dialog). All wired over the typed IPC
- * contract in `../shared/ipc.js`.
+ * config merge behind a confirm dialog). D2.1: approvals inbox (list/
+ * approve/deny through the real `@clad/core` `ApprovalQueue`, audit-logged,
+ * plus a native OS notification on new pending approvals — see
+ * `broadcastStatus`/`notifyNewApproval` below). D2.2: read-only paginated
+ * audit log viewer. All wired over the typed IPC contract in
+ * `../shared/ipc.js`.
  *
  * Security posture (desktop-app.md, non-negotiable):
  *  - contextIsolation: true, nodeIntegration: false, sandbox: true.
  *  - All secret material (passphrase, Plaid credentials, tokens, DB
  *    handles) stays in this process. Only display-safe view models
  *    (`DisplayConfig`, `MigrationStatus`, `OperationResult`,
- *    `McpServerStatus`, `ClaudeDesktopConnectPreview`) cross IPC.
+ *    `McpServerStatus`, `ClaudeDesktopConnectPreview`, `ApprovalListItem`,
+ *    `AuditLogPage`) cross IPC.
  */
 
-import { app, BrowserWindow, ipcMain, safeStorage, shell, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, safeStorage, shell, Tray, Menu, nativeImage, Notification } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -30,7 +35,8 @@ import {
 import { PassphraseCustody, verifyCliPassphrase } from './lib/passphrase.js'
 import { PlaidSecretsStore } from './lib/plaid-secrets.js'
 import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
-import { getPendingApprovalsCount } from './lib/approvals.js'
+import { listApprovals, decideApproval, findNewPendingApprovals } from './lib/approvals.js'
+import { queryAuditLog } from './lib/audit-log.js'
 import { DashboardDataStore, type DashboardSnapshot } from './lib/dashboard-data.js'
 import { readPolicy, writePolicy, type PolicyGetResult, type PolicyWriteResult } from './lib/policy-data.js'
 import {
@@ -61,6 +67,12 @@ import {
   type MigrationStatus,
   type McpServerStatus,
   type ClaudeDesktopConnectPreview,
+  type ApprovalListItem,
+  type ApprovalsListInput,
+  type ApprovalDecisionInput,
+  type ApprovalDecisionResult,
+  type AuditLogQueryInput,
+  type AuditLogPage,
 } from '../shared/ipc.js'
 
 // `__dirname` (ambient via @types/node) is a CommonJS global — valid here
@@ -101,14 +113,81 @@ function getActiveTokenStorePassphrase(): string | null {
 let latestMcpStatus: McpProcessStatus = { state: 'stopped', tools: [], restartAttempt: 0 }
 let statusRefreshTimer: ReturnType<typeof setInterval> | null = null
 
+/**
+ * D2.1's "new pending approval" detection state — an id set from the
+ * previous tick, diffed via `findNewPendingApprovals` (pure, unit-tested in
+ * `approvals.test.ts`). Deliberately uninitialized (`null`) until the first
+ * tick: that first tick seeds this set from whatever's already pending
+ * without notifying — otherwise every approval that existed before the app
+ * even started watching would fire a notification on launch, which is noise,
+ * not news. `broadcastStatus` below is the ONLY place this is read/written —
+ * see its doc comment for why detection lives there instead of in
+ * `withPendingApprovals` (used by several other call sites that shouldn't
+ * also drive notifications).
+ */
+let seenPendingApprovalIds: Set<string> | null = null
+
+/** Best-effort: a failure to list approvals here shouldn't take down the tray/status refresh loop (same posture as `getPendingApprovalsCount`'s own try/catch, which this replaces for callers that need the full list too). */
+async function loadPendingApprovalsSafe(): Promise<ApprovalListItem[]> {
+  try {
+    return await listApprovals(loadConfig().approval_db, { status: 'pending' })
+  } catch {
+    return []
+  }
+}
+
 async function withPendingApprovals(status: McpProcessStatus): Promise<McpServerStatus> {
-  const pendingApprovals = await getPendingApprovalsCount(loadConfig().approval_db)
+  const pendingApprovals = (await loadPendingApprovalsSafe()).length
   return { ...status, pendingApprovals }
 }
 
-/** Pushes the merged status to the renderer (if a window is open) AND repaints the tray. Single source of truth for "what changed" — see updateTray below. */
+/**
+ * Shows a native OS notification for a newly-appeared pending approval.
+ * Clicking it focuses/creates the main window and pushes
+ * `approvalFocusRequested` with the approval's id so the renderer can
+ * switch to the Approvals tab and scroll-to/highlight that item (see
+ * `App.tsx`'s subscription and `ApprovalsInbox.tsx`'s `focusApprovalId`
+ * prop). Guarded by `isSupported()` the same way `safeStorage` is checked
+ * elsewhere — some Linux desktop environments have no notification daemon.
+ */
+function notifyNewApproval(approval: ApprovalListItem): void {
+  if (!Notification.isSupported()) return
+  const notification = new Notification({
+    title: 'New approval request',
+    body: `${approval.agentId} wants to run ${approval.toolName} — ${approval.triggerReason}`,
+  })
+  notification.on('click', () => {
+    focusOrCreateWindow()
+    mainWindow?.webContents.send(IPC_CHANNELS.approvalFocusRequested, { id: approval.id })
+  })
+  notification.show()
+}
+
+/**
+ * Pushes the merged status to the renderer (if a window is open) AND
+ * repaints the tray. Single source of truth for "what changed" — see
+ * updateTray below. Also the single place the D2.1 new-pending-approval
+ * notification is driven from: it already runs on the exact cadence the
+ * plan calls for extending (every real MCP status change via
+ * `onStatusChange` below, plus the 15s interval in `app.whenReady()`) —
+ * deliberately NOT added to `withPendingApprovals` itself, since that's also
+ * called from `mcpGetStatus`/`mcpStart`/`mcpStop`/`mcpRestart` IPC handlers,
+ * which would turn one poll loop into several independent notification
+ * triggers.
+ */
 async function broadcastStatus(): Promise<void> {
-  const status = await withPendingApprovals(latestMcpStatus)
+  const pending = await loadPendingApprovalsSafe()
+  if (seenPendingApprovalIds === null) {
+    seenPendingApprovalIds = new Set(pending.map((item) => item.id))
+  } else {
+    const fresh = findNewPendingApprovals(seenPendingApprovalIds, pending)
+    seenPendingApprovalIds = new Set(pending.map((item) => item.id))
+    for (const approval of fresh) {
+      notifyNewApproval(approval)
+    }
+  }
+
+  const status: McpServerStatus = { ...latestMcpStatus, pendingApprovals: pending.length }
   mainWindow?.webContents.send(IPC_CHANNELS.mcpStatusChanged, status)
   updateTray(status)
 }
@@ -494,6 +573,43 @@ ipcMain.handle(IPC_CHANNELS.claudeDesktopConnect, async (_event, agentId?: strin
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 })
+
+// ---- IPC handlers (D2.1 approvals inbox) -----------------------------------
+
+// Unlike the mutation-style handlers above, this one does NOT catch: a
+// genuine read failure should reject the renderer's `invoke()` call so
+// `ApprovalsInbox.tsx` shows a real error state (with Retry) instead of a
+// silently-empty inbox — see `listApprovals`'s doc comment in
+// `main/lib/approvals.ts`. Electron only serializes the thrown error's
+// `.message` across IPC, which is display-safe here (SQLite/fs error text,
+// never secret material).
+ipcMain.handle(
+  IPC_CHANNELS.approvalsList,
+  (_event, input?: ApprovalsListInput): Promise<ApprovalListItem[]> =>
+    listApprovals(loadConfig().approval_db, input?.status ? { status: input.status } : undefined)
+)
+
+ipcMain.handle(
+  IPC_CHANNELS.approvalsDecide,
+  async (_event, input: ApprovalDecisionInput): Promise<ApprovalDecisionResult> => {
+    const config = loadConfig()
+    const result = await decideApproval(config.approval_db, config.audit_db, input.id, input.decision)
+    // Keep the tray/status-panel pending count consistent with the decision
+    // immediately, rather than waiting up to 15s for the next interval tick.
+    if (result.ok) void broadcastStatus()
+    return result
+  }
+)
+
+// ---- IPC handlers (D2.2 audit log viewer) ----------------------------------
+
+// Same no-catch posture as approvalsList above: a real read failure should
+// surface as a genuine error state in `AuditLogViewer.tsx`, not an empty page.
+ipcMain.handle(
+  IPC_CHANNELS.auditLogQuery,
+  (_event, input: AuditLogQueryInput): Promise<AuditLogPage> =>
+    queryAuditLog(loadConfig().audit_db, input.filter ?? {}, input.page, input.pageSize)
+)
 
 // ---- App lifecycle ----------------------------------------------------------
 

@@ -14,6 +14,10 @@ import {
   type SetPlaidCredentialsInput,
   type McpServerStatus,
   type PolicyDoc,
+  type ApprovalsListInput,
+  type ApprovalDecisionInput,
+  type ApprovalFocusRequest,
+  type AuditLogQueryInput,
 } from '../shared/ipc.js'
 
 const cladBridge: CladBridge = {
@@ -46,6 +50,14 @@ const cladBridge: CladBridge = {
   refreshDashboard: () => ipcRenderer.invoke(IPC_CHANNELS.dashboardRefresh),
   getPolicy: () => ipcRenderer.invoke(IPC_CHANNELS.policyGet),
   setPolicy: (policy: PolicyDoc) => ipcRenderer.invoke(IPC_CHANNELS.policySet, policy),
+  listApprovals: (input?: ApprovalsListInput) => ipcRenderer.invoke(IPC_CHANNELS.approvalsList, input),
+  decideApproval: (input: ApprovalDecisionInput) => ipcRenderer.invoke(IPC_CHANNELS.approvalsDecide, input),
+  onApprovalFocusRequested: (callback: (request: ApprovalFocusRequest) => void) => {
+    const listener = (_event: IpcRendererEvent, request: ApprovalFocusRequest): void => callback(request)
+    ipcRenderer.on(IPC_CHANNELS.approvalFocusRequested, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.approvalFocusRequested, listener)
+  },
+  queryAuditLog: (input: AuditLogQueryInput) => ipcRenderer.invoke(IPC_CHANNELS.auditLogQuery, input),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)
