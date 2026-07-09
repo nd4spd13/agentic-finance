@@ -146,3 +146,143 @@ export const amountPositive: CSSProperties = {
   color: '#1e7a34',
   fontVariantNumeric: 'tabular-nums',
 }
+
+// ---- D2.4 policy editor ------------------------------------------------------
+
+export const textarea: CSSProperties = {
+  ...input,
+  fontFamily: 'inherit',
+  resize: 'vertical',
+}
+
+export const fieldRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: '0.75rem',
+  marginBottom: '0.6rem',
+}
+
+export const fieldLabel: CSSProperties = {
+  width: 200,
+  flexShrink: 0,
+  fontSize: 13,
+  color: '#555',
+  paddingTop: 6,
+}
+
+export const fieldControl: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+}
+
+export const sectionTitle: CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  textTransform: 'uppercase',
+  letterSpacing: 0.4,
+  color: '#666',
+  margin: '0 0 0.5rem',
+}
+
+export const checkboxRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.4rem',
+  fontSize: 13,
+  cursor: 'pointer',
+}
+
+export const tagInputWrap: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '0.35rem',
+  alignItems: 'center',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  padding: '0.35rem 0.5rem',
+  background: '#fff',
+  minHeight: 34,
+  boxSizing: 'border-box',
+}
+
+export const tag: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  background: '#e0e7ff',
+  color: '#3730a3',
+  borderRadius: 4,
+  padding: '2px 6px',
+  fontSize: 12,
+}
+
+export const tagRemove: CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  color: '#6366f1',
+  cursor: 'pointer',
+  lineHeight: 1,
+  padding: 0,
+  fontSize: 13,
+}
+
+export const tagInputField: CSSProperties = {
+  flex: 1,
+  minWidth: 80,
+  border: 'none',
+  outline: 'none',
+  fontSize: 13,
+}
+
+export const linkButton: CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  color: '#4f46e5',
+  cursor: 'pointer',
+  fontSize: 13,
+  padding: 0,
+}
+
+export const policySidebar: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '0.4rem',
+  marginBottom: '1rem',
+}
+
+export const policyAgentButton: CSSProperties = {
+  padding: '0.35rem 0.75rem',
+  fontSize: 13,
+  borderRadius: 999,
+  border: '1px solid #ccc',
+  background: '#fff',
+  color: '#333',
+  cursor: 'pointer',
+}
+
+export const policyAgentButtonActive: CSSProperties = {
+  ...policyAgentButton,
+  background: '#4f46e5',
+  borderColor: '#4f46e5',
+  color: '#fff',
+}
+
+export const yamlPreview: CSSProperties = {
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  fontSize: 12,
+  background: '#1a1a1a',
+  color: '#e5e5e5',
+  borderRadius: 6,
+  padding: '0.75rem',
+  overflow: 'auto',
+  maxHeight: 260,
+  whiteSpace: 'pre',
+  margin: 0,
+}
+
+export const triggerRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.5rem',
+  marginBottom: '0.5rem',
+}

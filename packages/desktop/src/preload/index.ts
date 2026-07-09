@@ -13,6 +13,7 @@ import {
   type SetCloseToTrayInput,
   type SetPlaidCredentialsInput,
   type McpServerStatus,
+  type PolicyDoc,
 } from '../shared/ipc.js'
 
 const cladBridge: CladBridge = {
@@ -43,6 +44,8 @@ const cladBridge: CladBridge = {
   connectClaudeDesktop: (agentId?: string) => ipcRenderer.invoke(IPC_CHANNELS.claudeDesktopConnect, agentId),
   getDashboardSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.dashboardGetSnapshot),
   refreshDashboard: () => ipcRenderer.invoke(IPC_CHANNELS.dashboardRefresh),
+  getPolicy: () => ipcRenderer.invoke(IPC_CHANNELS.policyGet),
+  setPolicy: (policy: PolicyDoc) => ipcRenderer.invoke(IPC_CHANNELS.policySet, policy),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

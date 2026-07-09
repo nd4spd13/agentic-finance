@@ -5,15 +5,16 @@ import SettingsForm from './components/SettingsForm.js'
 import ServerStatusPanel from './components/ServerStatusPanel.js'
 import ConnectClaudeDesktop from './components/ConnectClaudeDesktop.js'
 import Dashboard from './components/Dashboard.js'
+import PolicyEditor from './components/PolicyEditor.js'
 import * as s from './styles.js'
 
-// D2 nav (introduced by D2.3): a minimal tab switcher for the "ready" phase
-// below. Kept intentionally tiny (a union + one useState) so later D2 work
-// (policy editor, approvals inbox, audit viewer) only needs to extend this
+// D2 nav (introduced by D2.3, extended by D2.4): a minimal tab switcher for
+// the "ready" phase below. Kept intentionally tiny (a union + one useState)
+// so later D2 work (approvals inbox, audit viewer) only needs to extend this
 // union and the two spots that reference it — nothing here restructures the
 // existing Settings content, which keeps rendering exactly as it did in D1,
 // just under its own tab now.
-type Tab = 'dashboard' | 'settings'
+type Tab = 'dashboard' | 'policy' | 'settings'
 
 type LoadState =
   | { phase: 'loading' }
@@ -22,13 +23,14 @@ type LoadState =
   | { phase: 'ready'; config: DisplayConfig }
 
 /**
- * D1 shell: settings screen (paths, provider/Plaid env, Plaid credentials,
- * close-to-tray), the one-time CLI-migration prompt when applicable, MCP
- * server status/controls (D1.2), and the Connect-to-Claude-Desktop action
- * (D1.4). Tray/menu-bar presence (D1.3) lives entirely in the main process
- * (`src/main/index.ts`) — nothing to render here. The full product UI
- * (approvals inbox, dashboard, policy editor) is Phase D2, out of scope
- * here.
+ * D1 shell (settings screen: paths, provider/Plaid env, Plaid credentials,
+ * close-to-tray; the one-time CLI-migration prompt; MCP server status/
+ * controls from D1.2; the Connect-to-Claude-Desktop action from D1.4) plus
+ * the D2 product tabs built on top of it so far: the D2.3 dashboard
+ * (balances + recent transactions) and the D2.4 policy editor. Tray/menu-bar
+ * presence (D1.3) lives entirely in the main process (`src/main/index.ts`)
+ * — nothing to render here. Approvals inbox / audit log viewer are the
+ * remaining D2 sub-tasks, out of scope here.
  */
 export default function App(): JSX.Element {
   const [state, setState] = useState<LoadState>({ phase: 'loading' })
@@ -77,6 +79,13 @@ export default function App(): JSX.Element {
             </button>
             <button
               type="button"
+              style={tab === 'policy' ? s.navButtonActive : s.navButton}
+              onClick={() => setTab('policy')}
+            >
+              Policy
+            </button>
+            <button
+              type="button"
               style={tab === 'settings' ? s.navButtonActive : s.navButton}
               onClick={() => setTab('settings')}
             >
@@ -85,6 +94,7 @@ export default function App(): JSX.Element {
           </nav>
 
           {tab === 'dashboard' && <Dashboard />}
+          {tab === 'policy' && <PolicyEditor />}
           {tab === 'settings' && (
             <>
               <ServerStatusPanel />

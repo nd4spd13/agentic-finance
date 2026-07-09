@@ -218,6 +218,122 @@ export interface DashboardSnapshot {
   error?: string
 }
 
+// ---- Policy editor (D2.4) ---------------------------------------------------
+//
+// Standalone mirror of `PolicyConfig`/`AgentPolicy`/... from `@clad/core`
+// (`packages/core/src/types/policy.types.ts`), not an import of it — same
+// reasoning as `DashboardAccount`/`DashboardTransaction` above: this file
+// must stay importable from the renderer/preload build without pulling in
+// `@clad/core` (ESM-only, and irrelevant to the wire contract itself). Keep
+// these field-for-field in sync with `policy.types.ts` if that schema ever
+// changes; `main/lib/policy-data.ts` relies on the two being structurally
+// identical so `parsePolicy`'s real return value satisfies this shape with
+// no manual mapping step (unlike the dashboard, which does map).
+
+export interface PolicyAccountPermissions {
+  visible: string[]
+  balance?: boolean
+  account_number?: boolean
+  routing_number?: boolean
+}
+
+export interface PolicyTransactionPermissions {
+  read: boolean
+  amount_visibility_cap?: number
+  description_visibility?: boolean
+  lookback_days?: number
+}
+
+export interface PolicyMerchantFilter {
+  allow?: string[]
+  block?: string[]
+}
+
+export interface PolicyCategoryFilter {
+  allow?: string[]
+  block?: string[]
+}
+
+export interface PolicySpendingPermissions {
+  max_per_transaction?: number
+  max_daily?: number
+  max_weekly?: number
+  max_monthly?: number
+  merchants?: PolicyMerchantFilter
+  categories?: PolicyCategoryFilter
+  require_itemization?: boolean
+}
+
+export type PolicyEscalationTrigger =
+  | { amount_exceeds: number }
+  | { new_merchant: boolean }
+  | { new_category: boolean }
+  | { category: string[] }
+  | { merchant: string[] }
+  | { daily_spend_exceeds_pct: number }
+
+export interface PolicyEscalationConfig {
+  triggers: PolicyEscalationTrigger[]
+  channel: 'cli' | 'webhook'
+  timeout: string
+  default_on_timeout: 'deny' | 'allow'
+}
+
+export interface PolicyScheduleConfig {
+  active_hours?: string
+  active_days?: string[]
+  timezone?: string
+  blackout_dates?: string[]
+  behavior_outside_schedule?: 'deny' | 'escalate'
+}
+
+export interface PolicyAuditConfig {
+  log_all_queries?: boolean
+  log_policy_evaluations?: boolean
+  retention?: string
+}
+
+export interface PolicyAgentPermissions {
+  accounts?: PolicyAccountPermissions
+  transactions?: PolicyTransactionPermissions
+  spending?: PolicySpendingPermissions
+  escalation?: PolicyEscalationConfig
+  schedule?: PolicyScheduleConfig
+  audit?: PolicyAuditConfig
+}
+
+export interface PolicyAgent {
+  description: string
+  permissions: PolicyAgentPermissions
+}
+
+export interface PolicyGlobalRules {
+  max_total_daily_spend?: number
+  max_total_weekly_spend?: number
+  max_total_monthly_spend?: number
+  max_concurrent_agents?: number
+  max_pending_escalations?: number
+  global_blocked_categories?: string[]
+  global_blocked_merchants?: string[]
+}
+
+export interface PolicyDoc {
+  agents: Record<string, PolicyAgent>
+  global?: PolicyGlobalRules
+}
+
+/**
+ * `getPolicy()`'s result. `ok: true` includes both the schema-validated
+ * `policy` object (what the editor mutates) and the `raw` YAML text as
+ * currently on disk (empty string if the policy file doesn't exist yet).
+ * `ok: false` means the file on disk right now fails to parse/validate —
+ * still surfaced (not thrown) so the editor can show the error and let the
+ * user start fresh rather than being stuck on a blank screen.
+ */
+export type PolicyGetResult =
+  | { ok: true; policy: PolicyDoc; raw: string }
+  | { ok: false; error: string }
+
 // ---- IPC channel names ----------------------------------------------------
 
 export const IPC_CHANNELS = {
@@ -241,6 +357,9 @@ export const IPC_CHANNELS = {
   // D2.3
   dashboardGetSnapshot: 'dashboard:getSnapshot',
   dashboardRefresh: 'dashboard:refresh',
+  // D2.4
+  policyGet: 'policy:get',
+  policySet: 'policy:set',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -273,6 +392,10 @@ export interface CladBridge {
   getDashboardSnapshot(): Promise<DashboardSnapshot>
   /** The only call that ever triggers a live provider fetch — wire this to an explicit user action only, never a timer. */
   refreshDashboard(): Promise<DashboardSnapshot>
+  /** Reads the policy file fresh from disk every call — no cache, no rate-limit concern (this is a local file, not a third-party API). */
+  getPolicy(): Promise<PolicyGetResult>
+  /** Validates against `@clad/core`'s policy schema in the main process before writing; never trusts the renderer's shape. See `main/lib/policy-data.ts`. */
+  setPolicy(policy: PolicyDoc): Promise<OperationResult>
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */

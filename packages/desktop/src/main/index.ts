@@ -32,6 +32,7 @@ import { PlaidSecretsStore } from './lib/plaid-secrets.js'
 import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
 import { getPendingApprovalsCount } from './lib/approvals.js'
 import { DashboardDataStore, type DashboardSnapshot } from './lib/dashboard-data.js'
+import { readPolicy, writePolicy, type PolicyGetResult, type PolicyWriteResult } from './lib/policy-data.js'
 import {
   trayTooltip,
   trayServerStatusMenuLabel,
@@ -410,6 +411,20 @@ ipcMain.handle(
 ipcMain.handle(
   IPC_CHANNELS.dashboardRefresh,
   (): Promise<DashboardSnapshot> => dashboardStore.refresh()
+)
+
+// ---- IPC handlers (D2.4) ---------------------------------------------------
+
+// Always reads the config fresh (loadConfig()) rather than caching
+// policy_path, the same way the D1.1 config handlers above do — picks up a
+// policy_path change from Settings without requiring an app restart.
+ipcMain.handle(
+  IPC_CHANNELS.policyGet,
+  (): Promise<PolicyGetResult> => readPolicy(loadConfig().policy_path)
+)
+ipcMain.handle(
+  IPC_CHANNELS.policySet,
+  (_event, policy: unknown): Promise<PolicyWriteResult> => writePolicy(loadConfig().policy_path, policy)
 )
 
 // ---- IPC handlers (D1.4) ---------------------------------------------------
