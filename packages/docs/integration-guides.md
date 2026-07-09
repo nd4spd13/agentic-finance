@@ -395,6 +395,89 @@ Plaid calls can fail transiently (network issues, Plaid outages, rate limits). `
 
 ---
 
+## Connecting a bank via SimpleFIN
+
+Clad also ships a [SimpleFIN](https://www.simplefin.org/) Bridge adapter (`@clad/simplefin-adapter`) that implements the same `FinancialDataProvider` interface the Plaid adapter above does — the same `Account`/`Balance`/`Transaction` shapes, the same MCP tools, the same policy/audit path. It's a second on-ramp to the same data, not a second product; pick whichever suits how you want to connect a bank.
+
+### What SimpleFIN Bridge is, and why it's here alongside Plaid
+
+[SimpleFIN Bridge](https://www.simplefin.org/) is a small, user-funded account-aggregation service. **You subscribe directly to SimpleFIN — $1.50/month or $15/year — not to Clad.** You link your banks on the Bridge's own site, generate a one-time **setup token**, and paste that token into Clad. From then on, data flows **directly between your device and the Bridge**; Clad-the-company is never in the path.
+
+That's the entire reason this adapter exists, and it follows directly from two of Clad's [binding roadmap principles](/roadmap#binding-principles):
+
+- **P1 — Clad servers are never a party to financial data.** No proxying of balances or transactions through Clad-operated infrastructure, ever.
+- **P2 — Secrets never ship in binaries.** No company-owned aggregator credentials are baked into any Clad client. Plaid requires *you* to hold a developer account and API keys; a SimpleFIN setup token is minted for you, by SimpleFIN, the moment you subscribe — Clad never needs (or gets) a company-wide key to use it.
+
+Practically, this makes SimpleFIN the **low-friction path**: no developer account, no sandbox/production compliance review, no API keys to provision. You pay a few dollars a month, paste a token, and you're connected. Plaid remains the better fit for broader institution coverage and a richer product surface (e.g. recurring-charge detection, which SimpleFIN's protocol has no analog for); SimpleFIN is for anyone who'd rather not have a developer relationship with a data aggregator at all. (Precedent: this is the same aggregator [Actual Budget](https://actualbudget.org/) uses, for the same reason.)
+
+### Setup walkthrough
+
+1. **Subscribe and link your banks** at [`bridge.simplefin.org/simplefin/create`](https://bridge.simplefin.org/simplefin/create) ($1.50/mo or $15/yr), then link the institutions you want Clad to see.
+2. **Generate a setup token** on that same page once your banks are linked.
+3. **Paste it into Clad:**
+
+   ```bash
+   clad connect --provider simplefin
+   ```
+
+   This prompts for a token-store passphrase (encrypts the credential at rest — the identical mechanism described in "The passphrase model" above), then for the setup token itself. Paste it and press enter — setup tokens are one-time-use, so there's nothing sensitive about it being visible as you paste it:
+
+   ```
+   clad connect: SimpleFIN Bridge
+     1. Generate a setup token:
+          https://bridge.simplefin.org/simplefin/create
+        (a free demo token is available at https://beta-bridge.simplefin.org/info/developers)
+     2. Paste the setup token below. It is one-time use — pasting it here
+        consumes it, so this prompt does not need to hide your input.
+
+   SimpleFIN setup token: <paste here>
+
+   ✓ Connected: SimpleFIN Bridge
+     Item: simplefin-8f2c1e40-...
+     Institution(s): Chase
+     Linked accounts:
+       - Checking ••••3f21
+       - Savings ••••90ab
+   ```
+
+4. **Switch the provider to SimpleFIN**, the same three ways described for Plaid above:
+   - `clad connect --provider simplefin --use`
+   - edit `config.json` and set `"provider": "simplefin"`
+   - set the `CLAD_PROVIDER=simplefin` environment variable (overrides `config.json` for that process)
+
+### Trying it out with the demo Bridge (no subscription required)
+
+SimpleFIN publishes a public **demo Bridge** with synthetic accounts, useful for kicking the tires before paying for a real subscription:
+
+```bash
+clad connect --provider simplefin
+# at the token prompt, paste a fresh demo token from:
+#   https://beta-bridge.simplefin.org/info/developers
+```
+
+That page mints a new, one-time demo setup token on every load ("refresh this page to generate another one") — always grab a fresh one. A token copied from a screenshot, an old browser tab, or these docs has almost certainly already been claimed by someone else. The demo Bridge shares a small daily request quota across everyone using it, so avoid reconnecting or force-refreshing repeatedly.
+
+### Rate-limit expectations
+
+The SimpleFIN protocol allows roughly **24 `/accounts` requests per day** per connection, and the upstream account data itself typically only refreshes **about once a day** regardless of how often it's requested. Two consequences follow:
+
+- **Clad enforces a minimum 6-hour refresh interval per connection by default.** Every read — a balance check, a transaction list, an MCP tool call — is served from Clad's local cache; a live request to the Bridge only goes out when that connection hasn't been refreshed in the last 6 hours. This isn't a workaround for a limitation; it's the correct behavior, since the underlying data hasn't changed more often than that anyway.
+- **Polling more often buys nothing.** Restarting `clad serve`, calling `clad_get_balances` in a tight loop, or scripting a faster poll will not surface newer data any sooner — it only spends down the shared daily quota, risking the Bridge disabling the access token for abuse. If you need a refresh on a specific day (e.g. right after a large purchase), one normal request is enough to trigger it once the interval has elapsed; there's no "hold refresh" equivalent that helps here.
+
+If a connection's access URL is ever rejected (HTTP 403 — revoked or compromised), Clad surfaces a clear prompt to re-link with a fresh setup token; a lapsed SimpleFIN subscription (HTTP 402) surfaces as an explicit "renew your subscription" message rather than a generic failure.
+
+### Security note: the access URL is a credential
+
+Claiming a setup token returns an **access URL** with embedded HTTP basic-auth credentials (`https://user:pass@bridge-host/...`). This access URL *is* the credential — equivalent in sensitivity to a Plaid access token — and Clad treats it accordingly:
+
+- **Encrypted at rest**, via the identical mechanism used for Plaid tokens: AES-256-GCM under a scrypt-derived key from `CLAD_TOKEN_PASSPHRASE` (see "The passphrase model" above — same `SqliteTokenStore`, same guarantees).
+- **Never displayed.** `clad connect`'s summary output shows only the institution name and masked account identifiers (`••••3f21`) — never the access URL, in any command output, log line, or error message.
+- **Never sent anywhere but the Bridge.** The only outbound calls this adapter makes are the one-time claim request and periodic `GET {accessUrl}/accounts` calls, both directly to SimpleFIN — never through a Clad-operated server (P1).
+
+To revoke access, do it at the Bridge (`bridge.simplefin.org`) directly — that immediately invalidates the access URL Clad has stored, and the next scheduled refresh will surface a clear re-link prompt instead of failing silently.
+
+---
+
 ## Programmatic Integration
 
 If you're building a custom application (not Claude Desktop), you can integrate Clad directly:
