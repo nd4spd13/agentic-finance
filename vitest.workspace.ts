@@ -6,4 +6,5 @@ export default defineWorkspace([
   'packages/plaid-adapter/vitest.config.ts',
   'packages/simplefin-adapter/vitest.config.ts',
   'packages/cli/vitest.config.ts',
+  'packages/desktop/vitest.config.ts',
 ])
