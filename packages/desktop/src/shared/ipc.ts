@@ -158,6 +158,83 @@ export interface ClaudeDesktopConnectPreview {
   agentFallbackReason?: string
 }
 
+// ---- Approvals inbox (D2.1) -------------------------------------------------
+
+/** Standalone copy of `@clad/core`'s `ApprovalStatus` union — same layering rule as `McpServerState` above (this file must stay importable from the renderer/preload build, so it never imports from `@clad/core` or `src/main/**`). */
+export type ApprovalStatus = 'pending' | 'approved' | 'denied' | 'expired'
+
+/** Display-safe view of an `@clad/core` `ApprovalRecord` — camelCased field names, otherwise a 1:1 copy (every field here was already non-secret). */
+export interface ApprovalListItem {
+  id: string
+  agentId: string
+  toolName: string
+  triggerReason: string
+  status: ApprovalStatus
+  createdAt: string
+  expiresAt: string
+  resolvedAt?: string
+}
+
+/** Omit `status` (or pass `'pending'`) for the inbox's default pending-only view; `'all'` includes resolved/expired history too. */
+export interface ApprovalsListInput {
+  status?: ApprovalStatus | 'all'
+}
+
+export interface ApprovalDecisionInput {
+  id: string
+  decision: 'approve' | 'deny'
+}
+
+export interface ApprovalDecisionResult {
+  ok: boolean
+  /** Display-safe (redacted where derived from stored/thrown data). Never secret material. */
+  error?: string
+  record?: ApprovalListItem
+}
+
+/** Pushed main -> renderer when the user clicks the native OS notification for a newly-appeared pending approval — see `onApprovalFocusRequested` below. */
+export interface ApprovalFocusRequest {
+  id: string
+}
+
+// ---- Audit log viewer (D2.2) ------------------------------------------------
+
+/** Display-safe view of an `@clad/core` `AuditRecord` — camelCased field names, otherwise a 1:1 copy (every field here was already non-secret; the hash-chain fields are intentionally omitted as not useful for this read-only viewer). */
+export interface AuditLogRow {
+  id: string
+  timestamp: string
+  agentId: string
+  eventType: string
+  toolName?: string
+  decision?: string
+  reason?: string
+}
+
+export interface AuditLogFilter {
+  agentId?: string
+  toolName?: string
+  decision?: string
+  /** ISO 8601 date or date-time, inclusive lower bound on `timestamp`. */
+  startDate?: string
+  /** ISO 8601 date or date-time, inclusive upper bound on `timestamp`. */
+  endDate?: string
+}
+
+export interface AuditLogQueryInput {
+  filter?: AuditLogFilter
+  /** 1-indexed. */
+  page: number
+  pageSize: number
+}
+
+/** Rows are newest-first. Only one page ever crosses IPC — the full filtered result set stays in the main process (see `main/lib/audit-log.ts`). */
+export interface AuditLogPage {
+  rows: AuditLogRow[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 // ---- IPC channel names ----------------------------------------------------
 
 export const IPC_CHANNELS = {
@@ -178,6 +255,11 @@ export const IPC_CHANNELS = {
   mcpStatusChanged: 'mcp:statusChanged',
   claudeDesktopGetPreview: 'claudeDesktop:getPreview',
   claudeDesktopConnect: 'claudeDesktop:connect',
+  approvalsList: 'approvals:list',
+  approvalsDecide: 'approvals:decide',
+  /** Push-only, main -> renderer. See `onApprovalFocusRequested` below. */
+  approvalFocusRequested: 'approvals:focusRequested',
+  auditLogQuery: 'auditLog:query',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -206,6 +288,19 @@ export interface CladBridge {
   getClaudeDesktopConnectPreview(agentId?: string): Promise<ClaudeDesktopConnectPreview>
   /** `agentId` should be whatever the last preview resolved to (`resolvedAgentId`, or the user's picked one) — see `ClaudeDesktopConnectPreview`'s doc comment. */
   connectClaudeDesktop(agentId?: string): Promise<OperationResult>
+  /** Omit `input` (or `status: 'pending'`) for pending-only; `status: 'all'` includes resolved/expired history. Rejects on a genuine read failure (surfaced by the inbox as an error state) — unlike the tray's best-effort count, this is a user-watched list. */
+  listApprovals(input?: ApprovalsListInput): Promise<ApprovalListItem[]>
+  /** Approves or denies a pending approval — writes through the real `@clad/core` `ApprovalQueue` and audit-logs the decision, same as the CLI's `clad approve`/`clad deny` (see `main/lib/approvals.ts`). Never throws; failures come back as `{ ok: false, error }`. */
+  decideApproval(input: ApprovalDecisionInput): Promise<ApprovalDecisionResult>
+  /**
+   * Fires when the user clicks the native OS notification shown for a
+   * newly-appeared pending approval — main process already focused the
+   * window by the time this arrives; the payload is which item to
+   * scroll-to/highlight in the inbox.
+   */
+  onApprovalFocusRequested(callback: (request: ApprovalFocusRequest) => void): () => void
+  /** Read-only, paginated, newest-first. Rejects on a genuine read failure (surfaced by the viewer as an error state). */
+  queryAuditLog(input: AuditLogQueryInput): Promise<AuditLogPage>
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */
