@@ -235,6 +235,19 @@ describe('SimpleFinCache', () => {
       cache.close()
     })
 
+    it('round-trips institution through the cache (SF5: the primary field for a resolved connection org name, distinct from subtype)', () => {
+      // SimpleFIN's quota guardrail means most getAccounts() reads are
+      // served from this cache rather than a live fetch (see shouldRefresh),
+      // so institution must survive a cache round trip, not just live in the
+      // freshly-mapped Account returned right after a fetch.
+      const cache = new SimpleFinCache({ dbPath })
+      cache.recordFetch('item_1', [{ ...account, institution: 'Bank A Financial' }], [])
+      const [cached] = cache.getAllAccounts()
+      expect(cached?.institution).toBe('Bank A Financial')
+      expect(cached?.subtype).toBeUndefined()
+      cache.close()
+    })
+
     it('scopes getAccounts / getTransactionsByItem to the requested item', () => {
       const cache = new SimpleFinCache({ dbPath })
       cache.recordFetch('item_1', [account], [transaction])
@@ -299,11 +312,12 @@ describe('SimpleFinCache', () => {
       const cache = new SimpleFinCache({ dbPath })
       cache.recordFetch(
         'item_1',
-        [{ ...account, subtype: undefined, mask: undefined, balance_available: undefined }],
+        [{ ...account, subtype: undefined, institution: undefined, mask: undefined, balance_available: undefined }],
         []
       )
       const [cached] = cache.getAllAccounts()
       expect(cached?.subtype).toBeUndefined()
+      expect(cached?.institution).toBeUndefined()
       expect(cached?.mask).toBeUndefined()
       expect(cached?.balance_available).toBeUndefined()
       cache.close()

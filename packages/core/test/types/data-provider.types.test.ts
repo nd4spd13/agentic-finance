@@ -56,4 +56,31 @@ describe('FinancialDataProvider (rename from DataProvider)', () => {
     }
     expect(freshAccount.stale).toBeUndefined()
   })
+
+  it('Account accepts an optional institution field, distinct from subtype', () => {
+    // Added in SF5: institution identity for providers (e.g. SimpleFIN)
+    // where it must be resolved per-account rather than per-item. Deliberately
+    // separate from subtype (a refinement of type, e.g. Plaid's "money market").
+    const account: Account = {
+      id: 'acc_3',
+      name: 'Test3',
+      type: 'checking',
+      subtype: 'money market',
+      institution: 'Bank A Financial',
+      balance_current: 1,
+      currency: 'USD',
+    }
+    expect(account.institution).toBe('Bank A Financial')
+    expect(account.subtype).toBe('money market')
+
+    // institution is optional — absence must still type-check
+    const noInstitution: Account = {
+      id: 'acc_4',
+      name: 'Test4',
+      type: 'checking',
+      balance_current: 1,
+      currency: 'USD',
+    }
+    expect(noInstitution.institution).toBeUndefined()
+  })
 })

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { Account, Transaction } from '@clad/core'
+import type { SimpleFinAccountSet } from '../src/client.js'
 import {
   epochSecondsToDateString,
   mapAccount,
@@ -13,12 +14,16 @@ import {
   parseSimpleFinAmount,
   resolveConnection,
   SimpleFinMappingError,
-  type SimpleFinAccountSetDto,
 } from '../src/mapping.js'
 
-function loadFixture(name: string): SimpleFinAccountSetDto {
+// SF5: mapping.ts now consumes client.ts's fixture-verified wire types
+// directly (see mapping.ts's header comment) rather than a parallel,
+// hand-rolled `*Dto` set, so fixtures are cast to `SimpleFinAccountSet` —
+// the same type `client.ts`'s `parseAccountSet` produces from a real
+// response — instead of a mapping-local duplicate.
+function loadFixture(name: string): SimpleFinAccountSet {
   const path = fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url))
-  return JSON.parse(readFileSync(path, 'utf-8')) as SimpleFinAccountSetDto
+  return JSON.parse(readFileSync(path, 'utf-8')) as SimpleFinAccountSet
 }
 
 const plainFixture = loadFixture('accounts-v2-plain.json')
@@ -135,7 +140,8 @@ describe('mapAccount (real fixtures)', () => {
       id: 'simplefin:fixture-acct-savings',
       name: 'SimpleFIN Savings',
       type: 'savings',
-      subtype: 'SimpleFIN Bridge',
+      subtype: undefined,
+      institution: 'SimpleFIN Bridge',
       mask: undefined,
       balance_current: 114405.51,
       balance_available: 114405.51,
@@ -144,12 +150,18 @@ describe('mapAccount (real fixtures)', () => {
     expect(mapped).toEqual(expected)
   })
 
-  it('maps the checking account, resolving conn_id -> connections for subtype', () => {
+  it('maps the checking account, resolving conn_id -> connections for institution', () => {
     const raw = plainFixture.accounts.find((a) => a.id === 'fixture-acct-checking')!
     const mapped = mapAccount(raw, plainFixture.connections)
     expect(mapped.type).toBe('checking')
-    expect(mapped.subtype).toBe('SimpleFIN Bridge')
+    expect(mapped.institution).toBe('SimpleFIN Bridge')
     expect(mapped.balance_current).toBe(24668.87)
+  })
+
+  it('never populates subtype (SF5: institution moved off subtype to avoid colliding with Plaid\'s account-subtype semantics)', () => {
+    const raw = plainFixture.accounts.find((a) => a.id === 'fixture-acct-savings')!
+    const mapped = mapAccount(raw, plainFixture.connections)
+    expect(mapped.subtype).toBeUndefined()
   })
 
   it('maps the zero-balance empty account', () => {
@@ -178,19 +190,19 @@ describe('mapAccount (real fixtures)', () => {
     expect(mapped.currency).toBe('https://simplefin.org/currencies/fixture-custom-token')
   })
 
-  it('resolves subtype independently per connection in a multi-institution response', () => {
+  it('resolves institution independently per connection in a multi-institution response', () => {
     const bankA = multiConnectionFixture.accounts.find((a) => a.id === 'fixture-acct-bank-a')!
     const bankB = multiConnectionFixture.accounts.find((a) => a.id === 'fixture-acct-bank-b')!
-    expect(mapAccount(bankA, multiConnectionFixture.connections).subtype).toBe('Bank A Financial')
-    expect(mapAccount(bankB, multiConnectionFixture.connections).subtype).toBe('Bank B Trust')
+    expect(mapAccount(bankA, multiConnectionFixture.connections).institution).toBe('Bank A Financial')
+    expect(mapAccount(bankB, multiConnectionFixture.connections).institution).toBe('Bank B Trust')
   })
 
-  it('tolerates an unresolvable conn_id, leaving subtype undefined rather than throwing', () => {
+  it('tolerates an unresolvable conn_id, leaving institution undefined rather than throwing', () => {
     const orphan = multiConnectionFixture.accounts.find(
       (a) => a.id === 'fixture-acct-unresolvable'
     )!
     const mapped = mapAccount(orphan, multiConnectionFixture.connections)
-    expect(mapped.subtype).toBeUndefined()
+    expect(mapped.institution).toBeUndefined()
   })
 })
 
@@ -318,8 +330,8 @@ describe('mapAccountSet (synthetic fixtures)', () => {
   it('maps the multi-connection fixture, resolving each account against the right institution', () => {
     const { accounts } = mapAccountSet(multiConnectionFixture)
     const byId = new Map(accounts.map((a) => [a.id, a]))
-    expect(byId.get('simplefin:fixture-acct-bank-a')?.subtype).toBe('Bank A Financial')
-    expect(byId.get('simplefin:fixture-acct-bank-b')?.subtype).toBe('Bank B Trust')
-    expect(byId.get('simplefin:fixture-acct-unresolvable')?.subtype).toBeUndefined()
+    expect(byId.get('simplefin:fixture-acct-bank-a')?.institution).toBe('Bank A Financial')
+    expect(byId.get('simplefin:fixture-acct-bank-b')?.institution).toBe('Bank B Trust')
+    expect(byId.get('simplefin:fixture-acct-unresolvable')?.institution).toBeUndefined()
   })
 })

@@ -16,7 +16,7 @@ import {
   type LinkFlowResult,
 } from '../src/link.js'
 import { LinkFlowError } from '../src/errors.js'
-import { SqliteTokenStore } from '../src/token-store.js'
+import { SqliteTokenStore } from '@clad/core'
 import type { PlaidClientLike } from '../src/plaid-client.types.js'
 import { makeFakeTokenStore } from './fixtures/fakes.js'
 

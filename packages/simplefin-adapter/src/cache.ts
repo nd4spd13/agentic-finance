@@ -12,8 +12,9 @@ import type { Account, Transaction, TransactionQueryOpts } from '@clad/core'
  * allows roughly 24 `/accounts` requests per day, so unlike Plaid (which
  * calls the API on every read and only degrades to the cache *reactively*,
  * on request failure — see `PlaidAdapter.getAccounts`), this cache must
- * *proactively* tell the (future, SF5) adapter when a live fetch is even
- * allowed at all.
+ * *proactively* tell the adapter (`adapter.ts`, SF5) when a live fetch is
+ * even allowed at all — see that file's `refreshItemIfDue`, which checks
+ * {@link SimpleFinCache.shouldRefresh} before ever calling the network.
  *
  * Fail-closed design: {@link SimpleFinCache.shouldRefresh} returns `true`
  * only when a fetch is either the very first one ever for that item, or
@@ -92,6 +93,7 @@ interface AccountRow {
   name: string
   type: string
   subtype: string | null
+  institution: string | null
   mask: string | null
   balance_current: number
   balance_available: number | null
@@ -133,6 +135,7 @@ export class SimpleFinCache {
         name TEXT NOT NULL,
         type TEXT NOT NULL,
         subtype TEXT,
+        institution TEXT,
         mask TEXT,
         balance_current REAL NOT NULL,
         balance_available REAL,
@@ -241,9 +244,9 @@ export class SimpleFinCache {
 
       const insertAccount = this.db.prepare(`
         INSERT INTO accounts_cache (
-          account_id, item_id, name, type, subtype, mask,
+          account_id, item_id, name, type, subtype, institution, mask,
           balance_current, balance_available, currency
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       for (const account of accounts) {
         insertAccount.run(
@@ -252,6 +255,7 @@ export class SimpleFinCache {
           account.name,
           account.type,
           account.subtype ?? null,
+          account.institution ?? null,
           account.mask ?? null,
           account.balance_current,
           account.balance_available ?? null,
@@ -383,6 +387,7 @@ function rowToAccount(row: AccountRow, stale: boolean): CachedAccount {
     name: row.name,
     type: row.type as Account['type'],
     subtype: row.subtype ?? undefined,
+    institution: row.institution ?? undefined,
     mask: row.mask ?? undefined,
     balance_current: row.balance_current,
     balance_available: row.balance_available ?? undefined,

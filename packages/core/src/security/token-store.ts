@@ -1,5 +1,17 @@
 /**
- * `SqliteTokenStore` — the encrypted at-rest store for Plaid access tokens.
+ * `SqliteTokenStore` — the encrypted at-rest store for provider access
+ * credentials (Plaid access tokens, SimpleFIN access URLs, or any future
+ * provider's equivalent "long-lived secret that lets us fetch data").
+ *
+ * Originally built for `@clad/plaid-adapter` (WP3); moved here (SF5) once the
+ * SimpleFIN adapter needed the same encrypted-at-rest storage and the item
+ * model (`{ itemId, institutionName, accessToken }`) turned out to already be
+ * fully provider-agnostic — nothing about this file is Plaid-specific. Both
+ * `@clad/plaid-adapter` and `@clad/simplefin-adapter` depend on `@clad/core`
+ * already, so this is the natural shared home (roadmap P4 names this file as
+ * "the reference pattern" for local-first storage). `@clad/plaid-adapter`
+ * re-exports these names from its own `index.ts` so existing call sites
+ * (`clad connect`, `provider-factory.ts`) did not need to change.
  *
  * Backed by `node:sqlite`'s `DatabaseSync` (mirroring the style of
  * `packages/core/src/audit/logger.ts`). Access tokens are encrypted with
@@ -10,7 +22,7 @@
  *  - No method interpolates a token, passphrase, or derived key into an Error
  *    message, thrown object, or any string. There are zero `console.*` calls.
  *  - Any diagnostic string derived from stored data is passed through
- *    `redactSecrets` from `@clad/core` defensively before it can escape.
+ *    `redactSecrets` defensively before it can escape.
  *  - The DB file is chmod'd to 0600 at creation and re-applied on reopen.
  *  - `listItems()` returns metadata only (`StoredItemMeta`) — no token field.
  */
@@ -18,9 +30,9 @@
 import { DatabaseSync } from 'node:sqlite'
 import { chmodSync, statSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { redactSecrets } from '@clad/core'
+import { redactSecrets } from './redact.js'
 import { deriveKey, encrypt, decrypt, type EncryptedPayload } from './crypto.js'
-import { TokenStoreKeyError } from './errors.js'
+import { TokenStoreKeyError } from './token-store-errors.js'
 import type { StoredItemInput, StoredItemMeta, TokenStore } from './token-store.types.js'
 
 export interface SqliteTokenStoreOptions {
