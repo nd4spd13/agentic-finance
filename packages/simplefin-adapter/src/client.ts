@@ -163,8 +163,12 @@ export interface FetchAccountsOptions {
   balancesOnly?: boolean
 }
 
-/** The protocol's confirmed maximum `start-date`/`end-date` span, in seconds. */
-const MAX_WINDOW_SECONDS = 90 * 24 * 60 * 60
+/**
+ * The protocol's confirmed maximum `start-date`/`end-date` span, in seconds.
+ * Exported for `adapter.ts` (SF5), which requests the widest allowed window
+ * on every live fetch — see that file's `refreshItemIfDue` for why.
+ */
+export const MAX_WINDOW_SECONDS = 90 * 24 * 60 * 60
 
 const PROTOCOL_CODE_PATTERN = /^(gen|con|act)\.([a-z0-9_-]+)/i
 

@@ -35,13 +35,12 @@ export {
   resolveConnection,
   SimpleFinMappingError,
 } from './mapping.js'
-export type {
-  SimpleFinAccountDto,
-  SimpleFinAccountSetDto,
-  SimpleFinConnectionDto,
-  SimpleFinHoldingDto,
-  SimpleFinTransactionDto,
-} from './mapping.js'
+// Note: SF3's client.ts wire types (SimpleFinAccount, SimpleFinTransaction,
+// SimpleFinHolding, SimpleFinConnection, SimpleFinAccountSet, exported
+// above) are canonical and cover the DTOs mapping.ts consumes — SF4 used to
+// declare a parallel, duplicate set of `*Dto` types here; SF5 unified them
+// (see mapping.ts's header comment), so there is nothing further to export
+// from mapping.ts's DTO surface.
 export { SimpleFinCache } from './cache.js'
 export type {
   CachedAccount,
@@ -49,3 +48,5 @@ export type {
   SimpleFinCacheOptions,
   StalenessInfo,
 } from './cache.js'
+export { SimpleFinAdapter } from './adapter.js'
+export type { SimpleFinAdapterOptions } from './adapter.js'
