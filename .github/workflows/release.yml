@@ -1,0 +1,53 @@
+name: Release
+
+# Builds the unsigned macOS desktop app and publishes it as a DRAFT GitHub
+# Release for a human to review and publish. Signing/notarization (D4.4) is
+# gated on Apple Developer enrollment and out of scope here — see
+# packages/docs/plans/desktop-app.md (Phase D4) for the full plan and the
+# credential-re-entry caveat this implies for unsigned builds.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # required to create a draft release with attached assets
+
+jobs:
+  build-macos:
+    runs-on: macos-14 # Apple Silicon; electron-builder cross-packages x64 too
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm -r build
+
+      - name: Build macOS DMG + ZIP (unsigned)
+        run: pnpm --filter @clad/desktop exec electron-builder --mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false # never probe for a local signing identity
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            packages/desktop/release/*.dmg
+            packages/desktop/release/*.zip
