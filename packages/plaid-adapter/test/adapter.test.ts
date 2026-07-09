@@ -2,11 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { FinancialDataProvider } from '@clad/core'
+import type { FinancialDataProvider, StoredItemMeta, TokenStore } from '@clad/core'
 import { ProviderUnavailableError } from '@clad/core'
 import { PlaidAdapter } from '../src/adapter.js'
 import type { PlaidClientLike } from '../src/plaid-client.types.js'
-import type { StoredItemMeta, TokenStore } from '../src/token-store.types.js'
 
 // Minimal fakes — see test/fixtures/fakes.ts for the richer versions used by
 // adapter-data.test.ts and interchangeability.test.ts. This file just

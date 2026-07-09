@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { randomBytes } from 'node:crypto'
-import { deriveKey, encrypt, decrypt } from '../src/crypto.js'
+import { deriveKey, encrypt, decrypt } from '../../src/security/crypto.js'
 
 const PASSPHRASE = 'correct horse battery staple'
 const SALT = randomBytes(16)
