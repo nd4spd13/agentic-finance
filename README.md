@@ -54,22 +54,15 @@ Prefer a GUI over the CLI? The Clad desktop app (macOS, Apple Silicon + Intel) w
 
 ### Getting past Gatekeeper
 
-The first launch will be blocked with a message like *"Clad.app cannot be opened because Apple cannot check it for malicious software."* On macOS Sequoia (15) and later, the old right-click → **Open** trick no longer bypasses this — use one of the two options below instead.
+The first launch will be blocked with a dialog saying *"Clad" is damaged and can't be opened. You should move it to the Trash.* **The app is not damaged** — this is the message recent macOS versions show for ad-hoc-signed apps downloaded from the internet, and for these the **Open Anyway** button never appears in System Settings (that path only exists for Developer-ID-signed apps). The old right-click → **Open** trick doesn't work either.
 
-**Option A — System Settings (no terminal):**
-
-1. Double-click `Clad.app` once. It will be blocked, but this registers the app with Gatekeeper.
-2. Open **System Settings → Privacy & Security**.
-3. Scroll to the **Security** section — you'll see a line like *"Clad.app was blocked to protect your Mac."* Click **Open Anyway**.
-4. Launch `Clad.app` again and confirm **Open** in the dialog that appears.
-
-**Option B — Terminal:**
+The one route that works is the terminal:
 
 ```bash
 xattr -d com.apple.quarantine /Applications/Clad.app
 ```
 
-This strips the quarantine flag macOS attaches to anything downloaded from the internet — that flag is what triggers the Gatekeeper check in the first place. You'll need to run it again after each update, since a freshly downloaded build gets a new quarantine flag.
+Then launch `Clad.app` normally. This strips the quarantine flag macOS attaches to anything downloaded from the internet — that flag is what triggers the Gatekeeper check in the first place. You'll need to run it again after each update, since a freshly downloaded build gets a new quarantine flag.
 
 > **Important — credentials may need re-entry after updating.** Each unsigned build is ad-hoc signed with a fresh, unique identity, and macOS Keychain access — which backs Clad's `safeStorage`-encrypted Plaid credentials and token-store passphrase — is scoped to that identity. A newer build therefore cannot always decrypt secrets an older build wrote. Clad detects this on launch and tells the two cases apart ("can't be unlocked" vs. "not set yet") rather than failing silently, and offers a re-enter-credentials or start-fresh path either way. This is expected behavior on unsigned builds, not a bug — it goes away once signed releases (with a stable signing identity) ship.
 
