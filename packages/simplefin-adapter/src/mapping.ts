@@ -1,5 +1,6 @@
 /**
- * SimpleFIN Bridge account/transaction -> `@clad/core` model mapping (SF4).
+ * SimpleFIN Bridge account/transaction -> `@clad/core` model mapping (SF4,
+ * revised SF5).
  *
  * Mirrors `packages/plaid-adapter/src/mapping.ts`'s conventions (pure
  * functions, no I/O, one mapping rule per exported helper) while adapting to
@@ -29,9 +30,26 @@
  *    `test/fixtures/synthetic-currency-url.json`). Both are just opaque
  *    strings as far as `@clad/core`'s `currency: string` field is concerned,
  *    so no special-casing is needed here beyond passing the value through.
+ *
+ * SF5 note (wire-type unification): this module used to declare its own
+ * parallel `SimpleFinAccountDto`/`SimpleFinTransactionDto`/etc. types,
+ * duplicating `client.ts`'s fixture-verified `SimpleFinAccount`/
+ * `SimpleFinTransaction`/etc. (an artifact of SF3 and SF4 having been built
+ * in parallel without visibility into each other's work). `client.ts`'s
+ * types are canonical now — they're exercised directly against real SF1
+ * captures in `parseAccountSet` — so this module imports and consumes them
+ * instead of re-declaring its own shapes. `adapter.ts` (SF5) is the module
+ * that actually sits at this junction (client output feeds straight into
+ * `mapAccountSet`), which is what made the duplication worth resolving now.
  */
 
 import type { Account, Transaction } from '@clad/core'
+import type {
+  SimpleFinAccount,
+  SimpleFinAccountSet,
+  SimpleFinConnection,
+  SimpleFinTransaction,
+} from './client.js'
 import { SimpleFinError } from './errors.js'
 
 /**
@@ -47,71 +65,6 @@ export class SimpleFinMappingError extends SimpleFinError {
     this.name = 'SimpleFinMappingError'
     Object.setPrototypeOf(this, SimpleFinMappingError.prototype)
   }
-}
-
-// ---------------------------------------------------------------------
-// Raw SimpleFIN DTOs (v2 `/accounts` response shape, per SF1)
-// ---------------------------------------------------------------------
-
-/**
- * A SimpleFIN v2 `Connection` (from the top-level `connections[]` array).
- * `org_name` was observed live but is absent from both the protocol spec
- * and developer guide text; treated as optional defensively.
- */
-export interface SimpleFinConnectionDto {
-  conn_id: string
-  name: string
-  org_id: string
-  org_name?: string
-  org_url?: string
-  sfin_url?: string
-  [key: string]: unknown
-}
-
-/** A SimpleFIN v2 investment holding. Deliberately untyped/unmapped — see module docs. */
-export type SimpleFinHoldingDto = Record<string, unknown>
-
-/** A SimpleFIN v2 transaction, as returned inside `account.transactions[]`. */
-export interface SimpleFinTransactionDto {
-  id: string
-  posted: number
-  amount: string
-  description: string
-  payee?: string
-  memo?: string
-  transacted_at?: number
-  pending?: boolean
-  mcc?: string
-  extra?: unknown
-  [key: string]: unknown
-}
-
-/** A SimpleFIN v2 account, as returned inside the response's `accounts[]` array. */
-export interface SimpleFinAccountDto {
-  id: string
-  name: string
-  currency: string
-  balance: string
-  'available-balance'?: string
-  'balance-date': number
-  conn_id?: string
-  transactions?: SimpleFinTransactionDto[]
-  holdings?: SimpleFinHoldingDto[]
-  extra?: unknown
-  [key: string]: unknown
-}
-
-/**
- * The subset of a SimpleFIN v2 `AccountSet` response this module cares
- * about. `client.ts` (SF3) owns full response validation (`errlist`/`errors`
- * tolerance, HTTP status mapping); by the time a response reaches
- * {@link mapAccountSet} it is assumed to already be a well-formed `AccountSet`
- * body (or, in tests, a fixture parsed straight from JSON).
- */
-export interface SimpleFinAccountSetDto {
-  accounts: SimpleFinAccountDto[]
-  connections?: SimpleFinConnectionDto[]
-  [key: string]: unknown
 }
 
 // ---------------------------------------------------------------------
@@ -230,8 +183,8 @@ export function mapAccountType(name: string): Account['type'] {
  */
 export function resolveConnection(
   connId: string | undefined,
-  connections: SimpleFinConnectionDto[]
-): SimpleFinConnectionDto | undefined {
+  connections: SimpleFinConnection[]
+): SimpleFinConnection | undefined {
   if (!connId) return undefined
   return connections.find((connection) => connection.conn_id === connId)
 }
@@ -246,22 +199,32 @@ export function resolveConnection(
  * Mapping rules:
  *  - `id`: namespaced `simplefin:{id}` (see {@link mapAccountId}).
  *  - `type`: {@link mapAccountType} (name-based heuristic; no protocol field).
- *  - `subtype`: unlike Plaid (one item = one institution, tracked at the
+ *  - `institution`: unlike Plaid (one item = one institution, tracked at the
  *    token-store level), a single SimpleFIN access URL/item can span
  *    *multiple* institutions via distinct `connections[]` entries, so
- *    institution identity is necessarily per-account, not per-item.
- *    `@clad/core`'s `Account` has no dedicated institution field, so the
+ *    institution identity is necessarily per-account, not per-item. The
  *    resolved connection's `org_name` (falling back to its `name`) is
- *    surfaced via `subtype` — the same "extra provider detail, so no
- *    information is lost" slot Plaid's mapping uses for its raw subtype.
+ *    surfaced via `@clad/core`'s `Account.institution` field.
+ *
+ *    SF5 fix: this used to be stashed in `subtype` instead (the "extra
+ *    provider detail" slot Plaid's mapping uses for its own raw account
+ *    subtype, e.g. "money market"). That collided semantically —
+ *    `packages/cli/src/commands/connect.ts`'s post-connect summary reads
+ *    `account.subtype ?? account.type` to print a per-account "kind" label,
+ *    so a SimpleFIN account would have shown its *institution name* where a
+ *    Plaid-linked account shows "checking"/"money market"/etc. `subtype` and
+ *    "which institution" are different concepts and must not share a field.
+ *    `@clad/core`'s `Account` gained a dedicated `institution` field for
+ *    this (SF5); SimpleFIN has no per-account subtype signal at all, so
+ *    `subtype` is simply left `undefined` here.
  *  - `mask`: SimpleFIN has no analogous field; always `undefined`.
  *  - `balance_current`/`balance_available`: parsed via
  *    {@link parseSimpleFinAmount}, never floats.
  *  - `holdings[]` is intentionally ignored (see module docs).
  */
 export function mapAccount(
-  account: SimpleFinAccountDto,
-  connections: SimpleFinConnectionDto[] = []
+  account: SimpleFinAccount,
+  connections: SimpleFinConnection[] = []
 ): Account {
   const connection = resolveConnection(account.conn_id, connections)
   const availableBalance = account['available-balance']
@@ -270,7 +233,8 @@ export function mapAccount(
     id: mapAccountId(account.id),
     name: account.name,
     type: mapAccountType(account.name),
-    subtype: connection?.org_name ?? connection?.name ?? undefined,
+    subtype: undefined,
+    institution: connection?.org_name ?? connection?.name ?? undefined,
     mask: undefined,
     balance_current: parseSimpleFinAmount(account.balance),
     balance_available:
@@ -309,7 +273,7 @@ export function mapAccount(
  *    live (see `test/fixtures/synthetic-pending.json`).
  *  - `category`: SimpleFIN has no category taxonomy; always `undefined`.
  */
-export function mapTransaction(transaction: SimpleFinTransactionDto, accountId: string): Transaction {
+export function mapTransaction(transaction: SimpleFinTransaction, accountId: string): Transaction {
   const epochSeconds = transaction.transacted_at ?? transaction.posted
 
   return {
@@ -325,12 +289,17 @@ export function mapTransaction(transaction: SimpleFinTransactionDto, accountId: 
 }
 
 /**
- * Maps a full SimpleFIN v2 `AccountSet` (or the fixture-shaped subset of
- * one) to flat `Account[]`/`Transaction[]` arrays, joining each account's
- * `conn_id` against `connections[]` and each transaction against its
- * owning account's (already-namespaced) id.
+ * Maps a full SimpleFIN v2 `AccountSet` (the parsed output of `client.ts`'s
+ * `parseAccountSet`, or the fixture-shaped subset of one in tests) to flat
+ * `Account[]`/`Transaction[]` arrays, joining each account's `conn_id`
+ * against `connections[]` and each transaction against its owning account's
+ * (already-namespaced) id. Ignores `accountSet.errors`/`apiMessages` —
+ * they're non-fatal protocol-level warnings (e.g. rate-limit notices), out
+ * of scope for a pure data-mapping step. `adapter.ts` (SF5) does not
+ * currently inspect or surface them either — a deliberate scope cut, not an
+ * oversight; see that file's handoff notes for a future task to pick up.
  */
-export function mapAccountSet(accountSet: SimpleFinAccountSetDto): {
+export function mapAccountSet(accountSet: SimpleFinAccountSet): {
   accounts: Account[]
   transactions: Transaction[]
 } {
