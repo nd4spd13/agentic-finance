@@ -1,0 +1,194 @@
+import { useState } from 'react'
+import type { CladProvider, DisplayConfig, PlaidEnvName } from '../../../shared/ipc.js'
+import * as s from '../styles.js'
+
+/**
+ * D1.1 settings screen: display-only config paths, provider + Plaid
+ * environment selection, and Plaid Client ID/Secret entry (safeStorage-only
+ * — see `plaid-secrets.ts`). Renderer UI in D1 is intentionally minimal;
+ * the approvals inbox / audit viewer / dashboard / policy editor are D2.
+ */
+export default function SettingsForm({
+  config,
+  onConfigChange,
+}: {
+  config: DisplayConfig
+  onConfigChange: (next: DisplayConfig) => void
+}): JSX.Element {
+  const [provider, setProvider] = useState<CladProvider>(config.provider)
+  const [plaidEnv, setPlaidEnv] = useState<PlaidEnvName>(config.plaidEnv)
+  const [savingProvider, setSavingProvider] = useState(false)
+  const [providerMessage, setProviderMessage] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const [clientId, setClientId] = useState('')
+  const [secret, setSecret] = useState('')
+  const [savingCreds, setSavingCreds] = useState(false)
+  const [credsMessage, setCredsMessage] = useState<{ ok: boolean; text: string } | null>(null)
+
+  async function handleSaveProvider(): Promise<void> {
+    setSavingProvider(true)
+    setProviderMessage(null)
+    try {
+      const result = await window.clad.setProviderAndEnv({ provider, plaidEnv })
+      if (result.ok) {
+        setProviderMessage({ ok: true, text: 'Saved.' })
+        onConfigChange({ ...config, provider, plaidEnv })
+      } else {
+        setProviderMessage({ ok: false, text: result.error ?? 'Failed to save.' })
+      }
+    } finally {
+      setSavingProvider(false)
+    }
+  }
+
+  async function handleSaveCredentials(event: React.FormEvent): Promise<void> {
+    event.preventDefault()
+    setSavingCreds(true)
+    setCredsMessage(null)
+    try {
+      const result = await window.clad.setPlaidCredentials({ clientId, secret })
+      if (result.ok) {
+        setCredsMessage({ ok: true, text: 'Plaid credentials saved.' })
+        setClientId('')
+        setSecret('')
+        onConfigChange({ ...config, hasPlaidCredentials: true })
+      } else {
+        setCredsMessage({ ok: false, text: result.error ?? 'Failed to save credentials.' })
+      }
+    } finally {
+      setSavingCreds(false)
+    }
+  }
+
+  async function handleClearCredentials(): Promise<void> {
+    setSavingCreds(true)
+    setCredsMessage(null)
+    try {
+      const result = await window.clad.clearPlaidCredentials()
+      if (result.ok) {
+        setCredsMessage({ ok: true, text: 'Plaid credentials cleared.' })
+        onConfigChange({ ...config, hasPlaidCredentials: false })
+      } else {
+        setCredsMessage({ ok: false, text: result.error ?? 'Failed to clear credentials.' })
+      }
+    } finally {
+      setSavingCreds(false)
+    }
+  }
+
+  return (
+    <>
+      <div style={s.card}>
+        <h2 style={{ marginTop: 0 }}>Data locations</h2>
+        <p style={s.mutedText}>
+          Shared with the Clad CLI — both read the same files, so agent
+          activity is visible from either.
+        </p>
+        <dl style={s.pathList}>
+          <div>
+            <strong>Config dir:</strong> {config.configDir}
+          </div>
+          <div>
+            <strong>Policy:</strong> {config.policyPath}
+          </div>
+          <div>
+            <strong>Audit log:</strong> {config.auditDbPath}
+          </div>
+          <div>
+            <strong>Approvals:</strong> {config.approvalDbPath}
+          </div>
+          <div>
+            <strong>Plaid token store:</strong> {config.plaidDbPath}
+          </div>
+        </dl>
+      </div>
+
+      <div style={s.card}>
+        <h2 style={{ marginTop: 0 }}>Data provider</h2>
+        <label style={s.label} htmlFor="provider">
+          Provider
+        </label>
+        <select
+          id="provider"
+          style={s.select}
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as CladProvider)}
+        >
+          <option value="dummy">Demo data (no bank connection)</option>
+          <option value="plaid">Plaid</option>
+        </select>
+
+        <label style={s.label} htmlFor="plaid-env">
+          Plaid environment
+        </label>
+        <select
+          id="plaid-env"
+          style={s.select}
+          value={plaidEnv}
+          onChange={(e) => setPlaidEnv(e.target.value as PlaidEnvName)}
+        >
+          <option value="sandbox">Sandbox</option>
+          <option value="production">Production</option>
+        </select>
+
+        <button type="button" style={s.button} onClick={handleSaveProvider} disabled={savingProvider}>
+          Save
+        </button>
+        {providerMessage && (
+          <p style={providerMessage.ok ? s.successText : s.errorText}>{providerMessage.text}</p>
+        )}
+      </div>
+
+      <div style={s.card}>
+        <h2 style={{ marginTop: 0 }}>Plaid credentials</h2>
+        <p style={s.mutedText}>
+          Bring your own Plaid <code>CLIENT_ID</code> / <code>SECRET</code> (
+          {/* Cross-origin navigation is intercepted by the main process's
+              will-navigate handler and reopened in the system browser —
+              never in-app. See src/main/index.ts / security checklist #4. */}
+          <a href="https://dashboard.plaid.com/team/keys">dashboard.plaid.com</a>
+          ). Stored via your OS keychain — never written to a plaintext
+          config file.
+        </p>
+        <p style={s.mutedText}>
+          Status: {config.hasPlaidCredentials ? 'Credentials saved.' : 'Not set.'}
+        </p>
+        <form onSubmit={handleSaveCredentials}>
+          <label style={s.label} htmlFor="plaid-client-id">
+            Client ID
+          </label>
+          <input
+            id="plaid-client-id"
+            type="text"
+            style={s.input}
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            disabled={savingCreds}
+            autoComplete="off"
+          />
+          <label style={s.label} htmlFor="plaid-secret">
+            Secret
+          </label>
+          <input
+            id="plaid-secret"
+            type="password"
+            style={s.input}
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+            disabled={savingCreds}
+            autoComplete="off"
+          />
+          {credsMessage && <p style={credsMessage.ok ? s.successText : s.errorText}>{credsMessage.text}</p>}
+          <button type="submit" style={s.button} disabled={savingCreds || !clientId || !secret}>
+            Save credentials
+          </button>
+          {config.hasPlaidCredentials && (
+            <button type="button" style={s.buttonDanger} disabled={savingCreds} onClick={handleClearCredentials}>
+              Clear
+            </button>
+          )}
+        </form>
+      </div>
+    </>
+  )
+}

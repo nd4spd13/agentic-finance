@@ -6,10 +6,25 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, type CladBridge } from '../shared/ipc.js'
+import {
+  IPC_CHANNELS,
+  type CladBridge,
+  type SetProviderAndEnvInput,
+  type SetPlaidCredentialsInput,
+} from '../shared/ipc.js'
 
 const cladBridge: CladBridge = {
-  getSpikeStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getSpikeStatus),
+  getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.configGet),
+  setProviderAndEnv: (input: SetProviderAndEnvInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.configSetProviderAndEnv, input),
+  hasPlaidCredentials: () => ipcRenderer.invoke(IPC_CHANNELS.plaidCredentialsHas),
+  setPlaidCredentials: (input: SetPlaidCredentialsInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.plaidCredentialsSet, input),
+  clearPlaidCredentials: () => ipcRenderer.invoke(IPC_CHANNELS.plaidCredentialsClear),
+  getMigrationStatus: () => ipcRenderer.invoke(IPC_CHANNELS.migrationGetStatus),
+  submitCliPassphrase: (passphrase: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.migrationSubmitCliPassphrase, passphrase),
+  startFreshTokenStore: () => ipcRenderer.invoke(IPC_CHANNELS.migrationStartFresh),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

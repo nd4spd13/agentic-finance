@@ -8,62 +8,86 @@
  * here, so the whole contract is greppable from one file.
  *
  * Security invariant (roadmap P2/P4, desktop-app.md security checklist):
- * every field below is display-safe. No access token, no token-store
- * passphrase, no Plaid client secret ever crosses this boundary — spike
- * results expose only booleans, counts, version strings, and non-secret
- * paths/metadata.
+ * every field below is display-safe. No Plaid access token, no token-store
+ * passphrase, no Plaid Client ID/Secret ever crosses this boundary in the
+ * main → renderer direction. The renderer → main direction does carry
+ * user-typed secrets for a few write-only actions (entering a Plaid secret,
+ * submitting a CLI passphrase during migration) — those are one-way inputs
+ * that get sealed via `safeStorage` in the main process and are never echoed
+ * back; see `plaid-secrets.ts` / `passphrase.ts`.
+ *
+ * This file grows with each D1 sub-task (D1.1 config/migration/Plaid
+ * credentials below; D1.2 adds MCP lifecycle; D1.4 adds Claude Desktop
+ * connect) — extended in place, never bypassed.
  */
 
+// ---- Config (D1.1) --------------------------------------------------------
+
+export type CladProvider = 'dummy' | 'plaid'
+export type PlaidEnvName = 'sandbox' | 'production'
+
+/** Display-safe view of `~/.clad/config.json` — paths and non-secret settings only. */
+export interface DisplayConfig {
+  configDir: string
+  policyPath: string
+  auditDbPath: string
+  approvalDbPath: string
+  plaidDbPath: string
+  provider: CladProvider
+  plaidEnv: PlaidEnvName
+  /** Whether Plaid credentials are currently sealed in safeStorage — never their value. */
+  hasPlaidCredentials: boolean
+}
+
+export interface SetProviderAndEnvInput {
+  provider: CladProvider
+  plaidEnv: PlaidEnvName
+}
+
+export interface SetPlaidCredentialsInput {
+  clientId: string
+  secret: string
+}
+
+export interface OperationResult {
+  ok: boolean
+  /** Display-safe (redacted where derived from stored/thrown data). Never secret material. */
+  error?: string
+}
+
+// ---- Migration (D1.1) ------------------------------------------------------
+
+/**
+ * Whether a pre-existing CLI-managed token store was detected with no
+ * desktop passphrase custody resolved yet — see "Spike results" (S0.3) in
+ * packages/docs/plans/desktop-app.md and `passphrase.ts`'s module doc.
+ */
+export interface MigrationStatus {
+  needed: boolean
+  plaidDbPath: string
+}
+
+// ---- IPC channel names ----------------------------------------------------
+
 export const IPC_CHANNELS = {
-  getSpikeStatus: 'spike:getStatus',
+  configGet: 'config:get',
+  configSetProviderAndEnv: 'config:setProviderAndEnv',
+  plaidCredentialsHas: 'plaid:credentialsHas',
+  plaidCredentialsSet: 'plaid:credentialsSet',
+  plaidCredentialsClear: 'plaid:credentialsClear',
+  migrationGetStatus: 'migration:getStatus',
+  migrationSubmitCliPassphrase: 'migration:submitCliPassphrase',
+  migrationStartFresh: 'migration:startFresh',
 } as const
-
-/** S0.2 — `node:sqlite` (or fallback) round trip through `SqliteTokenStore`. */
-export interface NodeSqliteSpikeResult {
-  ok: boolean
-  /** Which backend actually serviced the round trip. */
-  backend: 'node:sqlite' | 'better-sqlite3' | 'none'
-  /** `process.versions.electron` in this process. */
-  electronVersion: string
-  /** `process.versions.node` — the Node runtime bundled inside this Electron build. */
-  bundledNodeVersion: string
-  /** Non-secret, redacted error text if `ok === false`. */
-  error?: string
-}
-
-/** S0.3 — `safeStorage`-backed passphrase custody across relaunch. */
-export interface PassphraseCustodySpikeResult {
-  ok: boolean
-  /** `safeStorage.isEncryptionAvailable()`. */
-  encryptionAvailable: boolean
-  /** 'generated' on first launch, 'loaded' on every subsequent one. */
-  source: 'generated' | 'loaded' | 'unavailable'
-  /** Where the encrypted passphrase lives — path only, never its contents. */
-  passphraseFilePath: string
-  error?: string
-}
-
-/** S0.4 — real MCP handshake against a spawned `mcp-server` child process. */
-export interface McpHandshakeSpikeResult {
-  ok: boolean
-  /** Tool names returned by `tools/list`. */
-  tools: string[]
-  /** The read-only tool that was called as a smoke test. */
-  calledTool?: string
-  /** First line of the called tool's text result (non-secret dummy data). */
-  calledToolResultPreview?: string
-  /** PID of the spawned server child (informational only, for orphan checks via `ps`). */
-  pid?: number
-  error?: string
-}
-
-export interface SpikeStatus {
-  s02NodeSqlite: NodeSqliteSpikeResult
-  s03PassphraseCustody: PassphraseCustodySpikeResult
-  s04McpHandshake: McpHandshakeSpikeResult
-}
 
 /** The shape exposed on `window.clad` by the preload script. */
 export interface CladBridge {
-  getSpikeStatus(): Promise<SpikeStatus>
+  getConfig(): Promise<DisplayConfig>
+  setProviderAndEnv(input: SetProviderAndEnvInput): Promise<OperationResult>
+  hasPlaidCredentials(): Promise<boolean>
+  setPlaidCredentials(input: SetPlaidCredentialsInput): Promise<OperationResult>
+  clearPlaidCredentials(): Promise<OperationResult>
+  getMigrationStatus(): Promise<MigrationStatus>
+  submitCliPassphrase(passphrase: string): Promise<OperationResult>
+  startFreshTokenStore(): Promise<OperationResult>
 }

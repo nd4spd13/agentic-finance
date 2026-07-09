@@ -1,41 +1,57 @@
-import { useEffect, useState } from 'react'
-import type { SpikeStatus } from '../../shared/ipc.js'
+import { useCallback, useEffect, useState } from 'react'
+import type { DisplayConfig } from '../../shared/ipc.js'
+import MigrationPrompt from './components/MigrationPrompt.js'
+import SettingsForm from './components/SettingsForm.js'
+import * as s from './styles.js'
+
+type LoadState =
+  | { phase: 'loading' }
+  | { phase: 'error'; message: string }
+  | { phase: 'migration-needed'; plaidDbPath: string }
+  | { phase: 'ready'; config: DisplayConfig }
 
 /**
- * Spike S0 scaffold UI: shows the display-safe results of the three
- * main-process spikes (S0.2/S0.3/S0.4), fetched over the typed IPC contract.
- * No secret material is ever requested or rendered here — see
- * `src/shared/ipc.ts` for the contract and `src/main/index.ts` for what
- * actually runs the checks.
+ * D1 shell: settings screen (paths, provider/Plaid env, Plaid credentials)
+ * plus the one-time CLI-migration prompt when applicable. Server status
+ * (D1.2) and the Connect-to-Claude-Desktop action (D1.4) are added to this
+ * screen in later commits — the full product UI (approvals inbox,
+ * dashboard, policy editor) is Phase D2, out of scope here.
  */
 export default function App(): JSX.Element {
-  const [status, setStatus] = useState<SpikeStatus | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [state, setState] = useState<LoadState>({ phase: 'loading' })
 
-  useEffect(() => {
-    window.clad
-      .getSpikeStatus()
-      .then(setStatus)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+  const load = useCallback(async () => {
+    setState({ phase: 'loading' })
+    try {
+      const migration = await window.clad.getMigrationStatus()
+      if (migration.needed) {
+        setState({ phase: 'migration-needed', plaidDbPath: migration.plaidDbPath })
+        return
+      }
+      const config = await window.clad.getConfig()
+      setState({ phase: 'ready', config })
+    } catch (err) {
+      setState({ phase: 'error', message: err instanceof Error ? err.message : String(err) })
+    }
   }, [])
 
+  useEffect(() => {
+    load()
+  }, [load])
+
   return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', padding: '2rem', color: '#1a1a1a' }}>
-      <h1>Clad — desktop spike (S0)</h1>
-      <p>Main-process spike results, delivered over the typed IPC contract.</p>
-      {error && <p style={{ color: 'crimson' }}>Error: {error}</p>}
-      {!status && !error && <p>Loading…</p>}
-      {status && (
-        <pre
-          style={{
-            background: '#f4f4f4',
-            padding: '1rem',
-            borderRadius: 8,
-            overflowX: 'auto',
-          }}
-        >
-          {JSON.stringify(status, null, 2)}
-        </pre>
+    <main style={s.page}>
+      <h1>Clad</h1>
+      {state.phase === 'loading' && <p>Loading…</p>}
+      {state.phase === 'error' && <p style={s.errorText}>Error: {state.message}</p>}
+      {state.phase === 'migration-needed' && (
+        <MigrationPrompt plaidDbPath={state.plaidDbPath} onResolved={load} />
+      )}
+      {state.phase === 'ready' && (
+        <SettingsForm
+          config={state.config}
+          onConfigChange={(next) => setState({ phase: 'ready', config: next })}
+        />
       )}
     </main>
   )

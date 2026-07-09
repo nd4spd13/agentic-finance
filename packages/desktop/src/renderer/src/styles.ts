@@ -1,0 +1,94 @@
+/**
+ * Small set of shared inline-style objects for the D1 shell UI. D1's
+ * renderer surface is intentionally minimal (settings + server status +
+ * connect button — see desktop-app.md's scope note for D1), so this stays a
+ * handful of plain objects rather than a component library or CSS
+ * framework.
+ */
+import type { CSSProperties } from 'react'
+
+export const page: CSSProperties = {
+  fontFamily: 'system-ui, sans-serif',
+  padding: '2rem',
+  color: '#1a1a1a',
+  maxWidth: 720,
+  margin: '0 auto',
+}
+
+export const card: CSSProperties = {
+  background: '#f4f4f4',
+  borderRadius: 8,
+  padding: '1.25rem',
+  marginBottom: '1.25rem',
+}
+
+export const label: CSSProperties = {
+  display: 'block',
+  fontSize: 13,
+  fontWeight: 600,
+  marginBottom: 4,
+  color: '#444',
+}
+
+export const input: CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  padding: '0.5rem',
+  fontSize: 14,
+  borderRadius: 4,
+  border: '1px solid #ccc',
+  marginBottom: '0.75rem',
+}
+
+export const select: CSSProperties = { ...input }
+
+export const button: CSSProperties = {
+  padding: '0.5rem 1rem',
+  fontSize: 14,
+  borderRadius: 4,
+  border: '1px solid #333',
+  background: '#1a1a1a',
+  color: '#fff',
+  cursor: 'pointer',
+  marginRight: '0.5rem',
+}
+
+export const buttonSecondary: CSSProperties = {
+  ...button,
+  background: '#fff',
+  color: '#1a1a1a',
+}
+
+export const buttonDanger: CSSProperties = {
+  ...button,
+  background: '#fff',
+  color: '#b3261e',
+  border: '1px solid #b3261e',
+}
+
+export const errorText: CSSProperties = {
+  color: '#b3261e',
+  fontSize: 13,
+  marginTop: '0.25rem',
+}
+
+export const successText: CSSProperties = {
+  color: '#1e7a34',
+  fontSize: 13,
+  marginTop: '0.25rem',
+}
+
+export const mutedText: CSSProperties = {
+  color: '#666',
+  fontSize: 13,
+}
+
+export const pathList: CSSProperties = {
+  fontSize: 13,
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  background: '#fff',
+  border: '1px solid #ddd',
+  borderRadius: 4,
+  padding: '0.75rem',
+  overflowX: 'auto',
+}
