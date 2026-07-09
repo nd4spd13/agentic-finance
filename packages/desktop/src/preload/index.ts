@@ -38,6 +38,8 @@ const cladBridge: CladBridge = {
     ipcRenderer.on(IPC_CHANNELS.mcpStatusChanged, listener)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.mcpStatusChanged, listener)
   },
+  getClaudeDesktopConnectPreview: () => ipcRenderer.invoke(IPC_CHANNELS.claudeDesktopGetPreview),
+  connectClaudeDesktop: () => ipcRenderer.invoke(IPC_CHANNELS.claudeDesktopConnect),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

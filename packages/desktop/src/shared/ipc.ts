@@ -18,7 +18,8 @@
  *
  * This file grows with each D1 sub-task (D1.1 config/migration/Plaid
  * credentials below; D1.2 adds MCP lifecycle; D1.3 adds the `closeToTray`
- * setting) — extended in place, never bypassed.
+ * setting; D1.4 adds Claude Desktop connect) — extended in place, never
+ * bypassed.
  *
  * Note on layering: this file must stay importable from the renderer/
  * preload build (`tsconfig.web.json`'s `include` is renderer + shared only —
@@ -101,6 +102,31 @@ export interface McpServerStatus {
   pendingApprovals: number
 }
 
+// ---- Claude Desktop connect (D1.4) -----------------------------------------
+
+/**
+ * Preview shown to the user BEFORE writing anything to Claude Desktop's own
+ * config file (desktop-app.md D1.4: "Show a diff/confirmation ... before
+ * writing another app's config file"). Both JSON blobs are display-safe by
+ * construction — the `clad` MCP server entry they describe never carries
+ * Plaid secrets or the token-store passphrase, even if this app's own
+ * provider is configured to `plaid`; see `main/lib/claude-desktop-config.ts`'s
+ * module doc for why that's a deliberate, security-motivated choice and not
+ * a gap.
+ */
+export interface ClaudeDesktopConnectPreview {
+  /** Whether Claude Desktop looks installed on this machine (its app-support directory exists). */
+  installed: boolean
+  /** Where its config file lives (or would live) on this platform. */
+  configPath: string
+  /** Pretty-printed JSON of the config file as it exists today, or `null` if it doesn't exist yet (but Claude Desktop is installed). */
+  currentConfigJson: string | null
+  /** Pretty-printed JSON of the config after non-destructively merging in the `clad` MCP server entry. */
+  proposedConfigJson: string
+  /** True when `mcpServers.clad` already matches the proposed entry exactly — connecting again would be a no-op. */
+  alreadyConnected: boolean
+}
+
 // ---- IPC channel names ----------------------------------------------------
 
 export const IPC_CHANNELS = {
@@ -119,6 +145,8 @@ export const IPC_CHANNELS = {
   mcpRestart: 'mcp:restart',
   /** Push-only, main -> renderer. See `onMcpStatusChanged` below. */
   mcpStatusChanged: 'mcp:statusChanged',
+  claudeDesktopGetPreview: 'claudeDesktop:getPreview',
+  claudeDesktopConnect: 'claudeDesktop:connect',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -143,6 +171,8 @@ export interface CladBridge {
    * `ipcRenderer` directly (security checklist: no arbitrary channel access).
    */
   onMcpStatusChanged(callback: (status: McpServerStatus) => void): () => void
+  getClaudeDesktopConnectPreview(): Promise<ClaudeDesktopConnectPreview>
+  connectClaudeDesktop(): Promise<OperationResult>
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */

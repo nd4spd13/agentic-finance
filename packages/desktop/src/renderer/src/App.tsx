@@ -3,6 +3,7 @@ import type { DisplayConfig } from '../../shared/ipc.js'
 import MigrationPrompt from './components/MigrationPrompt.js'
 import SettingsForm from './components/SettingsForm.js'
 import ServerStatusPanel from './components/ServerStatusPanel.js'
+import ConnectClaudeDesktop from './components/ConnectClaudeDesktop.js'
 import * as s from './styles.js'
 
 type LoadState =
@@ -13,11 +14,11 @@ type LoadState =
 
 /**
  * D1 shell: settings screen (paths, provider/Plaid env, Plaid credentials,
- * close-to-tray) plus the one-time CLI-migration prompt when applicable and
- * MCP server status/controls (D1.2). Tray/menu-bar presence (D1.3) lives
- * entirely in the main process (`src/main/index.ts`) — nothing to render
- * here. The Connect-to-Claude-Desktop action (D1.4) and the full product UI
- * (approvals inbox, dashboard, policy editor, Phase D2) are out of scope
+ * close-to-tray), the one-time CLI-migration prompt when applicable, MCP
+ * server status/controls (D1.2), and the Connect-to-Claude-Desktop action
+ * (D1.4). Tray/menu-bar presence (D1.3) lives entirely in the main process
+ * (`src/main/index.ts`) — nothing to render here. The full product UI
+ * (approvals inbox, dashboard, policy editor) is Phase D2, out of scope
  * here.
  */
 export default function App(): JSX.Element {
@@ -53,6 +54,7 @@ export default function App(): JSX.Element {
       {state.phase === 'ready' && (
         <>
           <ServerStatusPanel />
+          <ConnectClaudeDesktop />
           <SettingsForm
             config={state.config}
             onConfigChange={(next) => setState({ phase: 'ready', config: next })}

@@ -5,15 +5,16 @@
  * migration flow), and Plaid credential storage. D1.2: MCP server lifecycle
  * (start/stop/restart, crash backoff, status pushed to the renderer). D1.3:
  * tray/menu-bar presence (server status + pending approvals, single-instance
- * lock, close-to-tray). All wired over the typed IPC contract in
- * `../shared/ipc.js`.
+ * lock, close-to-tray). D1.4: "Connect to Claude Desktop" (non-destructive
+ * config merge behind a confirm dialog). All wired over the typed IPC
+ * contract in `../shared/ipc.js`.
  *
  * Security posture (desktop-app.md, non-negotiable):
  *  - contextIsolation: true, nodeIntegration: false, sandbox: true.
  *  - All secret material (passphrase, Plaid credentials, tokens, DB
  *    handles) stays in this process. Only display-safe view models
  *    (`DisplayConfig`, `MigrationStatus`, `OperationResult`,
- *    `McpServerStatus`) cross IPC.
+ *    `McpServerStatus`, `ClaudeDesktopConnectPreview`) cross IPC.
  */
 
 import { app, BrowserWindow, ipcMain, safeStorage, shell, Tray, Menu, nativeImage } from 'electron'
@@ -31,6 +32,15 @@ import { PlaidSecretsStore } from './lib/plaid-secrets.js'
 import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
 import { getPendingApprovalsCount } from './lib/approvals.js'
 import { trayTooltip, trayServerStatusMenuLabel, trayApprovalsMenuLabel } from './lib/tray-status.js'
+import { claudeDesktopConfigPath } from './lib/claude-desktop-path.js'
+import {
+  buildCladMcpServerEntry,
+  isClaudeDesktopInstalled,
+  readExistingConfig,
+  mergeCladEntry,
+  isAlreadyConnected,
+  writeConfig as writeClaudeDesktopConfig,
+} from './lib/claude-desktop-config.js'
 import {
   IPC_CHANNELS,
   type DisplayConfig,
@@ -40,6 +50,7 @@ import {
   type OperationResult,
   type MigrationStatus,
   type McpServerStatus,
+  type ClaudeDesktopConnectPreview,
 } from '../shared/ipc.js'
 
 // `__dirname` (ambient via @types/node) is a CommonJS global — valid here
@@ -316,6 +327,54 @@ ipcMain.handle(IPC_CHANNELS.mcpGetStatus, () => withPendingApprovals(mcpManager.
 ipcMain.handle(IPC_CHANNELS.mcpStart, async () => withPendingApprovals(await mcpManager.start()))
 ipcMain.handle(IPC_CHANNELS.mcpStop, async () => withPendingApprovals(await mcpManager.stop()))
 ipcMain.handle(IPC_CHANNELS.mcpRestart, async () => withPendingApprovals(await mcpManager.restart()))
+
+// ---- IPC handlers (D1.4) ---------------------------------------------------
+
+/** The real Claude Desktop config path — the only place in the app that calls `app.getPath('appData')` for this purpose (see claude-desktop-path.ts's module doc). */
+function getClaudeDesktopConfigPath(): string {
+  return claudeDesktopConfigPath(app.getPath('appData'))
+}
+
+function buildClaudeDesktopPreview(): ClaudeDesktopConnectPreview {
+  const configPath = getClaudeDesktopConfigPath()
+  const installed = isClaudeDesktopInstalled(configPath)
+  const existing = readExistingConfig(configPath)
+  const cladEntry = buildCladMcpServerEntry(loadConfig(), process.execPath)
+  const merged = mergeCladEntry(existing, cladEntry)
+
+  return {
+    installed,
+    configPath,
+    currentConfigJson: existsSync(configPath) ? JSON.stringify(existing, null, 2) : null,
+    proposedConfigJson: JSON.stringify(merged, null, 2),
+    alreadyConnected: isAlreadyConnected(existing, cladEntry),
+  }
+}
+
+ipcMain.handle(
+  IPC_CHANNELS.claudeDesktopGetPreview,
+  (): ClaudeDesktopConnectPreview => buildClaudeDesktopPreview()
+)
+
+ipcMain.handle(IPC_CHANNELS.claudeDesktopConnect, (): OperationResult => {
+  try {
+    const configPath = getClaudeDesktopConfigPath()
+    if (!isClaudeDesktopInstalled(configPath)) {
+      return {
+        ok: false,
+        error:
+          'Claude Desktop was not found on this machine (its application-support folder is missing). Install Claude Desktop, launch it at least once, then try again.',
+      }
+    }
+    const existing = readExistingConfig(configPath)
+    const cladEntry = buildCladMcpServerEntry(loadConfig(), process.execPath)
+    const merged = mergeCladEntry(existing, cladEntry)
+    writeClaudeDesktopConfig(configPath, merged)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
 
 // ---- App lifecycle ----------------------------------------------------------
 
