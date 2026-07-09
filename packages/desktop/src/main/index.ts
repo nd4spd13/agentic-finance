@@ -39,6 +39,7 @@ import { listApprovals, decideApproval, findNewPendingApprovals } from './lib/ap
 import { queryAuditLog } from './lib/audit-log.js'
 import { DashboardDataStore, type DashboardSnapshot } from './lib/dashboard-data.js'
 import { readPolicy, writePolicy, type PolicyGetResult, type PolicyWriteResult } from './lib/policy-data.js'
+import { PlaidLinkFlowManager, type PlaidLinkFlowStatus } from './lib/plaid-link-flow.js'
 import {
   trayTooltip,
   trayServerStatusMenuLabel,
@@ -73,6 +74,7 @@ import {
   type ApprovalDecisionResult,
   type AuditLogQueryInput,
   type AuditLogPage,
+  type StartPlaidLinkInput,
 } from '../shared/ipc.js'
 
 // `__dirname` (ambient via @types/node) is a CommonJS global — valid here
@@ -211,6 +213,26 @@ const dashboardStore = new DashboardDataStore({
   loadConfig,
   loadPlaidCredentials: () => getPlaidSecrets().load(),
   getActivePassphrase: getActiveTokenStorePassphrase,
+})
+
+// D3.1: same DI shape as McpServerManager/DashboardDataStore above.
+// `openExternal` is the one real Electron dependency this needs — see
+// `plaid-link-flow.ts`'s module doc for why the system browser (not a
+// BrowserWindow) is the right call here, and `isExpectedPlaidLinkUrl`'s doc
+// comment for why the URL is validated before ever reaching it (security
+// checklist item 4). `isDevBuild` gates the sandbox-auto (no-browser) path
+// the same way `connect.ts` gates `--sandbox-auto` on `PLAID_ENV=sandbox`,
+// plus an additional "not a packaged build at all" check — sandbox-auto has
+// no place in a build an end user might run against their own account.
+const plaidLinkFlow = new PlaidLinkFlowManager({
+  loadConfig,
+  loadPlaidCredentials: () => getPlaidSecrets().load(),
+  getActivePassphrase: getActiveTokenStorePassphrase,
+  openExternal: (url) => shell.openExternal(url),
+  isDevBuild: () => !app.isPackaged,
+  onStatusChange: (status) => {
+    mainWindow?.webContents.send(IPC_CHANNELS.plaidLinkStatusChanged, status)
+  },
 })
 
 function buildDisplayConfig(): DisplayConfig {
@@ -611,6 +633,15 @@ ipcMain.handle(
     queryAuditLog(loadConfig().audit_db, input.filter ?? {}, input.page, input.pageSize)
 )
 
+// ---- IPC handlers (D3.1 Plaid Link) ----------------------------------------
+
+ipcMain.handle(
+  IPC_CHANNELS.plaidLinkStart,
+  (_event, input?: StartPlaidLinkInput): Promise<PlaidLinkFlowStatus> => plaidLinkFlow.start(input)
+)
+ipcMain.handle(IPC_CHANNELS.plaidLinkCancel, (): PlaidLinkFlowStatus => plaidLinkFlow.cancel())
+ipcMain.handle(IPC_CHANNELS.plaidLinkGetStatus, (): PlaidLinkFlowStatus => plaidLinkFlow.getStatus())
+
 // ---- App lifecycle ----------------------------------------------------------
 
 // D1.3: only one instance of the app runs at a time. A second launch
@@ -692,6 +723,13 @@ if (!gotSingleInstanceLock) {
     cleaningUp = true
     event.preventDefault()
     if (statusRefreshTimer) clearInterval(statusRefreshTimer)
+    // Stops this app from watching an in-flight Plaid Link flow (if any) —
+    // see plaid-link-flow.ts's module doc: the actual loopback server this
+    // may have left running has no external close handle, so it's the
+    // `app.exit(0)` below (ending the whole process) that really tears it
+    // down, not this call. Still worth calling for tidiness/consistency with
+    // every other resource cleaned up here.
+    plaidLinkFlow.cancel()
     // Closes the MCP client + transport, which sends SIGTERM (then SIGKILL
     // after a grace period) to the spawned server child — verified via `ps`
     // in S0.4 to leave no orphaned process behind.
