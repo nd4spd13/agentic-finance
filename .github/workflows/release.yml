@@ -38,7 +38,9 @@ jobs:
         run: pnpm -r build
 
       - name: Build macOS DMG + ZIP (unsigned)
-        run: pnpm --filter @clad/desktop exec electron-builder --mac
+        # --publish never: electron-builder defaults to auto-publishing tag
+        # builds in CI, but the draft release is created by the next step.
+        run: pnpm --filter @clad/desktop exec electron-builder --mac --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # never probe for a local signing identity
 
