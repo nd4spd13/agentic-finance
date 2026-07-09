@@ -31,6 +31,7 @@ import { PassphraseCustody, verifyCliPassphrase } from './lib/passphrase.js'
 import { PlaidSecretsStore } from './lib/plaid-secrets.js'
 import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
 import { getPendingApprovalsCount } from './lib/approvals.js'
+import { DashboardDataStore, type DashboardSnapshot } from './lib/dashboard-data.js'
 import {
   trayTooltip,
   trayServerStatusMenuLabel,
@@ -119,6 +120,17 @@ const mcpManager = new McpServerManager({
     latestMcpStatus = status
     void broadcastStatus()
   },
+})
+
+// D2.3: same DI shape as McpServerManager above — constructs its provider
+// through main/lib/provider-factory.ts (dummy or plaid, same factory pattern
+// mcp-server's own provider-factory.ts uses) rather than owning any
+// provider-specific logic itself, so a future SimpleFIN provider slots in
+// with no change here.
+const dashboardStore = new DashboardDataStore({
+  loadConfig,
+  loadPlaidCredentials: () => getPlaidSecrets().load(),
+  getActivePassphrase: getActiveTokenStorePassphrase,
 })
 
 function buildDisplayConfig(): DisplayConfig {
@@ -385,6 +397,20 @@ ipcMain.handle(IPC_CHANNELS.mcpGetStatus, () => withPendingApprovals(mcpManager.
 ipcMain.handle(IPC_CHANNELS.mcpStart, async () => withPendingApprovals(await mcpManager.start()))
 ipcMain.handle(IPC_CHANNELS.mcpStop, async () => withPendingApprovals(await mcpManager.stop()))
 ipcMain.handle(IPC_CHANNELS.mcpRestart, async () => withPendingApprovals(await mcpManager.restart()))
+
+// ---- IPC handlers (D2.3) ---------------------------------------------------
+
+// getDashboardSnapshot is a pure cache read (no network); refreshDashboard is
+// the only path that ever calls the provider — see dashboard-data.ts's
+// module doc for the rate-limit discipline this encodes.
+ipcMain.handle(
+  IPC_CHANNELS.dashboardGetSnapshot,
+  (): DashboardSnapshot => dashboardStore.getSnapshot()
+)
+ipcMain.handle(
+  IPC_CHANNELS.dashboardRefresh,
+  (): Promise<DashboardSnapshot> => dashboardStore.refresh()
+)
 
 // ---- IPC handlers (D1.4) ---------------------------------------------------
 

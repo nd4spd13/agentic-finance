@@ -41,6 +41,8 @@ const cladBridge: CladBridge = {
   getClaudeDesktopConnectPreview: (agentId?: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.claudeDesktopGetPreview, agentId),
   connectClaudeDesktop: (agentId?: string) => ipcRenderer.invoke(IPC_CHANNELS.claudeDesktopConnect, agentId),
+  getDashboardSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.dashboardGetSnapshot),
+  refreshDashboard: () => ipcRenderer.invoke(IPC_CHANNELS.dashboardRefresh),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

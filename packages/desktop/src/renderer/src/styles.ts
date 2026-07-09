@@ -99,3 +99,50 @@ export const pathList: CSSProperties = {
   padding: '0.75rem',
   overflowX: 'auto',
 }
+
+// ---- D2 nav (introduced by D2.3; D2.4 reuses navButton/navButtonActive) ----
+
+export const nav: CSSProperties = {
+  display: 'flex',
+  gap: '0.5rem',
+  marginBottom: '1.25rem',
+  borderBottom: '1px solid #ddd',
+  paddingBottom: '0.75rem',
+}
+
+export const navButton: CSSProperties = {
+  padding: '0.4rem 0.9rem',
+  fontSize: 14,
+  borderRadius: 4,
+  border: '1px solid transparent',
+  background: 'transparent',
+  color: '#444',
+  cursor: 'pointer',
+}
+
+export const navButtonActive: CSSProperties = {
+  ...navButton,
+  background: '#1a1a1a',
+  color: '#fff',
+}
+
+// ---- D2.3 dashboard ---------------------------------------------------------
+
+export const listRow: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  padding: '0.5rem 0',
+  borderBottom: '1px solid #e5e5e5',
+  fontSize: 14,
+}
+
+export const amountNegative: CSSProperties = {
+  color: '#b3261e',
+  fontVariantNumeric: 'tabular-nums',
+}
+
+export const amountPositive: CSSProperties = {
+  color: '#1e7a34',
+  fontVariantNumeric: 'tabular-nums',
+}

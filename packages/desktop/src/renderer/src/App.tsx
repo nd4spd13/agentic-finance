@@ -4,7 +4,16 @@ import MigrationPrompt from './components/MigrationPrompt.js'
 import SettingsForm from './components/SettingsForm.js'
 import ServerStatusPanel from './components/ServerStatusPanel.js'
 import ConnectClaudeDesktop from './components/ConnectClaudeDesktop.js'
+import Dashboard from './components/Dashboard.js'
 import * as s from './styles.js'
+
+// D2 nav (introduced by D2.3): a minimal tab switcher for the "ready" phase
+// below. Kept intentionally tiny (a union + one useState) so later D2 work
+// (policy editor, approvals inbox, audit viewer) only needs to extend this
+// union and the two spots that reference it — nothing here restructures the
+// existing Settings content, which keeps rendering exactly as it did in D1,
+// just under its own tab now.
+type Tab = 'dashboard' | 'settings'
 
 type LoadState =
   | { phase: 'loading' }
@@ -23,6 +32,7 @@ type LoadState =
  */
 export default function App(): JSX.Element {
   const [state, setState] = useState<LoadState>({ phase: 'loading' })
+  const [tab, setTab] = useState<Tab>('dashboard')
 
   const load = useCallback(async () => {
     setState({ phase: 'loading' })
@@ -57,12 +67,34 @@ export default function App(): JSX.Element {
       )}
       {state.phase === 'ready' && (
         <>
-          <ServerStatusPanel />
-          <ConnectClaudeDesktop />
-          <SettingsForm
-            config={state.config}
-            onConfigChange={(next) => setState({ phase: 'ready', config: next })}
-          />
+          <nav style={s.nav}>
+            <button
+              type="button"
+              style={tab === 'dashboard' ? s.navButtonActive : s.navButton}
+              onClick={() => setTab('dashboard')}
+            >
+              Dashboard
+            </button>
+            <button
+              type="button"
+              style={tab === 'settings' ? s.navButtonActive : s.navButton}
+              onClick={() => setTab('settings')}
+            >
+              Settings
+            </button>
+          </nav>
+
+          {tab === 'dashboard' && <Dashboard />}
+          {tab === 'settings' && (
+            <>
+              <ServerStatusPanel />
+              <ConnectClaudeDesktop />
+              <SettingsForm
+                config={state.config}
+                onConfigChange={(next) => setState({ phase: 'ready', config: next })}
+              />
+            </>
+          )}
         </>
       )}
     </main>

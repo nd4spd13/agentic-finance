@@ -158,6 +158,66 @@ export interface ClaudeDesktopConnectPreview {
   agentFallbackReason?: string
 }
 
+// ---- Dashboard (D2.3) -------------------------------------------------------
+
+/**
+ * `'no-provider-configured'` — the `plaid` provider is selected but Plaid
+ * credentials and/or the token-store passphrase aren't fully resolved yet
+ * (`'dummy'` is always "configured" — zero setup, see `main/lib/provider-
+ * factory.ts`). `'ready'` — the last fetch (or the absence of one) is
+ * otherwise normal. `'error'` — the last `refreshDashboard()` attempt
+ * failed; `accounts`/`transactions` still reflect the last successful
+ * fetch, if any (shown honestly stale rather than hidden — desktop-app.md
+ * D2.3's framing: "Stale data shown honestly beats fresh data that burns
+ * quota").
+ */
+export type DashboardProviderState = 'no-provider-configured' | 'ready' | 'error'
+
+/** Display-safe account view. Never an account/routing number — the underlying `FinancialDataProvider` account shape doesn't carry those at all, regardless of policy. */
+export interface DashboardAccount {
+  id: string
+  name: string
+  type: 'checking' | 'savings' | 'credit' | 'loan' | 'investment'
+  /** Last few digits only, when the provider supplies one (e.g. Plaid's account mask). */
+  mask?: string
+  balanceCurrent: number
+  balanceAvailable?: number
+  currency: string
+  /** True when this reflects a degraded/cached read rather than a live one. */
+  stale?: boolean
+}
+
+export interface DashboardTransaction {
+  id: string
+  accountId: string
+  amount: number
+  date: string
+  description: string
+  merchantName?: string
+  category?: string[]
+  pending: boolean
+  stale?: boolean
+}
+
+/**
+ * The dashboard's entire renderer-facing state. `lastRefreshed` is the ISO
+ * timestamp of the last successful `refreshDashboard()` call THIS SESSION —
+ * `null` means nothing has been fetched since the app launched (in-memory
+ * cache only, by design; see `main/lib/dashboard-data.ts`'s module doc).
+ * `getDashboardSnapshot` NEVER triggers a fetch; only `refreshDashboard`
+ * does (rate-limit discipline, desktop-app.md D2.3 — never poll on an
+ * interval).
+ */
+export interface DashboardSnapshot {
+  state: DashboardProviderState
+  provider: CladProvider
+  accounts: DashboardAccount[]
+  transactions: DashboardTransaction[]
+  lastRefreshed: string | null
+  /** Display-safe (redacted where derived from a thrown provider error). */
+  error?: string
+}
+
 // ---- IPC channel names ----------------------------------------------------
 
 export const IPC_CHANNELS = {
@@ -178,6 +238,9 @@ export const IPC_CHANNELS = {
   mcpStatusChanged: 'mcp:statusChanged',
   claudeDesktopGetPreview: 'claudeDesktop:getPreview',
   claudeDesktopConnect: 'claudeDesktop:connect',
+  // D2.3
+  dashboardGetSnapshot: 'dashboard:getSnapshot',
+  dashboardRefresh: 'dashboard:refresh',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -206,6 +269,10 @@ export interface CladBridge {
   getClaudeDesktopConnectPreview(agentId?: string): Promise<ClaudeDesktopConnectPreview>
   /** `agentId` should be whatever the last preview resolved to (`resolvedAgentId`, or the user's picked one) — see `ClaudeDesktopConnectPreview`'s doc comment. */
   connectClaudeDesktop(agentId?: string): Promise<OperationResult>
+  /** Pure cache read — never triggers a fetch. See `DashboardSnapshot`'s doc comment. */
+  getDashboardSnapshot(): Promise<DashboardSnapshot>
+  /** The only call that ever triggers a live provider fetch — wire this to an explicit user action only, never a timer. */
+  refreshDashboard(): Promise<DashboardSnapshot>
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */
