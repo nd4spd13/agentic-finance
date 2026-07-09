@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { DisplayConfig } from '../../shared/ipc.js'
 import MigrationPrompt from './components/MigrationPrompt.js'
 import SettingsForm from './components/SettingsForm.js'
+import ServerStatusPanel from './components/ServerStatusPanel.js'
 import * as s from './styles.js'
 
 type LoadState =
@@ -48,10 +49,13 @@ export default function App(): JSX.Element {
         <MigrationPrompt plaidDbPath={state.plaidDbPath} onResolved={load} />
       )}
       {state.phase === 'ready' && (
-        <SettingsForm
-          config={state.config}
-          onConfigChange={(next) => setState({ phase: 'ready', config: next })}
-        />
+        <>
+          <ServerStatusPanel />
+          <SettingsForm
+            config={state.config}
+            onConfigChange={(next) => setState({ phase: 'ready', config: next })}
+          />
+        </>
       )}
     </main>
   )

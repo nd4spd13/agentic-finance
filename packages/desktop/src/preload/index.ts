@@ -5,12 +5,13 @@
  * (and no other channel) ever reaches the renderer's `window`.
  */
 
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import {
   IPC_CHANNELS,
   type CladBridge,
   type SetProviderAndEnvInput,
   type SetPlaidCredentialsInput,
+  type McpServerStatus,
 } from '../shared/ipc.js'
 
 const cladBridge: CladBridge = {
@@ -25,6 +26,15 @@ const cladBridge: CladBridge = {
   submitCliPassphrase: (passphrase: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.migrationSubmitCliPassphrase, passphrase),
   startFreshTokenStore: () => ipcRenderer.invoke(IPC_CHANNELS.migrationStartFresh),
+  getMcpStatus: () => ipcRenderer.invoke(IPC_CHANNELS.mcpGetStatus),
+  startMcpServer: () => ipcRenderer.invoke(IPC_CHANNELS.mcpStart),
+  stopMcpServer: () => ipcRenderer.invoke(IPC_CHANNELS.mcpStop),
+  restartMcpServer: () => ipcRenderer.invoke(IPC_CHANNELS.mcpRestart),
+  onMcpStatusChanged: (callback: (status: McpServerStatus) => void) => {
+    const listener = (_event: IpcRendererEvent, status: McpServerStatus): void => callback(status)
+    ipcRenderer.on(IPC_CHANNELS.mcpStatusChanged, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.mcpStatusChanged, listener)
+  },
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

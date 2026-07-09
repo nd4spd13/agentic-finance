@@ -19,6 +19,13 @@
  * This file grows with each D1 sub-task (D1.1 config/migration/Plaid
  * credentials below; D1.2 adds MCP lifecycle; D1.4 adds Claude Desktop
  * connect) — extended in place, never bypassed.
+ *
+ * Note on layering: this file must stay importable from the renderer/
+ * preload build (`tsconfig.web.json`'s `include` is renderer + shared only —
+ * it does not include `src/main/**`), so it never imports from `src/main/**`
+ * even for types. `McpServerState` below is intentionally a standalone copy
+ * of the same union in `src/main/lib/mcp-server-manager.ts` rather than an
+ * import of it.
  */
 
 // ---- Config (D1.1) --------------------------------------------------------
@@ -67,6 +74,27 @@ export interface MigrationStatus {
   plaidDbPath: string
 }
 
+// ---- MCP server lifecycle (D1.2) ------------------------------------------
+
+export type McpServerState = 'stopped' | 'starting' | 'running' | 'stopping' | 'crashed'
+
+/**
+ * IPC-facing server status: the `McpServerManager`'s own process-lifecycle
+ * status (see `McpProcessStatus` in `main/lib/mcp-server-manager.ts`) merged
+ * with a live pending-approvals count. Pushed to the renderer on every
+ * change via the `mcpStatusChanged` event, and returned directly by
+ * `getMcpStatus`/`startMcpServer`/`stopMcpServer`/`restartMcpServer`.
+ */
+export interface McpServerStatus {
+  state: McpServerState
+  pid?: number
+  tools: string[]
+  /** Display-safe (redacted where derived from child stderr). Never secret material. */
+  lastError?: string
+  restartAttempt: number
+  pendingApprovals: number
+}
+
 // ---- IPC channel names ----------------------------------------------------
 
 export const IPC_CHANNELS = {
@@ -78,6 +106,12 @@ export const IPC_CHANNELS = {
   migrationGetStatus: 'migration:getStatus',
   migrationSubmitCliPassphrase: 'migration:submitCliPassphrase',
   migrationStartFresh: 'migration:startFresh',
+  mcpGetStatus: 'mcp:getStatus',
+  mcpStart: 'mcp:start',
+  mcpStop: 'mcp:stop',
+  mcpRestart: 'mcp:restart',
+  /** Push-only, main -> renderer. See `onMcpStatusChanged` below. */
+  mcpStatusChanged: 'mcp:statusChanged',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -90,4 +124,18 @@ export interface CladBridge {
   getMigrationStatus(): Promise<MigrationStatus>
   submitCliPassphrase(passphrase: string): Promise<OperationResult>
   startFreshTokenStore(): Promise<OperationResult>
+  getMcpStatus(): Promise<McpServerStatus>
+  startMcpServer(): Promise<McpProcessResult>
+  stopMcpServer(): Promise<McpProcessResult>
+  restartMcpServer(): Promise<McpProcessResult>
+  /**
+   * Subscribes to live status pushes. Returns an unsubscribe function.
+   * The only place a raw `ipcRenderer.on` appears is inside the preload
+   * script's implementation of this — renderer code never touches
+   * `ipcRenderer` directly (security checklist: no arbitrary channel access).
+   */
+  onMcpStatusChanged(callback: (status: McpServerStatus) => void): () => void
 }
+
+/** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */
+export type McpProcessResult = McpServerStatus

@@ -2,16 +2,18 @@
  * Clad desktop app — Electron main process entry point.
  *
  * D1.1: config bootstrap, safeStorage passphrase custody (with the CLI
- * migration flow), and Plaid credential storage, all wired over the typed
- * IPC contract in `../shared/ipc.js`. D1.2 (MCP lifecycle), D1.3
- * (tray/menu-bar), and D1.4 (Connect to Claude Desktop) extend this file in
+ * migration flow), and Plaid credential storage. D1.2: MCP server lifecycle
+ * (start/stop/restart, crash backoff, status pushed to the renderer). All
+ * wired over the typed IPC contract in `../shared/ipc.js`. D1.3
+ * (tray/menu-bar) and D1.4 (Connect to Claude Desktop) extend this file in
  * later commits.
  *
  * Security posture (desktop-app.md, non-negotiable):
  *  - contextIsolation: true, nodeIntegration: false, sandbox: true.
  *  - All secret material (passphrase, Plaid credentials, tokens, DB
  *    handles) stays in this process. Only display-safe view models
- *    (`DisplayConfig`, `MigrationStatus`, `OperationResult`) cross IPC.
+ *    (`DisplayConfig`, `MigrationStatus`, `OperationResult`,
+ *    `McpServerStatus`) cross IPC.
  */
 
 import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
@@ -26,6 +28,8 @@ import {
 } from './lib/config.js'
 import { PassphraseCustody, verifyCliPassphrase } from './lib/passphrase.js'
 import { PlaidSecretsStore } from './lib/plaid-secrets.js'
+import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
+import { getPendingApprovalsCount } from './lib/approvals.js'
 import {
   IPC_CHANNELS,
   type DisplayConfig,
@@ -33,6 +37,7 @@ import {
   type SetPlaidCredentialsInput,
   type OperationResult,
   type MigrationStatus,
+  type McpServerStatus,
 } from '../shared/ipc.js'
 
 // `__dirname` (ambient via @types/node) is a CommonJS global — valid here
@@ -56,6 +61,41 @@ function getPlaidSecrets(): PlaidSecretsStore {
   }
   return plaidSecretsSingleton
 }
+
+/**
+ * The passphrase the MCP server child should use for `CLAD_TOKEN_PASSPHRASE`
+ * when the `plaid` provider is selected. Deliberately returns `null` (never
+ * auto-generates) while CLI migration is still pending — same rule as the
+ * eager resolution in `app.whenReady()` below; see `passphrase.ts`'s
+ * `getOrCreate` doc comment for why.
+ */
+function getActiveTokenStorePassphrase(): string | null {
+  if (computeMigrationStatus().needed) return null
+  return getPassphraseCustody().getOrCreate().passphrase
+}
+
+let latestMcpStatus: McpProcessStatus = { state: 'stopped', tools: [], restartAttempt: 0 }
+let statusRefreshTimer: ReturnType<typeof setInterval> | null = null
+
+async function withPendingApprovals(status: McpProcessStatus): Promise<McpServerStatus> {
+  const pendingApprovals = await getPendingApprovalsCount(loadConfig().approval_db)
+  return { ...status, pendingApprovals }
+}
+
+async function broadcastStatus(): Promise<void> {
+  const status = await withPendingApprovals(latestMcpStatus)
+  mainWindow?.webContents.send(IPC_CHANNELS.mcpStatusChanged, status)
+}
+
+const mcpManager = new McpServerManager({
+  loadConfig,
+  loadPlaidCredentials: () => getPlaidSecrets().load(),
+  getActivePassphrase: getActiveTokenStorePassphrase,
+  onStatusChange: (status) => {
+    latestMcpStatus = status
+    void broadcastStatus()
+  },
+})
 
 function buildDisplayConfig(): DisplayConfig {
   const config = loadConfig()
@@ -180,6 +220,13 @@ ipcMain.handle(IPC_CHANNELS.migrationStartFresh, (): OperationResult => {
   }
 })
 
+// ---- IPC handlers (D1.2) ---------------------------------------------------
+
+ipcMain.handle(IPC_CHANNELS.mcpGetStatus, () => withPendingApprovals(mcpManager.getStatus()))
+ipcMain.handle(IPC_CHANNELS.mcpStart, async () => withPendingApprovals(await mcpManager.start()))
+ipcMain.handle(IPC_CHANNELS.mcpStop, async () => withPendingApprovals(await mcpManager.stop()))
+ipcMain.handle(IPC_CHANNELS.mcpRestart, async () => withPendingApprovals(await mcpManager.restart()))
+
 // ---- App lifecycle ----------------------------------------------------------
 
 app.whenReady().then(async () => {
@@ -198,6 +245,23 @@ app.whenReady().then(async () => {
 
   createWindow()
 
+  // Auto-start the app's own supervised MCP server on launch — this is what
+  // the tray (D1.3) and the settings window's status panel reflect. Note
+  // this is a SEPARATE process from whatever Claude Desktop spawns via its
+  // own config (D1.4): MCP's stdio transport is a 1:1 parent/child pipe, so
+  // a single running server process can't be shared between two unrelated
+  // parents. If provider=plaid but credentials/passphrase aren't ready yet,
+  // start() reports 'crashed' with a clear lastError instead of throwing —
+  // surfaced in the status panel, not a startup crash.
+  void mcpManager.start()
+
+  // Pending-approvals can change from agent activity alone, independent of
+  // MCP process state — refresh periodically so the tray/status panel don't
+  // go stale between state-change-triggered pushes.
+  statusRefreshTimer = setInterval(() => {
+    void broadcastStatus()
+  }, 15_000)
+
   app.on('activate', () => {
     if (mainWindow) {
       mainWindow.show()
@@ -213,10 +277,24 @@ app.on('window-all-closed', () => {
   }
 })
 
-// Electron does not wire OS termination signals to `app.quit()` on its own.
-// Route them through the normal quit path so `pkill`/process-manager stop
-// and Ctrl-C in a terminal both shut the app down cleanly. (D1.2 adds
-// MCP-child cleanup to a `before-quit` handler here.)
+let cleaningUp = false
+app.on('before-quit', async (event) => {
+  if (cleaningUp) return
+  cleaningUp = true
+  event.preventDefault()
+  if (statusRefreshTimer) clearInterval(statusRefreshTimer)
+  // Closes the MCP client + transport, which sends SIGTERM (then SIGKILL
+  // after a grace period) to the spawned server child — verified via `ps`
+  // in S0.4 to leave no orphaned process behind.
+  await mcpManager.stop()
+  app.exit(0)
+})
+
+// Electron does not wire OS termination signals to `app.quit()` on its own
+// (SIGTERM/SIGINT would otherwise kill the process abruptly, leaving the
+// spawned MCP server child orphaned). Route them through the same
+// before-quit cleanup path so `pkill`/process-manager stop and Ctrl-C in a
+// terminal both shut the app down cleanly.
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     app.quit()
