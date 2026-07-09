@@ -16,6 +16,7 @@ import {
   type ApprovalsListInput,
   type ApprovalDecisionInput,
   type ApprovalFocusRequest,
+  type AuditLogQueryInput,
 } from '../shared/ipc.js'
 
 const cladBridge: CladBridge = {
@@ -51,6 +52,7 @@ const cladBridge: CladBridge = {
     ipcRenderer.on(IPC_CHANNELS.approvalFocusRequested, listener)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.approvalFocusRequested, listener)
   },
+  queryAuditLog: (input: AuditLogQueryInput) => ipcRenderer.invoke(IPC_CHANNELS.auditLogQuery, input),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

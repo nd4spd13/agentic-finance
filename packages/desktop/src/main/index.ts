@@ -9,16 +9,17 @@
  * config merge behind a confirm dialog). D2.1: approvals inbox (list/
  * approve/deny through the real `@clad/core` `ApprovalQueue`, audit-logged,
  * plus a native OS notification on new pending approvals — see
- * `broadcastStatus`/`notifyNewApproval` below). All wired over the typed IPC
- * contract in `../shared/ipc.js`.
+ * `broadcastStatus`/`notifyNewApproval` below). D2.2: read-only paginated
+ * audit log viewer. All wired over the typed IPC contract in
+ * `../shared/ipc.js`.
  *
  * Security posture (desktop-app.md, non-negotiable):
  *  - contextIsolation: true, nodeIntegration: false, sandbox: true.
  *  - All secret material (passphrase, Plaid credentials, tokens, DB
  *    handles) stays in this process. Only display-safe view models
  *    (`DisplayConfig`, `MigrationStatus`, `OperationResult`,
- *    `McpServerStatus`, `ClaudeDesktopConnectPreview`, `ApprovalListItem`)
- *    cross IPC.
+ *    `McpServerStatus`, `ClaudeDesktopConnectPreview`, `ApprovalListItem`,
+ *    `AuditLogPage`) cross IPC.
  */
 
 import { app, BrowserWindow, ipcMain, safeStorage, shell, Tray, Menu, nativeImage, Notification } from 'electron'
@@ -35,6 +36,7 @@ import { PassphraseCustody, verifyCliPassphrase } from './lib/passphrase.js'
 import { PlaidSecretsStore } from './lib/plaid-secrets.js'
 import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
 import { listApprovals, decideApproval, findNewPendingApprovals } from './lib/approvals.js'
+import { queryAuditLog } from './lib/audit-log.js'
 import {
   trayTooltip,
   trayServerStatusMenuLabel,
@@ -67,6 +69,8 @@ import {
   type ApprovalsListInput,
   type ApprovalDecisionInput,
   type ApprovalDecisionResult,
+  type AuditLogQueryInput,
+  type AuditLogPage,
 } from '../shared/ipc.js'
 
 // `__dirname` (ambient via @types/node) is a CommonJS global — valid here
@@ -554,6 +558,16 @@ ipcMain.handle(
     if (result.ok) void broadcastStatus()
     return result
   }
+)
+
+// ---- IPC handlers (D2.2 audit log viewer) ----------------------------------
+
+// Same no-catch posture as approvalsList above: a real read failure should
+// surface as a genuine error state in `AuditLogViewer.tsx`, not an empty page.
+ipcMain.handle(
+  IPC_CHANNELS.auditLogQuery,
+  (_event, input: AuditLogQueryInput): Promise<AuditLogPage> =>
+    queryAuditLog(loadConfig().audit_db, input.filter ?? {}, input.page, input.pageSize)
 )
 
 // ---- App lifecycle ----------------------------------------------------------

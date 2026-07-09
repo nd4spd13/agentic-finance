@@ -197,6 +197,44 @@ export interface ApprovalFocusRequest {
   id: string
 }
 
+// ---- Audit log viewer (D2.2) ------------------------------------------------
+
+/** Display-safe view of an `@clad/core` `AuditRecord` — camelCased field names, otherwise a 1:1 copy (every field here was already non-secret; the hash-chain fields are intentionally omitted as not useful for this read-only viewer). */
+export interface AuditLogRow {
+  id: string
+  timestamp: string
+  agentId: string
+  eventType: string
+  toolName?: string
+  decision?: string
+  reason?: string
+}
+
+export interface AuditLogFilter {
+  agentId?: string
+  toolName?: string
+  decision?: string
+  /** ISO 8601 date or date-time, inclusive lower bound on `timestamp`. */
+  startDate?: string
+  /** ISO 8601 date or date-time, inclusive upper bound on `timestamp`. */
+  endDate?: string
+}
+
+export interface AuditLogQueryInput {
+  filter?: AuditLogFilter
+  /** 1-indexed. */
+  page: number
+  pageSize: number
+}
+
+/** Rows are newest-first. Only one page ever crosses IPC — the full filtered result set stays in the main process (see `main/lib/audit-log.ts`). */
+export interface AuditLogPage {
+  rows: AuditLogRow[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 // ---- IPC channel names ----------------------------------------------------
 
 export const IPC_CHANNELS = {
@@ -221,6 +259,7 @@ export const IPC_CHANNELS = {
   approvalsDecide: 'approvals:decide',
   /** Push-only, main -> renderer. See `onApprovalFocusRequested` below. */
   approvalFocusRequested: 'approvals:focusRequested',
+  auditLogQuery: 'auditLog:query',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -260,6 +299,8 @@ export interface CladBridge {
    * scroll-to/highlight in the inbox.
    */
   onApprovalFocusRequested(callback: (request: ApprovalFocusRequest) => void): () => void
+  /** Read-only, paginated, newest-first. Rejects on a genuine read failure (surfaced by the viewer as an error state). */
+  queryAuditLog(input: AuditLogQueryInput): Promise<AuditLogPage>
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */

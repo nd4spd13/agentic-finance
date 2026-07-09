@@ -100,7 +100,7 @@ export const pathList: CSSProperties = {
   overflowX: 'auto',
 }
 
-// ---- D2.1 nav + approvals inbox --------------------------------------------
+// ---- D2 nav (Approvals inbox / Audit log viewer) --------------------------
 
 export const navBar: CSSProperties = {
   display: 'flex',
@@ -138,4 +138,44 @@ export const listItemHighlighted: CSSProperties = {
   ...listItem,
   border: '2px solid #1a1a1a',
   background: '#fff8e1',
+}
+
+export const table: CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: 13,
+}
+
+export const tableHeaderRow: CSSProperties = {
+  textAlign: 'left',
+  borderBottom: '1px solid #ddd',
+}
+
+export const tableCell: CSSProperties = {
+  padding: '0.4rem',
+}
+
+export const tableRow: CSSProperties = {
+  borderBottom: '1px solid #eee',
+}
+
+export const filterBar: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '0.5rem',
+  marginBottom: '0.75rem',
+  alignItems: 'center',
+}
+
+export const filterInput: CSSProperties = {
+  ...input,
+  marginBottom: 0,
+  width: 150,
+}
+
+export const pagination: CSSProperties = {
+  marginTop: '0.75rem',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.5rem',
 }
