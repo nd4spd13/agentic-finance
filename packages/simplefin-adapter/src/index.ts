@@ -14,7 +14,20 @@ export {
   SimpleFinConnectionError,
   SimpleFinAccountError,
 } from './errors.js'
-export { fetchAccounts, buildAccountsRequest, parseAccountSet, parseProtocolError } from './client.js'
+// SF6 fix: `MAX_WINDOW_SECONDS` was exported from `client.ts` (for `adapter.ts`,
+// same package, importing it directly) but never re-exported from this
+// public entry point. `packages/cli/src/commands/connect.ts` needs the same
+// "widest protocol-allowed window" constant `adapter.ts`'s `refreshItemIfDue`
+// uses, to keep its own initial post-connect fetch consistent instead of
+// duplicating the `90 * 24 * 60 * 60` literal — an external-consumer gap SF5
+// missed since no package outside this one needed it until SF6.
+export {
+  fetchAccounts,
+  buildAccountsRequest,
+  parseAccountSet,
+  parseProtocolError,
+  MAX_WINDOW_SECONDS,
+} from './client.js'
 export type {
   FetchAccountsOptions,
   SimpleFinAccountSet,

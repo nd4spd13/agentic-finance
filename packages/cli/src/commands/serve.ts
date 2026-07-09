@@ -34,6 +34,7 @@ export function serveCommand(opts: { agentId?: string } = {}): void {
     CLAD_APPROVAL_DB: config.approval_db,
     CLAD_PROVIDER: config.provider,
     CLAD_PLAID_DB: config.plaid_db,
+    CLAD_SIMPLEFIN_DB: config.simplefin_db,
   }
 
   // CLI flag takes precedence over CLAD_AGENT_ID env var
