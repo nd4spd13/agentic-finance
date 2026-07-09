@@ -17,6 +17,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "build:dir": "electron-vite build && electron-builder --dir",
+    "build:mac": "electron-vite build && electron-builder --mac",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
