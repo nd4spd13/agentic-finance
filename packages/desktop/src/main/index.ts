@@ -3,10 +3,10 @@
  *
  * D1.1: config bootstrap, safeStorage passphrase custody (with the CLI
  * migration flow), and Plaid credential storage. D1.2: MCP server lifecycle
- * (start/stop/restart, crash backoff, status pushed to the renderer). All
- * wired over the typed IPC contract in `../shared/ipc.js`. D1.3
- * (tray/menu-bar) and D1.4 (Connect to Claude Desktop) extend this file in
- * later commits.
+ * (start/stop/restart, crash backoff, status pushed to the renderer). D1.3:
+ * tray/menu-bar presence (server status + pending approvals, single-instance
+ * lock, close-to-tray). All wired over the typed IPC contract in
+ * `../shared/ipc.js`.
  *
  * Security posture (desktop-app.md, non-negotiable):
  *  - contextIsolation: true, nodeIntegration: false, sandbox: true.
@@ -16,7 +16,7 @@
  *    `McpServerStatus`) cross IPC.
  */
 
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, safeStorage, shell, Tray, Menu, nativeImage } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -30,10 +30,12 @@ import { PassphraseCustody, verifyCliPassphrase } from './lib/passphrase.js'
 import { PlaidSecretsStore } from './lib/plaid-secrets.js'
 import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
 import { getPendingApprovalsCount } from './lib/approvals.js'
+import { trayTooltip, trayServerStatusMenuLabel, trayApprovalsMenuLabel } from './lib/tray-status.js'
 import {
   IPC_CHANNELS,
   type DisplayConfig,
   type SetProviderAndEnvInput,
+  type SetCloseToTrayInput,
   type SetPlaidCredentialsInput,
   type OperationResult,
   type MigrationStatus,
@@ -45,6 +47,7 @@ import {
 // electron.vite.config.ts).
 
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
 let passphraseCustodySingleton: PassphraseCustody | null = null
 let plaidSecretsSingleton: PlaidSecretsStore | null = null
 
@@ -82,9 +85,11 @@ async function withPendingApprovals(status: McpProcessStatus): Promise<McpServer
   return { ...status, pendingApprovals }
 }
 
+/** Pushes the merged status to the renderer (if a window is open) AND repaints the tray. Single source of truth for "what changed" — see updateTray below. */
 async function broadcastStatus(): Promise<void> {
   const status = await withPendingApprovals(latestMcpStatus)
   mainWindow?.webContents.send(IPC_CHANNELS.mcpStatusChanged, status)
+  updateTray(status)
 }
 
 const mcpManager = new McpServerManager({
@@ -108,6 +113,7 @@ function buildDisplayConfig(): DisplayConfig {
     provider: config.provider,
     plaidEnv: config.plaid_env,
     hasPlaidCredentials: getPlaidSecrets().has(),
+    closeToTray: config.close_to_tray,
   }
 }
 
@@ -122,6 +128,64 @@ function computeMigrationStatus(): MigrationStatus {
   const config = loadConfig()
   const needed = !getPassphraseCustody().hasCustodyFile() && existsSync(config.plaid_db)
   return { needed, plaidDbPath: config.plaid_db }
+}
+
+// ---- Tray (D1.3) ------------------------------------------------------------
+
+/**
+ * Resources ship alongside the built main bundle: `out/main/../../resources`
+ * resolves to `<project>/resources` in dev (`electron-vite dev`) and against
+ * an unpacked `out/` tree, and to `app.asar/resources` in the packaged app —
+ * `resources/**` is included in electron-builder's `files` list precisely so
+ * this path exists there too. `nativeImage.createFromPath` is asar-
+ * transparent, same principle S0.4 already established for spawning
+ * mcp-server's script path from inside `app.asar`.
+ */
+function trayIconPath(): string {
+  return join(__dirname, '../../resources/trayIconTemplate.png')
+}
+
+function focusOrCreateWindow(): void {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  } else {
+    createWindow()
+  }
+}
+
+/**
+ * Repaints the tray's tooltip + context menu from a fresh status. Called
+ * from every place `latestMcpStatus` can change (the manager's
+ * `onStatusChange` callback, via `broadcastStatus`) and from the periodic
+ * pending-approvals refresh below — approvals can change from agent
+ * activity alone, independent of any MCP process state transition, so
+ * polling is what keeps the tray from going stale between them (interval:
+ * 15s, shared with the settings window's own refresh — see
+ * `app.whenReady()`).
+ */
+function updateTray(status: McpServerStatus): void {
+  if (!tray) return
+  tray.setToolTip(trayTooltip(status))
+  const menu = Menu.buildFromTemplate([
+    { label: trayServerStatusMenuLabel(status), enabled: false },
+    { label: trayApprovalsMenuLabel(status), enabled: false },
+    { type: 'separator' },
+    { label: 'Open Clad', click: () => focusOrCreateWindow() },
+    { type: 'separator' },
+    { label: 'Quit Clad', click: () => app.quit() },
+  ])
+  tray.setContextMenu(menu)
+}
+
+function createTray(): void {
+  const icon = nativeImage.createFromPath(trayIconPath())
+  // Electron auto-detects the "Template" filename suffix on macOS, but
+  // setting this explicitly documents the intent and doesn't depend on the
+  // asset never being renamed. Harmless no-op on Windows/Linux.
+  icon.setTemplateImage(true)
+  tray = new Tray(icon)
 }
 
 function createWindow(): void {
@@ -153,6 +217,19 @@ function createWindow(): void {
     }
   })
 
+  // D1.3: closing the window (titlebar close control / Cmd+W) hides it —
+  // the app + tray stay running — unless the user turned this off in
+  // Settings (`close_to_tray`, defaults to `true`). A real app quit never
+  // reaches this: it goes through `before-quit` -> `app.exit(0)` below,
+  // which terminates the process directly without dispatching a 'close'
+  // event on any window.
+  mainWindow.on('close', (event) => {
+    if (loadConfig().close_to_tray) {
+      event.preventDefault()
+      mainWindow?.hide()
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -175,6 +252,19 @@ ipcMain.handle(
     try {
       const config = loadConfig()
       saveConfig({ ...config, provider: input.provider, plaid_env: input.plaidEnv })
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+)
+
+ipcMain.handle(
+  IPC_CHANNELS.configSetCloseToTray,
+  (_event, input: SetCloseToTrayInput): OperationResult => {
+    try {
+      const config = loadConfig()
+      saveConfig({ ...config, close_to_tray: input.closeToTray })
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -229,74 +319,95 @@ ipcMain.handle(IPC_CHANNELS.mcpRestart, async () => withPendingApprovals(await m
 
 // ---- App lifecycle ----------------------------------------------------------
 
-app.whenReady().then(async () => {
-  ensureConfigBootstrap()
+// D1.3: only one instance of the app runs at a time. A second launch
+// attempt (double-clicking the app again, running `electron .` twice, etc.)
+// just focuses the existing window instead of starting a second supervised
+// MCP server child against the same `~/.clad` config dir/SQLite files,
+// which would otherwise race over the same on-disk state.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
-  // Resolve passphrase custody eagerly on the common path (no pre-existing
-  // CLI store). When migration is needed, leave it unresolved — the
-  // renderer prompts the user, which drives migrationSubmitCliPassphrase /
-  // migrationStartFresh above. Calling getOrCreate() here unconditionally
-  // would otherwise happily fabricate a fresh random passphrase in front of
-  // an already-initialized store, which is exactly the wrong thing to do
-  // (see passphrase.ts's getOrCreate doc comment).
-  if (!computeMigrationStatus().needed) {
-    getPassphraseCustody().getOrCreate()
-  }
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    focusOrCreateWindow()
+  })
 
-  createWindow()
+  app.whenReady().then(async () => {
+    ensureConfigBootstrap()
 
-  // Auto-start the app's own supervised MCP server on launch — this is what
-  // the tray (D1.3) and the settings window's status panel reflect. Note
-  // this is a SEPARATE process from whatever Claude Desktop spawns via its
-  // own config (D1.4): MCP's stdio transport is a 1:1 parent/child pipe, so
-  // a single running server process can't be shared between two unrelated
-  // parents. If provider=plaid but credentials/passphrase aren't ready yet,
-  // start() reports 'crashed' with a clear lastError instead of throwing —
-  // surfaced in the status panel, not a startup crash.
-  void mcpManager.start()
+    // Resolve passphrase custody eagerly on the common path (no pre-existing
+    // CLI store). When migration is needed, leave it unresolved — the
+    // renderer prompts the user, which drives migrationSubmitCliPassphrase /
+    // migrationStartFresh above. Calling getOrCreate() here unconditionally
+    // would otherwise happily fabricate a fresh random passphrase in front of
+    // an already-initialized store, which is exactly the wrong thing to do
+    // (see passphrase.ts's getOrCreate doc comment).
+    if (!computeMigrationStatus().needed) {
+      getPassphraseCustody().getOrCreate()
+    }
 
-  // Pending-approvals can change from agent activity alone, independent of
-  // MCP process state — refresh periodically so the tray/status panel don't
-  // go stale between state-change-triggered pushes.
-  statusRefreshTimer = setInterval(() => {
+    createTray()
+    createWindow()
+
+    // Auto-start the app's own supervised MCP server on launch — this is what
+    // the tray and the settings window's status panel reflect. Note this is a
+    // SEPARATE process from whatever Claude Desktop spawns via its own config
+    // (D1.4): MCP's stdio transport is a 1:1 parent/child pipe, so a single
+    // running server process can't be shared between two unrelated parents.
+    // If provider=plaid but credentials/passphrase aren't ready yet, start()
+    // reports 'crashed' with a clear lastError instead of throwing —
+    // surfaced in the status panel/tray, not a startup crash.
+    void mcpManager.start()
+
+    // Paint the tray immediately with whatever status/approvals count is
+    // known right now, rather than leaving it blank until the first
+    // onStatusChange fires or the interval below first ticks.
     void broadcastStatus()
-  }, 15_000)
 
-  app.on('activate', () => {
-    if (mainWindow) {
-      mainWindow.show()
-    } else {
-      createWindow()
+    // Pending-approvals can change from agent activity alone, independent of
+    // MCP process state — refresh periodically so the tray/status panel don't
+    // go stale between state-change-triggered pushes. Interval: 15s.
+    statusRefreshTimer = setInterval(() => {
+      void broadcastStatus()
+    }, 15_000)
+
+    app.on('activate', () => {
+      if (mainWindow) {
+        mainWindow.show()
+      } else {
+        createWindow()
+      }
+    })
+  })
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit()
     }
   })
-})
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})
-
-let cleaningUp = false
-app.on('before-quit', async (event) => {
-  if (cleaningUp) return
-  cleaningUp = true
-  event.preventDefault()
-  if (statusRefreshTimer) clearInterval(statusRefreshTimer)
-  // Closes the MCP client + transport, which sends SIGTERM (then SIGKILL
-  // after a grace period) to the spawned server child — verified via `ps`
-  // in S0.4 to leave no orphaned process behind.
-  await mcpManager.stop()
-  app.exit(0)
-})
-
-// Electron does not wire OS termination signals to `app.quit()` on its own
-// (SIGTERM/SIGINT would otherwise kill the process abruptly, leaving the
-// spawned MCP server child orphaned). Route them through the same
-// before-quit cleanup path so `pkill`/process-manager stop and Ctrl-C in a
-// terminal both shut the app down cleanly.
-for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-  process.on(signal, () => {
-    app.quit()
+  let cleaningUp = false
+  app.on('before-quit', async (event) => {
+    if (cleaningUp) return
+    cleaningUp = true
+    event.preventDefault()
+    if (statusRefreshTimer) clearInterval(statusRefreshTimer)
+    // Closes the MCP client + transport, which sends SIGTERM (then SIGKILL
+    // after a grace period) to the spawned server child — verified via `ps`
+    // in S0.4 to leave no orphaned process behind.
+    await mcpManager.stop()
+    app.exit(0)
   })
+
+  // Electron does not wire OS termination signals to `app.quit()` on its own
+  // (SIGTERM/SIGINT would otherwise kill the process abruptly, leaving the
+  // spawned MCP server child orphaned). Route them through the same
+  // before-quit cleanup path so `pkill`/process-manager stop and Ctrl-C in a
+  // terminal both shut the app down cleanly.
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => {
+      app.quit()
+    })
+  }
 }

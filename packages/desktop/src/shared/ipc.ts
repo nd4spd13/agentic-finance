@@ -17,8 +17,8 @@
  * back; see `plaid-secrets.ts` / `passphrase.ts`.
  *
  * This file grows with each D1 sub-task (D1.1 config/migration/Plaid
- * credentials below; D1.2 adds MCP lifecycle; D1.4 adds Claude Desktop
- * connect) — extended in place, never bypassed.
+ * credentials below; D1.2 adds MCP lifecycle; D1.3 adds the `closeToTray`
+ * setting) — extended in place, never bypassed.
  *
  * Note on layering: this file must stay importable from the renderer/
  * preload build (`tsconfig.web.json`'s `include` is renderer + shared only —
@@ -44,11 +44,17 @@ export interface DisplayConfig {
   plaidEnv: PlaidEnvName
   /** Whether Plaid credentials are currently sealed in safeStorage — never their value. */
   hasPlaidCredentials: boolean
+  /** D1.3: whether closing the main window hides it (tray stays alive) instead of quitting. */
+  closeToTray: boolean
 }
 
 export interface SetProviderAndEnvInput {
   provider: CladProvider
   plaidEnv: PlaidEnvName
+}
+
+export interface SetCloseToTrayInput {
+  closeToTray: boolean
 }
 
 export interface SetPlaidCredentialsInput {
@@ -100,6 +106,7 @@ export interface McpServerStatus {
 export const IPC_CHANNELS = {
   configGet: 'config:get',
   configSetProviderAndEnv: 'config:setProviderAndEnv',
+  configSetCloseToTray: 'config:setCloseToTray',
   plaidCredentialsHas: 'plaid:credentialsHas',
   plaidCredentialsSet: 'plaid:credentialsSet',
   plaidCredentialsClear: 'plaid:credentialsClear',
@@ -118,6 +125,7 @@ export const IPC_CHANNELS = {
 export interface CladBridge {
   getConfig(): Promise<DisplayConfig>
   setProviderAndEnv(input: SetProviderAndEnvInput): Promise<OperationResult>
+  setCloseToTray(input: SetCloseToTrayInput): Promise<OperationResult>
   hasPlaidCredentials(): Promise<boolean>
   setPlaidCredentials(input: SetPlaidCredentialsInput): Promise<OperationResult>
   clearPlaidCredentials(): Promise<OperationResult>

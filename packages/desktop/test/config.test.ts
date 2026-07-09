@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { parsePolicy } from '@clad/core'
 import {
   defaultConfig,
   loadConfig,
@@ -99,6 +100,23 @@ describe('config', () => {
       const cfg = ensureConfigBootstrap()
       const policyText = readFileSync(cfg.policy_path, 'utf-8')
       expect(policyText).toContain('default-agent:')
+    })
+
+    /**
+     * Regression test for a real bug caught during D1.3 manual QA: the
+     * starter policy predated `@clad/core`'s current `policy.schema.json`
+     * (which requires `description` + a `permissions` wrapper per agent).
+     * `parsePolicy` validates strictly, so the old flat shape made
+     * `@clad/mcp-server` throw and exit(1) on every single launch — both
+     * this app's own supervised server AND (D1.4) Claude Desktop's spawned
+     * server, since both point at this same file. This test would have
+     * caught it: a substring check for "default-agent:" (above) is not
+     * enough, since the invalid old policy also contained that substring.
+     */
+    it('the starter policy passes @clad/core\'s real parsePolicy validation (not just a substring check)', async () => {
+      const cfg = ensureConfigBootstrap()
+      const policy = await parsePolicy(cfg.policy_path)
+      expect(policy.agents['default-agent']).toBeDefined()
     })
 
     it('is a no-op against an existing config.json (never overwrites it)', () => {

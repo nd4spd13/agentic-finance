@@ -10,6 +10,7 @@ import {
   IPC_CHANNELS,
   type CladBridge,
   type SetProviderAndEnvInput,
+  type SetCloseToTrayInput,
   type SetPlaidCredentialsInput,
   type McpServerStatus,
 } from '../shared/ipc.js'
@@ -18,6 +19,8 @@ const cladBridge: CladBridge = {
   getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.configGet),
   setProviderAndEnv: (input: SetProviderAndEnvInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.configSetProviderAndEnv, input),
+  setCloseToTray: (input: SetCloseToTrayInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.configSetCloseToTray, input),
   hasPlaidCredentials: () => ipcRenderer.invoke(IPC_CHANNELS.plaidCredentialsHas),
   setPlaidCredentials: (input: SetPlaidCredentialsInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.plaidCredentialsSet, input),

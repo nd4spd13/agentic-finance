@@ -20,6 +20,9 @@ export default function SettingsForm({
   const [savingProvider, setSavingProvider] = useState(false)
   const [providerMessage, setProviderMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
+  const [closeToTray, setCloseToTray] = useState(config.closeToTray)
+  const [closeToTrayMessage, setCloseToTrayMessage] = useState<{ ok: boolean; text: string } | null>(null)
+
   const [clientId, setClientId] = useState('')
   const [secret, setSecret] = useState('')
   const [savingCreds, setSavingCreds] = useState(false)
@@ -38,6 +41,25 @@ export default function SettingsForm({
       }
     } finally {
       setSavingProvider(false)
+    }
+  }
+
+  /**
+   * Applies immediately (no separate Save button) — a checkbox toggle is a
+   * cheap, instantly-reversible setting, unlike provider/Plaid changes which
+   * take an explicit confirming action. Reverts the checkbox on failure
+   * (e.g. disk write error) rather than leaving the UI showing a state that
+   * was never actually persisted.
+   */
+  async function handleToggleCloseToTray(checked: boolean): Promise<void> {
+    setCloseToTray(checked)
+    setCloseToTrayMessage(null)
+    const result = await window.clad.setCloseToTray({ closeToTray: checked })
+    if (result.ok) {
+      onConfigChange({ ...config, closeToTray: checked })
+    } else {
+      setCloseToTray(!checked)
+      setCloseToTrayMessage({ ok: false, text: result.error ?? 'Failed to save.' })
     }
   }
 
@@ -101,6 +123,21 @@ export default function SettingsForm({
             <strong>Plaid token store:</strong> {config.plaidDbPath}
           </div>
         </dl>
+      </div>
+
+      <div style={s.card}>
+        <h2 style={{ marginTop: 0 }}>Window behavior</h2>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 400, fontSize: 14 }}>
+          <input
+            type="checkbox"
+            checked={closeToTray}
+            onChange={(e) => handleToggleCloseToTray(e.target.checked)}
+          />
+          Keep Clad running in the menu bar when the window is closed
+        </label>
+        {closeToTrayMessage && (
+          <p style={closeToTrayMessage.ok ? s.successText : s.errorText}>{closeToTrayMessage.text}</p>
+        )}
       </div>
 
       <div style={s.card}>

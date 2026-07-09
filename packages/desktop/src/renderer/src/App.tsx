@@ -12,11 +12,13 @@ type LoadState =
   | { phase: 'ready'; config: DisplayConfig }
 
 /**
- * D1 shell: settings screen (paths, provider/Plaid env, Plaid credentials)
- * plus the one-time CLI-migration prompt when applicable. Server status
- * (D1.2) and the Connect-to-Claude-Desktop action (D1.4) are added to this
- * screen in later commits — the full product UI (approvals inbox,
- * dashboard, policy editor) is Phase D2, out of scope here.
+ * D1 shell: settings screen (paths, provider/Plaid env, Plaid credentials,
+ * close-to-tray) plus the one-time CLI-migration prompt when applicable and
+ * MCP server status/controls (D1.2). Tray/menu-bar presence (D1.3) lives
+ * entirely in the main process (`src/main/index.ts`) — nothing to render
+ * here. The Connect-to-Claude-Desktop action (D1.4) and the full product UI
+ * (approvals inbox, dashboard, policy editor, Phase D2) are out of scope
+ * here.
  */
 export default function App(): JSX.Element {
   const [state, setState] = useState<LoadState>({ phase: 'loading' })
