@@ -13,6 +13,22 @@ export interface Account {
   name: string
   type: 'checking' | 'savings' | 'credit' | 'loan' | 'investment'
   subtype?: string
+  /**
+   * The human-readable name of the financial institution this account is
+   * held at (e.g. "Chase", "Bank A Financial"), when a provider can resolve
+   * one. Added in SF5 for the SimpleFIN adapter: a single SimpleFIN item can
+   * span multiple institutions (one access URL, several `connections[]`
+   * entries), so institution identity has to live per-account rather than
+   * per-item the way Plaid's does. Deliberately distinct from `subtype`
+   * (a refinement of `type`, e.g. Plaid's "money market"/"hsa") — the two
+   * are different concepts and must not be conflated. Plaid leaves this
+   * unset: for Plaid, one item is always exactly one institution, and that
+   * name is already available per-item via `TokenStore`'s
+   * `StoredItemMeta.institutionName` and at connect time via
+   * `LinkFlowResult.institutionName`, so populating it again per-account
+   * would be redundant.
+   */
+  institution?: string
   mask?: string
   balance_current: number
   balance_available?: number

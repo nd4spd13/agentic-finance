@@ -1,0 +1,48 @@
+{
+  "errlist": [],
+  "accounts": [
+    {
+      "id": "fixture-acct-savings",
+      "name": "SimpleFIN Savings",
+      "currency": "USD",
+      "balance": "114405.51",
+      "available-balance": "114405.51",
+      "balance-date": 1783555200,
+      "transactions": [],
+      "holdings": [],
+      "conn_id": "fixture-conn-demo"
+    },
+    {
+      "id": "fixture-acct-checking",
+      "name": "SimpleFIN Checking",
+      "currency": "USD",
+      "balance": "24668.87",
+      "available-balance": "24668.87",
+      "balance-date": 1783555200,
+      "transactions": [],
+      "holdings": [],
+      "conn_id": "fixture-conn-demo"
+    },
+    {
+      "id": "fixture-acct-empty",
+      "name": "SimpleFIN Empty Account",
+      "currency": "USD",
+      "balance": "0.00",
+      "available-balance": "0.00",
+      "balance-date": 1783555200,
+      "transactions": [],
+      "holdings": [],
+      "conn_id": "fixture-conn-demo"
+    }
+  ],
+  "connections": [
+    {
+      "conn_id": "fixture-conn-demo",
+      "name": "SimpleFIN Demo",
+      "org_id": "fixture-org-demo",
+      "org_name": "SimpleFIN Bridge",
+      "org_url": "https://beta-bridge.simplefin.org",
+      "sfin_url": "https://beta-bridge.simplefin.org/simplefin"
+    }
+  ]
+}

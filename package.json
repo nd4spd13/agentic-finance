@@ -13,7 +13,7 @@
     "format": "prettier --write packages"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"],
+    "onlyBuiltDependencies": ["esbuild", "electron", "electron-winstaller"],
     "overrides": {
       "hono@<4.12.25": ">=4.12.25",
       "@hono/node-server@<1.19.13": ">=1.19.13",

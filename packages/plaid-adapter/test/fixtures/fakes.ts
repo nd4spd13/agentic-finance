@@ -6,7 +6,7 @@ import type {
   TransactionsSyncResponse,
 } from 'plaid'
 import type { PlaidClientLike } from '../../src/plaid-client.types.js'
-import type { StoredItemInput, StoredItemMeta, TokenStore } from '../../src/token-store.types.js'
+import type { StoredItemInput, StoredItemMeta, TokenStore } from '@clad/core'
 
 function toAxiosResponse<T>(data: T): AxiosResponse<T> {
   return {

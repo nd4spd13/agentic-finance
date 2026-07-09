@@ -3,8 +3,8 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { loadConfig } from '../config.js'
-import { AuditLogger, ApprovalQueue, parsePolicy } from '@clad/core'
+import { loadConfig, type CladConfig } from '../config.js'
+import { AuditLogger, ApprovalQueue, SqliteTokenStore, parsePolicy } from '@clad/core'
 
 function isRunning(pid: number): boolean {
   try {
@@ -89,5 +89,59 @@ export async function statusCommand(): Promise<void> {
     console.log(`Audit log: (not initialized)`)
   }
 
+  // Connections (linked provider items)
   console.log('')
+  printConnections(config)
+
+  console.log('')
+}
+
+/**
+ * Lists linked items per provider token store (Plaid / SimpleFIN), if any DB
+ * file exists. `SqliteTokenStore.listItems()` returns metadata only — never
+ * token/access-URL material — so this is safe to print in full. Opening a
+ * store still requires the passphrase that encrypts it (constructor-enforced
+ * by `SqliteTokenStore`), so without `CLAD_TOKEN_PASSPHRASE` set this only
+ * reports that a store exists, not its contents.
+ */
+function printConnections(config: CladConfig): void {
+  const stores: Array<{ label: string; dbPath: string }> = [
+    { label: 'plaid', dbPath: config.plaid_db },
+    { label: 'simplefin', dbPath: config.simplefin_db },
+  ]
+  const existing = stores.filter((s) => existsSync(s.dbPath))
+
+  if (existing.length === 0) {
+    console.log('Connections: none linked yet — run `clad connect`')
+    return
+  }
+
+  const passphrase = process.env.CLAD_TOKEN_PASSPHRASE
+  console.log('Connections:')
+  for (const { label, dbPath } of existing) {
+    if (!passphrase) {
+      console.log(`  ${label}: linked (set CLAD_TOKEN_PASSPHRASE to view details)`)
+      continue
+    }
+    let store: SqliteTokenStore
+    try {
+      store = new SqliteTokenStore({ dbPath, passphrase })
+    } catch (err) {
+      console.log(`  ${label}: (could not open token store: ${err instanceof Error ? err.message : String(err)})`)
+      continue
+    }
+    try {
+      const items = store.listItems()
+      if (items.length === 0) {
+        console.log(`  ${label}: no items`)
+      } else {
+        console.log(`  ${label}: ${items.length} item${items.length !== 1 ? 's' : ''}`)
+        for (const item of items) {
+          console.log(`    - ${item.itemId} (${item.institutionName}) — linked ${item.createdAt}`)
+        }
+      }
+    } finally {
+      store.close()
+    }
+  }
 }
