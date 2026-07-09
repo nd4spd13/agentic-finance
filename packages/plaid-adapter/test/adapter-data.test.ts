@@ -2,9 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ProviderAuthError, ProviderUnavailableError } from '@clad/core'
+import { ProviderAuthError, ProviderUnavailableError, type TokenStore } from '@clad/core'
 import { PlaidAdapter } from '../src/adapter.js'
-import type { TokenStore } from '../src/token-store.types.js'
 import {
   checkingAccount,
   creditAccount,

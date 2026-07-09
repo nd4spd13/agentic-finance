@@ -1,0 +1,27 @@
+{
+  "_provenance": "SYNTHETIC (hand-written for SF4, not captured from a live Bridge response). The plan's protocol reference documents `currency` as either an ISO 4217 code or a custom-currency URL, but every SF1 capture only ever returned \"USD\" — this fixture covers the URL case, which was never observed live.",
+  "errlist": [],
+  "accounts": [
+    {
+      "id": "fixture-acct-custom-currency",
+      "name": "SimpleFIN Custom Currency",
+      "currency": "https://simplefin.org/currencies/fixture-custom-token",
+      "balance": "250.00",
+      "available-balance": "250.00",
+      "balance-date": 1783555200,
+      "transactions": [],
+      "holdings": [],
+      "conn_id": "fixture-conn-demo"
+    }
+  ],
+  "connections": [
+    {
+      "conn_id": "fixture-conn-demo",
+      "name": "SimpleFIN Demo",
+      "org_id": "fixture-org-demo",
+      "org_name": "SimpleFIN Bridge",
+      "org_url": "https://beta-bridge.simplefin.org",
+      "sfin_url": "https://beta-bridge.simplefin.org/simplefin"
+    }
+  ]
+}

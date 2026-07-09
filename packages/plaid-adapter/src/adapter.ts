@@ -6,14 +6,15 @@ import {
   type Balance,
   type FinancialDataProvider,
   type RecurringCharge,
+  type StoredItemMeta,
   type Transaction,
+  type TokenStore,
   type TransactionQueryOpts,
 } from '@clad/core'
 import { PlaidCache } from './cache.js'
 import { mapAccount, mapRecurringCharge, mapTransaction } from './mapping.js'
 import { getPlaidErrorCode, isItemLoginRequired, isTransactionsSyncMutationDuringPagination } from './plaid-error.js'
 import type { PlaidClientLike } from './plaid-client.types.js'
-import type { StoredItemMeta, TokenStore } from './token-store.types.js'
 
 export interface PlaidAdapterOptions {
   client: PlaidClientLike

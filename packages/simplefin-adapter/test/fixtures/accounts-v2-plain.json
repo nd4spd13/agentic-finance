@@ -1,0 +1,145 @@
+{
+  "errlist": [],
+  "accounts": [
+    {
+      "id": "fixture-acct-savings",
+      "name": "SimpleFIN Savings",
+      "currency": "USD",
+      "balance": "114405.51",
+      "available-balance": "114405.51",
+      "balance-date": 1783555200,
+      "transactions": [
+        {
+          "id": "1783497600",
+          "posted": 1783497600,
+          "amount": "-40.00",
+          "description": "Fishing bait",
+          "payee": "John's Fishin Shack",
+          "memo": "JOHNS FISHIN SHACK BAIT",
+          "transacted_at": 1783497600,
+          "mcc": "5812"
+        },
+        {
+          "id": "1783526400",
+          "posted": 1783526400,
+          "amount": "-100.00",
+          "description": "Grocery store",
+          "payee": "Grocery store",
+          "memo": "LOCAL GROCER STORE #1133",
+          "transacted_at": 1783526400,
+          "mcc": "5411"
+        },
+        {
+          "id": "1783584000",
+          "posted": 1783584000,
+          "amount": "-45.50",
+          "description": "Fishing bait",
+          "payee": "John's Fishin Shack",
+          "memo": "JOHNS FISHIN SHACK BAIT",
+          "transacted_at": 1783584000,
+          "mcc": "5812"
+        },
+        {
+          "id": "1783612800",
+          "posted": 1783612800,
+          "amount": "-95.50",
+          "description": "Grocery store",
+          "payee": "Grocery store",
+          "memo": "LOCAL GROCER STORE #1133",
+          "transacted_at": 1783612800,
+          "mcc": "5411"
+        }
+      ],
+      "holdings": [
+        {
+          "id": "fixture-holding-aapl",
+          "created": 345427200,
+          "cost_basis": "55.00",
+          "currency": "USD",
+          "description": "Shares of Apple",
+          "market_value": "105884.8",
+          "purchase_price": "0.10",
+          "shares": "550.0",
+          "symbol": "AAPL"
+        }
+      ],
+      "conn_id": "fixture-conn-demo"
+    },
+    {
+      "id": "fixture-acct-checking",
+      "name": "SimpleFIN Checking",
+      "currency": "USD",
+      "balance": "24668.87",
+      "available-balance": "24668.87",
+      "balance-date": 1783555200,
+      "transactions": [
+        {
+          "id": "1783497600",
+          "posted": 1783497600,
+          "amount": "-52.23",
+          "description": "Fishing bait",
+          "payee": "John's Fishin Shack",
+          "memo": "JOHNS FISHIN SHACK BAIT",
+          "transacted_at": 1783497600,
+          "mcc": "5812"
+        },
+        {
+          "id": "1783526400",
+          "posted": 1783526400,
+          "amount": "-130.09",
+          "description": "Grocery store",
+          "payee": "Grocery store",
+          "memo": "LOCAL GROCER STORE #1133",
+          "transacted_at": 1783526400,
+          "mcc": "5411"
+        },
+        {
+          "id": "1783584000",
+          "posted": 1783584000,
+          "amount": "-58.89",
+          "description": "Fishing bait",
+          "payee": "John's Fishin Shack",
+          "memo": "JOHNS FISHIN SHACK BAIT",
+          "transacted_at": 1783584000,
+          "mcc": "5812"
+        },
+        {
+          "id": "1783612800",
+          "posted": 1783612800,
+          "amount": "-124.43",
+          "description": "Grocery store",
+          "payee": "Grocery store",
+          "memo": "LOCAL GROCER STORE #1133",
+          "transacted_at": 1783612800,
+          "mcc": "5411"
+        }
+      ],
+      "holdings": [],
+      "conn_id": "fixture-conn-demo"
+    },
+    {
+      "id": "fixture-acct-empty",
+      "name": "SimpleFIN Empty Account",
+      "currency": "USD",
+      "balance": "0.00",
+      "available-balance": "0.00",
+      "balance-date": 1783555200,
+      "transactions": [],
+      "holdings": [],
+      "conn_id": "fixture-conn-demo"
+    }
+  ],
+  "connections": [
+    {
+      "conn_id": "fixture-conn-demo",
+      "name": "SimpleFIN Demo",
+      "org_id": "fixture-org-demo",
+      "org_name": "SimpleFIN Bridge",
+      "org_url": "https://beta-bridge.simplefin.org",
+      "sfin_url": "https://beta-bridge.simplefin.org/simplefin"
+    }
+  ],
+  "x-api-message": [
+    "Provide a 'start-date' parameter to receive transactions prior to yesterday"
+  ]
+}

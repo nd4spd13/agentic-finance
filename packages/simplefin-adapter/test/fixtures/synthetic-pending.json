@@ -1,0 +1,48 @@
+{
+  "_provenance": "SYNTHETIC (hand-written for SF4, not captured from a live Bridge response). SF1 requested pending=1 over a 35-day window and saw 0 pending transactions across 136 real transactions (all captured transactions are negative-amount outflows) - so neither the pending:true shape nor a positive-amount (inflow) transaction has ever been observed live. This fixture hand-builds both per the plan's documented (but unconfirmed) protocol shape.",
+  "errlist": [],
+  "accounts": [
+    {
+      "id": "fixture-acct-pending-demo",
+      "name": "SimpleFIN Pending Demo",
+      "currency": "USD",
+      "balance": "1000.00",
+      "available-balance": "850.00",
+      "balance-date": 1783555200,
+      "transactions": [
+        {
+          "id": "1783600000",
+          "posted": 1783600000,
+          "amount": "-150.00",
+          "description": "Card authorization hold",
+          "payee": "Corner Cafe",
+          "memo": "PENDING AUTH",
+          "transacted_at": 1783600000,
+          "pending": true
+        },
+        {
+          "id": "1783601000",
+          "posted": 1783601000,
+          "amount": "1500.00",
+          "description": "Payroll direct deposit",
+          "payee": "Acme Corp Payroll",
+          "memo": "DIRECT DEP ACME CORP",
+          "transacted_at": 1783601000,
+          "pending": false
+        }
+      ],
+      "holdings": [],
+      "conn_id": "fixture-conn-demo"
+    }
+  ],
+  "connections": [
+    {
+      "conn_id": "fixture-conn-demo",
+      "name": "SimpleFIN Demo",
+      "org_id": "fixture-org-demo",
+      "org_name": "SimpleFIN Bridge",
+      "org_url": "https://beta-bridge.simplefin.org",
+      "sfin_url": "https://beta-bridge.simplefin.org/simplefin"
+    }
+  ]
+}

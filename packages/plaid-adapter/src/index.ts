@@ -3,12 +3,18 @@ export type { PlaidAdapterOptions } from './adapter.js'
 export type { PlaidClientLike } from './plaid-client.types.js'
 export { createPlaidClient } from './plaid-client.js'
 export type { CreatePlaidClientOptions } from './plaid-client.js'
-export type { TokenStore, StoredItemMeta, StoredItemInput } from './token-store.types.js'
-export { deriveKey, encrypt, decrypt } from './crypto.js'
-export type { EncryptedPayload } from './crypto.js'
-export { SqliteTokenStore } from './token-store.js'
-export type { SqliteTokenStoreOptions } from './token-store.js'
-export { TokenStoreKeyError, LinkFlowError } from './errors.js'
+// Token storage (SqliteTokenStore and friends) moved to `@clad/core` in SF5 —
+// it was already provider-agnostic, and `@clad/simplefin-adapter` needed the
+// same encrypted-at-rest storage. Re-exported here so existing imports of
+// these names from `@clad/plaid-adapter` (e.g. `clad connect`,
+// `provider-factory.ts`) keep working unchanged.
+export type { TokenStore, StoredItemMeta, StoredItemInput } from '@clad/core'
+export { deriveKey, encrypt, decrypt } from '@clad/core'
+export type { EncryptedPayload } from '@clad/core'
+export { SqliteTokenStore } from '@clad/core'
+export type { SqliteTokenStoreOptions } from '@clad/core'
+export { TokenStoreKeyError } from '@clad/core'
+export { LinkFlowError } from './errors.js'
 export {
   createLinkToken,
   runLinkFlow,

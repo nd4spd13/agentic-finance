@@ -45,6 +45,9 @@ importers:
       '@clad/plaid-adapter':
         specifier: workspace:*
         version: link:../plaid-adapter
+      '@clad/simplefin-adapter':
+        specifier: workspace:*
+        version: link:../simplefin-adapter
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -107,6 +110,9 @@ importers:
       '@clad/plaid-adapter':
         specifier: workspace:*
         version: link:../plaid-adapter
+      '@clad/simplefin-adapter':
+        specifier: workspace:*
+        version: link:../simplefin-adapter
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@4.3.6)
@@ -129,6 +135,19 @@ importers:
       plaid:
         specifier: ^43.0.0
         version: 43.0.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.7(@types/node@22.19.15)(lightningcss@1.32.0)(yaml@2.8.3)
+
+  packages/simplefin-adapter:
+    dependencies:
+      '@clad/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
