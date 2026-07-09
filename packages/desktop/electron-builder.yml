@@ -1,0 +1,20 @@
+appId: com.clad.desktop
+productName: Clad
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - resources/**/*
+  - package.json
+  - '!**/*.map'
+asarUnpack:
+  - '**/*.node'
+mac:
+  target:
+    - target: dir
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.finance
+npmRebuild: false

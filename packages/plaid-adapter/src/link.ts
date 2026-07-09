@@ -29,12 +29,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { redactSecrets } from '@clad/core'
+import { redactSecrets, type TokenStore } from '@clad/core'
 import { CountryCode, Products } from 'plaid'
 import { LinkFlowError } from './errors.js'
 import { getPlaidErrorCode } from './plaid-error.js'
 import type { PlaidClientLike } from './plaid-client.types.js'
-import type { TokenStore } from './token-store.types.js'
 
 /** Default Plaid sandbox institution ("First Platypus Bank"). */
 const DEFAULT_SANDBOX_INSTITUTION_ID = 'ins_109508'

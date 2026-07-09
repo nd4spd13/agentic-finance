@@ -12,8 +12,9 @@ export interface CladConfig {
   audit_db: string
   approval_db: string
   server_pid_file: string
-  provider: 'dummy' | 'plaid'
+  provider: 'dummy' | 'plaid' | 'simplefin'
   plaid_db: string
+  simplefin_db: string
 }
 
 export function getConfigDir(): string {
@@ -33,6 +34,7 @@ export function defaultConfig(): CladConfig {
     server_pid_file: join(dir, 'server.pid'),
     provider: 'dummy',
     plaid_db: join(dir, 'plaid.sqlite'),
+    simplefin_db: join(dir, 'simplefin.sqlite'),
   }
 }
 
@@ -57,10 +59,16 @@ export function loadConfig(): CladConfig {
     server_pid_file: parsed.server_pid_file
       ? resolve(parsed.server_pid_file.replace('~', homedir()))
       : defaults.server_pid_file,
-    provider: parsed.provider === 'plaid' ? 'plaid' : defaults.provider,
+    provider:
+      parsed.provider === 'plaid' || parsed.provider === 'simplefin'
+        ? parsed.provider
+        : defaults.provider,
     plaid_db: parsed.plaid_db
       ? resolve(parsed.plaid_db.replace('~', homedir()))
       : defaults.plaid_db,
+    simplefin_db: parsed.simplefin_db
+      ? resolve(parsed.simplefin_db.replace('~', homedir()))
+      : defaults.simplefin_db,
   }
 }
 
