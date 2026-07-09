@@ -8,12 +8,23 @@ import Dashboard from './components/Dashboard.js'
 import PolicyEditor from './components/PolicyEditor.js'
 import ApprovalsInbox from './components/ApprovalsInbox.js'
 import AuditLogViewer from './components/AuditLogViewer.js'
+import ConnectView from './components/ConnectView.js'
 import * as s from './styles.js'
 
-// D2 nav: a minimal tab switcher for the "ready" phase below. Kept
+// D2/D3 nav: a minimal tab switcher for the "ready" phase below. Kept
 // intentionally tiny (a union + one useState) — 'settings' is the original
-// D1 shell content, unchanged; the other tabs are the D2 product surfaces.
-type Tab = 'dashboard' | 'approvals' | 'audit' | 'policy' | 'settings'
+// D1 shell content, unchanged; the other tabs are the D2 product surfaces
+// plus D3.2's 'connect' tab.
+//
+// 'connect' is its own top-level tab rather than a Settings subsection:
+// connecting a bank is a first-class, occasional action with real
+// in-progress/success/error states of its own (the Plaid Link flow can take
+// minutes and supports cancel — see `ConnectView.tsx`), which reads poorly
+// squeezed in alongside Settings' instant-apply provider/environment
+// selects and its own already-dense credential form. It sits next to
+// Settings in the nav (after Policy) since it's setup-adjacent, not a daily
+// surface like Dashboard/Approvals.
+type Tab = 'dashboard' | 'approvals' | 'audit' | 'policy' | 'connect' | 'settings'
 
 type LoadState =
   | { phase: 'loading' }
@@ -111,6 +122,13 @@ export default function App(): JSX.Element {
             </button>
             <button
               type="button"
+              style={tab === 'connect' ? s.navButtonActive : s.navButton}
+              onClick={() => setTab('connect')}
+            >
+              Connect
+            </button>
+            <button
+              type="button"
               style={tab === 'settings' ? s.navButtonActive : s.navButton}
               onClick={() => setTab('settings')}
             >
@@ -122,6 +140,7 @@ export default function App(): JSX.Element {
           {tab === 'approvals' && <ApprovalsInbox focusApprovalId={focusApprovalId} />}
           {tab === 'audit' && <AuditLogViewer />}
           {tab === 'policy' && <PolicyEditor />}
+          {tab === 'connect' && <ConnectView />}
           {tab === 'settings' && (
             <>
               <ServerStatusPanel />

@@ -18,6 +18,8 @@ import {
   type ApprovalDecisionInput,
   type ApprovalFocusRequest,
   type AuditLogQueryInput,
+  type StartPlaidLinkInput,
+  type PlaidLinkFlowStatus,
 } from '../shared/ipc.js'
 
 const cladBridge: CladBridge = {
@@ -58,6 +60,16 @@ const cladBridge: CladBridge = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.approvalFocusRequested, listener)
   },
   queryAuditLog: (input: AuditLogQueryInput) => ipcRenderer.invoke(IPC_CHANNELS.auditLogQuery, input),
+  getConnectProvidersStatus: () => ipcRenderer.invoke(IPC_CHANNELS.connectGetProvidersStatus),
+  startPlaidLink: (input?: StartPlaidLinkInput) => ipcRenderer.invoke(IPC_CHANNELS.plaidLinkStart, input),
+  cancelPlaidLink: () => ipcRenderer.invoke(IPC_CHANNELS.plaidLinkCancel),
+  getPlaidLinkStatus: () => ipcRenderer.invoke(IPC_CHANNELS.plaidLinkGetStatus),
+  onPlaidLinkStatusChanged: (callback: (status: PlaidLinkFlowStatus) => void) => {
+    const listener = (_event: IpcRendererEvent, status: PlaidLinkFlowStatus): void => callback(status)
+    ipcRenderer.on(IPC_CHANNELS.plaidLinkStatusChanged, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.plaidLinkStatusChanged, listener)
+  },
+  connectSimpleFin: (setupToken: string) => ipcRenderer.invoke(IPC_CHANNELS.simplefinConnect, setupToken),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

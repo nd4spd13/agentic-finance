@@ -48,6 +48,19 @@ export interface CladConfig {
    * behavior. See the window `close` handler in `src/main/index.ts`.
    */
   close_to_tray: boolean
+  /**
+   * D3.2: where the SimpleFIN `SqliteTokenStore`/`SimpleFinCache` live —
+   * mirrors the CLI's `simplefin_db` field (`packages/cli/src/config.ts`) so
+   * a paste-a-token connection made in the desktop app is visible to a CLI
+   * pointed at the same `CLAD_CONFIG_DIR`, and vice versa. Unlike `plaid_env`
+   * above, this isn't a desktop-only addition — it's filling in a field the
+   * CLI's config has always had that this port simply hadn't needed until
+   * D3.2. `provider` deliberately stays `'dummy' | 'plaid'` here (unchanged)
+   * — D3.2 only wires the connect flow (claim + store), not routing the
+   * dashboard/MCP server through SimpleFIN as the active provider; that's
+   * `provider-factory.ts` follow-up work, out of scope for this task.
+   */
+  simplefin_db: string
 }
 
 export function getConfigDir(): string {
@@ -69,6 +82,7 @@ export function defaultConfig(): CladConfig {
     plaid_db: join(dir, 'plaid.sqlite'),
     plaid_env: 'sandbox',
     close_to_tray: true,
+    simplefin_db: join(dir, 'simplefin.sqlite'),
   }
 }
 
@@ -100,6 +114,9 @@ export function loadConfig(): CladConfig {
     plaid_env: parsed.plaid_env === 'production' ? 'production' : defaults.plaid_env,
     close_to_tray:
       typeof parsed.close_to_tray === 'boolean' ? parsed.close_to_tray : defaults.close_to_tray,
+    simplefin_db: parsed.simplefin_db
+      ? resolve(parsed.simplefin_db.replace('~', homedir()))
+      : defaults.simplefin_db,
   }
 }
 
