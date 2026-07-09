@@ -31,7 +31,13 @@ import { PassphraseCustody, verifyCliPassphrase } from './lib/passphrase.js'
 import { PlaidSecretsStore } from './lib/plaid-secrets.js'
 import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
 import { getPendingApprovalsCount } from './lib/approvals.js'
-import { trayTooltip, trayServerStatusMenuLabel, trayApprovalsMenuLabel } from './lib/tray-status.js'
+import {
+  trayTooltip,
+  trayServerStatusMenuLabel,
+  trayApprovalsMenuLabel,
+  trayIconVariantForStatus,
+  type TrayIconVariant,
+} from './lib/tray-status.js'
 import { shouldQuitOnAllWindowsClosed } from './lib/window-lifecycle.js'
 import { claudeDesktopConfigPath } from './lib/claude-desktop-path.js'
 import { resolveClaudeDesktopAgentId } from './lib/agent-resolution.js'
@@ -172,9 +178,37 @@ function computeMigrationStatus(): MigrationStatus {
  * this path exists there too. `nativeImage.createFromPath` is asar-
  * transparent, same principle S0.4 already established for spawning
  * mcp-server's script path from inside `app.asar`.
+ *
+ * Two variants (D1 manual QA finding 4 — see `tray-status.ts`'s
+ * `trayIconVariantForStatus` doc comment): `trayIconTemplate.png` is the
+ * normal monochrome menu-bar glyph (a macOS "template" image — the OS tints
+ * it automatically for light/dark menu bars); `trayIconAlert.png` is the
+ * same glyph with a small red badge baked in for the `crashed` state, shown
+ * as real color (NOT a template image — macOS template images are
+ * rendered monochrome from their alpha channel only, which would throw away
+ * the red). Each has an `@2x` sibling alongside it that
+ * `nativeImage.createFromPath` picks up automatically for Retina displays.
  */
-function trayIconPath(): string {
-  return join(__dirname, '../../resources/trayIconTemplate.png')
+function trayIconPath(variant: TrayIconVariant): string {
+  const filename = variant === 'alert' ? 'trayIconAlert.png' : 'trayIconTemplate.png'
+  return join(__dirname, '../../resources', filename)
+}
+
+/** Loaded once per variant and cached — the tray icon can change on every status push (every MCP state transition, every 15s approvals refresh), so this avoids re-reading + re-decoding the PNG from disk each time. */
+const trayIconCache = new Map<TrayIconVariant, ReturnType<typeof nativeImage.createFromPath>>()
+
+function getTrayIcon(variant: TrayIconVariant): ReturnType<typeof nativeImage.createFromPath> {
+  let icon = trayIconCache.get(variant)
+  if (!icon) {
+    icon = nativeImage.createFromPath(trayIconPath(variant))
+    // Electron auto-detects the "Template" filename suffix on macOS, but
+    // setting this explicitly documents the intent and doesn't depend on
+    // the asset never being renamed. The alert variant carries real color
+    // (a red badge) and must NOT be template-tinted away to monochrome.
+    icon.setTemplateImage(variant === 'default')
+    trayIconCache.set(variant, icon)
+  }
+  return icon
 }
 
 function focusOrCreateWindow(): void {
@@ -188,17 +222,25 @@ function focusOrCreateWindow(): void {
 }
 
 /**
- * Repaints the tray's tooltip + context menu from a fresh status. Called
- * from every place `latestMcpStatus` can change (the manager's
+ * Repaints the tray's icon + tooltip + context menu from a fresh status.
+ * Called from every place `latestMcpStatus` can change (the manager's
  * `onStatusChange` callback, via `broadcastStatus`) and from the periodic
  * pending-approvals refresh below — approvals can change from agent
  * activity alone, independent of any MCP process state transition, so
  * polling is what keeps the tray from going stale between them (interval:
  * 15s, shared with the settings window's own refresh — see
  * `app.whenReady()`).
+ *
+ * D1 manual QA finding 4: the context menu built below can't repaint while
+ * it's already open (macOS NSMenu limitation, accepted — the labels only
+ * refresh next time it's opened). The icon and tooltip set just above it
+ * have no such limitation, so they're what actually gives live feedback —
+ * e.g. the icon swapping to the alert variant the moment the server crashes,
+ * even if the user is mid-way through looking at the (now stale) menu.
  */
 function updateTray(status: McpServerStatus): void {
   if (!tray) return
+  tray.setImage(getTrayIcon(trayIconVariantForStatus(status)))
   tray.setToolTip(trayTooltip(status))
   const menu = Menu.buildFromTemplate([
     { label: trayServerStatusMenuLabel(status), enabled: false },
@@ -212,12 +254,7 @@ function updateTray(status: McpServerStatus): void {
 }
 
 function createTray(): void {
-  const icon = nativeImage.createFromPath(trayIconPath())
-  // Electron auto-detects the "Template" filename suffix on macOS, but
-  // setting this explicitly documents the intent and doesn't depend on the
-  // asset never being renamed. Harmless no-op on Windows/Linux.
-  icon.setTemplateImage(true)
-  tray = new Tray(icon)
+  tray = new Tray(getTrayIcon('default'))
 }
 
 function createWindow(): void {

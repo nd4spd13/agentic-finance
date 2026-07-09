@@ -45,3 +45,20 @@ export function trayServerStatusMenuLabel(status: McpServerStatus): string {
 export function trayApprovalsMenuLabel(status: McpServerStatus): string {
   return trayApprovalsLabel(status.pendingApprovals)
 }
+
+/**
+ * D1 manual QA finding 4: macOS's NSMenu can't repaint its contents while
+ * open (accepted platform limitation — the context menu's labels above only
+ * refresh the next time it's opened). The tray icon and tooltip don't have
+ * that limitation — both can change while the menu is closed or even open —
+ * so they're the one place a status change (most importantly: a crash)
+ * becomes visible without the user having to click the tray icon first.
+ * `'alert'` is reserved for `crashed` specifically: the one state where
+ * something has gone wrong and needs the user's attention, as opposed to the
+ * normal starting/stopping/stopped/running lifecycle.
+ */
+export type TrayIconVariant = 'default' | 'alert'
+
+export function trayIconVariantForStatus(status: McpServerStatus): TrayIconVariant {
+  return status.state === 'crashed' ? 'alert' : 'default'
+}
