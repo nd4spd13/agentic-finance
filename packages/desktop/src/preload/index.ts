@@ -13,6 +13,7 @@ import {
   type SetCloseToTrayInput,
   type SetPlaidCredentialsInput,
   type McpServerStatus,
+  type PolicyDoc,
   type ApprovalsListInput,
   type ApprovalDecisionInput,
   type ApprovalFocusRequest,
@@ -45,6 +46,10 @@ const cladBridge: CladBridge = {
   getClaudeDesktopConnectPreview: (agentId?: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.claudeDesktopGetPreview, agentId),
   connectClaudeDesktop: (agentId?: string) => ipcRenderer.invoke(IPC_CHANNELS.claudeDesktopConnect, agentId),
+  getDashboardSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.dashboardGetSnapshot),
+  refreshDashboard: () => ipcRenderer.invoke(IPC_CHANNELS.dashboardRefresh),
+  getPolicy: () => ipcRenderer.invoke(IPC_CHANNELS.policyGet),
+  setPolicy: (policy: PolicyDoc) => ipcRenderer.invoke(IPC_CHANNELS.policySet, policy),
   listApprovals: (input?: ApprovalsListInput) => ipcRenderer.invoke(IPC_CHANNELS.approvalsList, input),
   decideApproval: (input: ApprovalDecisionInput) => ipcRenderer.invoke(IPC_CHANNELS.approvalsDecide, input),
   onApprovalFocusRequested: (callback: (request: ApprovalFocusRequest) => void) => {

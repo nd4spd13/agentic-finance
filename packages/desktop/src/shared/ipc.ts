@@ -158,6 +158,182 @@ export interface ClaudeDesktopConnectPreview {
   agentFallbackReason?: string
 }
 
+// ---- Dashboard (D2.3) -------------------------------------------------------
+
+/**
+ * `'no-provider-configured'` — the `plaid` provider is selected but Plaid
+ * credentials and/or the token-store passphrase aren't fully resolved yet
+ * (`'dummy'` is always "configured" — zero setup, see `main/lib/provider-
+ * factory.ts`). `'ready'` — the last fetch (or the absence of one) is
+ * otherwise normal. `'error'` — the last `refreshDashboard()` attempt
+ * failed; `accounts`/`transactions` still reflect the last successful
+ * fetch, if any (shown honestly stale rather than hidden — desktop-app.md
+ * D2.3's framing: "Stale data shown honestly beats fresh data that burns
+ * quota").
+ */
+export type DashboardProviderState = 'no-provider-configured' | 'ready' | 'error'
+
+/** Display-safe account view. Never an account/routing number — the underlying `FinancialDataProvider` account shape doesn't carry those at all, regardless of policy. */
+export interface DashboardAccount {
+  id: string
+  name: string
+  type: 'checking' | 'savings' | 'credit' | 'loan' | 'investment'
+  /** Last few digits only, when the provider supplies one (e.g. Plaid's account mask). */
+  mask?: string
+  balanceCurrent: number
+  balanceAvailable?: number
+  currency: string
+  /** True when this reflects a degraded/cached read rather than a live one. */
+  stale?: boolean
+}
+
+export interface DashboardTransaction {
+  id: string
+  accountId: string
+  amount: number
+  date: string
+  description: string
+  merchantName?: string
+  category?: string[]
+  pending: boolean
+  stale?: boolean
+}
+
+/**
+ * The dashboard's entire renderer-facing state. `lastRefreshed` is the ISO
+ * timestamp of the last successful `refreshDashboard()` call THIS SESSION —
+ * `null` means nothing has been fetched since the app launched (in-memory
+ * cache only, by design; see `main/lib/dashboard-data.ts`'s module doc).
+ * `getDashboardSnapshot` NEVER triggers a fetch; only `refreshDashboard`
+ * does (rate-limit discipline, desktop-app.md D2.3 — never poll on an
+ * interval).
+ */
+export interface DashboardSnapshot {
+  state: DashboardProviderState
+  provider: CladProvider
+  accounts: DashboardAccount[]
+  transactions: DashboardTransaction[]
+  lastRefreshed: string | null
+  /** Display-safe (redacted where derived from a thrown provider error). */
+  error?: string
+}
+
+// ---- Policy editor (D2.4) ---------------------------------------------------
+//
+// Standalone mirror of `PolicyConfig`/`AgentPolicy`/... from `@clad/core`
+// (`packages/core/src/types/policy.types.ts`), not an import of it — same
+// reasoning as `DashboardAccount`/`DashboardTransaction` above: this file
+// must stay importable from the renderer/preload build without pulling in
+// `@clad/core` (ESM-only, and irrelevant to the wire contract itself). Keep
+// these field-for-field in sync with `policy.types.ts` if that schema ever
+// changes; `main/lib/policy-data.ts` relies on the two being structurally
+// identical so `parsePolicy`'s real return value satisfies this shape with
+// no manual mapping step (unlike the dashboard, which does map).
+
+export interface PolicyAccountPermissions {
+  visible: string[]
+  balance?: boolean
+  account_number?: boolean
+  routing_number?: boolean
+}
+
+export interface PolicyTransactionPermissions {
+  read: boolean
+  amount_visibility_cap?: number
+  description_visibility?: boolean
+  lookback_days?: number
+}
+
+export interface PolicyMerchantFilter {
+  allow?: string[]
+  block?: string[]
+}
+
+export interface PolicyCategoryFilter {
+  allow?: string[]
+  block?: string[]
+}
+
+export interface PolicySpendingPermissions {
+  max_per_transaction?: number
+  max_daily?: number
+  max_weekly?: number
+  max_monthly?: number
+  merchants?: PolicyMerchantFilter
+  categories?: PolicyCategoryFilter
+  require_itemization?: boolean
+}
+
+export type PolicyEscalationTrigger =
+  | { amount_exceeds: number }
+  | { new_merchant: boolean }
+  | { new_category: boolean }
+  | { category: string[] }
+  | { merchant: string[] }
+  | { daily_spend_exceeds_pct: number }
+
+export interface PolicyEscalationConfig {
+  triggers: PolicyEscalationTrigger[]
+  channel: 'cli' | 'webhook'
+  timeout: string
+  default_on_timeout: 'deny' | 'allow'
+}
+
+export interface PolicyScheduleConfig {
+  active_hours?: string
+  active_days?: string[]
+  timezone?: string
+  blackout_dates?: string[]
+  behavior_outside_schedule?: 'deny' | 'escalate'
+}
+
+export interface PolicyAuditConfig {
+  log_all_queries?: boolean
+  log_policy_evaluations?: boolean
+  retention?: string
+}
+
+export interface PolicyAgentPermissions {
+  accounts?: PolicyAccountPermissions
+  transactions?: PolicyTransactionPermissions
+  spending?: PolicySpendingPermissions
+  escalation?: PolicyEscalationConfig
+  schedule?: PolicyScheduleConfig
+  audit?: PolicyAuditConfig
+}
+
+export interface PolicyAgent {
+  description: string
+  permissions: PolicyAgentPermissions
+}
+
+export interface PolicyGlobalRules {
+  max_total_daily_spend?: number
+  max_total_weekly_spend?: number
+  max_total_monthly_spend?: number
+  max_concurrent_agents?: number
+  max_pending_escalations?: number
+  global_blocked_categories?: string[]
+  global_blocked_merchants?: string[]
+}
+
+export interface PolicyDoc {
+  agents: Record<string, PolicyAgent>
+  global?: PolicyGlobalRules
+}
+
+/**
+ * `getPolicy()`'s result. `ok: true` includes both the schema-validated
+ * `policy` object (what the editor mutates) and the `raw` YAML text as
+ * currently on disk (empty string if the policy file doesn't exist yet).
+ * `ok: false` means the file on disk right now fails to parse/validate —
+ * still surfaced (not thrown) so the editor can show the error and let the
+ * user start fresh rather than being stuck on a blank screen.
+ */
+export type PolicyGetResult =
+  | { ok: true; policy: PolicyDoc; raw: string }
+  | { ok: false; error: string }
+
 // ---- Approvals inbox (D2.1) -------------------------------------------------
 
 /** Standalone copy of `@clad/core`'s `ApprovalStatus` union — same layering rule as `McpServerState` above (this file must stay importable from the renderer/preload build, so it never imports from `@clad/core` or `src/main/**`). */
@@ -255,6 +431,12 @@ export const IPC_CHANNELS = {
   mcpStatusChanged: 'mcp:statusChanged',
   claudeDesktopGetPreview: 'claudeDesktop:getPreview',
   claudeDesktopConnect: 'claudeDesktop:connect',
+  // D2.3
+  dashboardGetSnapshot: 'dashboard:getSnapshot',
+  dashboardRefresh: 'dashboard:refresh',
+  // D2.4
+  policyGet: 'policy:get',
+  policySet: 'policy:set',
   approvalsList: 'approvals:list',
   approvalsDecide: 'approvals:decide',
   /** Push-only, main -> renderer. See `onApprovalFocusRequested` below. */
@@ -288,6 +470,14 @@ export interface CladBridge {
   getClaudeDesktopConnectPreview(agentId?: string): Promise<ClaudeDesktopConnectPreview>
   /** `agentId` should be whatever the last preview resolved to (`resolvedAgentId`, or the user's picked one) — see `ClaudeDesktopConnectPreview`'s doc comment. */
   connectClaudeDesktop(agentId?: string): Promise<OperationResult>
+  /** Pure cache read — never triggers a fetch. See `DashboardSnapshot`'s doc comment. */
+  getDashboardSnapshot(): Promise<DashboardSnapshot>
+  /** The only call that ever triggers a live provider fetch — wire this to an explicit user action only, never a timer. */
+  refreshDashboard(): Promise<DashboardSnapshot>
+  /** Reads the policy file fresh from disk every call — no cache, no rate-limit concern (this is a local file, not a third-party API). */
+  getPolicy(): Promise<PolicyGetResult>
+  /** Validates against `@clad/core`'s policy schema in the main process before writing; never trusts the renderer's shape. See `main/lib/policy-data.ts`. */
+  setPolicy(policy: PolicyDoc): Promise<OperationResult>
   /** Omit `input` (or `status: 'pending'`) for pending-only; `status: 'all'` includes resolved/expired history. Rejects on a genuine read failure (surfaced by the inbox as an error state) — unlike the tray's best-effort count, this is a user-watched list. */
   listApprovals(input?: ApprovalsListInput): Promise<ApprovalListItem[]>
   /** Approves or denies a pending approval — writes through the real `@clad/core` `ApprovalQueue` and audit-logs the decision, same as the CLI's `clad approve`/`clad deny` (see `main/lib/approvals.ts`). Never throws; failures come back as `{ ok: false, error }`. */

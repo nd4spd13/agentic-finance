@@ -37,6 +37,8 @@ import { PlaidSecretsStore } from './lib/plaid-secrets.js'
 import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manager.js'
 import { listApprovals, decideApproval, findNewPendingApprovals } from './lib/approvals.js'
 import { queryAuditLog } from './lib/audit-log.js'
+import { DashboardDataStore, type DashboardSnapshot } from './lib/dashboard-data.js'
+import { readPolicy, writePolicy, type PolicyGetResult, type PolicyWriteResult } from './lib/policy-data.js'
 import {
   trayTooltip,
   trayServerStatusMenuLabel,
@@ -198,6 +200,17 @@ const mcpManager = new McpServerManager({
     latestMcpStatus = status
     void broadcastStatus()
   },
+})
+
+// D2.3: same DI shape as McpServerManager above — constructs its provider
+// through main/lib/provider-factory.ts (dummy or plaid, same factory pattern
+// mcp-server's own provider-factory.ts uses) rather than owning any
+// provider-specific logic itself, so a future SimpleFIN provider slots in
+// with no change here.
+const dashboardStore = new DashboardDataStore({
+  loadConfig,
+  loadPlaidCredentials: () => getPlaidSecrets().load(),
+  getActivePassphrase: getActiveTokenStorePassphrase,
 })
 
 function buildDisplayConfig(): DisplayConfig {
@@ -464,6 +477,34 @@ ipcMain.handle(IPC_CHANNELS.mcpGetStatus, () => withPendingApprovals(mcpManager.
 ipcMain.handle(IPC_CHANNELS.mcpStart, async () => withPendingApprovals(await mcpManager.start()))
 ipcMain.handle(IPC_CHANNELS.mcpStop, async () => withPendingApprovals(await mcpManager.stop()))
 ipcMain.handle(IPC_CHANNELS.mcpRestart, async () => withPendingApprovals(await mcpManager.restart()))
+
+// ---- IPC handlers (D2.3) ---------------------------------------------------
+
+// getDashboardSnapshot is a pure cache read (no network); refreshDashboard is
+// the only path that ever calls the provider — see dashboard-data.ts's
+// module doc for the rate-limit discipline this encodes.
+ipcMain.handle(
+  IPC_CHANNELS.dashboardGetSnapshot,
+  (): DashboardSnapshot => dashboardStore.getSnapshot()
+)
+ipcMain.handle(
+  IPC_CHANNELS.dashboardRefresh,
+  (): Promise<DashboardSnapshot> => dashboardStore.refresh()
+)
+
+// ---- IPC handlers (D2.4) ---------------------------------------------------
+
+// Always reads the config fresh (loadConfig()) rather than caching
+// policy_path, the same way the D1.1 config handlers above do — picks up a
+// policy_path change from Settings without requiring an app restart.
+ipcMain.handle(
+  IPC_CHANNELS.policyGet,
+  (): Promise<PolicyGetResult> => readPolicy(loadConfig().policy_path)
+)
+ipcMain.handle(
+  IPC_CHANNELS.policySet,
+  (_event, policy: unknown): Promise<PolicyWriteResult> => writePolicy(loadConfig().policy_path, policy)
+)
 
 // ---- IPC handlers (D1.4) ---------------------------------------------------
 
