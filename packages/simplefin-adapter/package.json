@@ -23,7 +23,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:integration": "vitest run test/integration/demo-bridge.integration.test.ts"
   },
   "dependencies": {
     "@clad/core": "workspace:*"
