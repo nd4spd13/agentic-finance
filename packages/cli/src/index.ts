@@ -149,11 +149,12 @@ program
 // ── clad connect ─────────────────────────────────────────────────────────
 program
   .command('connect')
-  .description('Link a bank account via Plaid and store its encrypted token locally')
+  .description('Link a bank account via Plaid or SimpleFIN and store its encrypted token locally')
+  .option('--provider <name>', "Provider to connect: 'plaid' (default) or 'simplefin'", 'plaid')
   .option('--sandbox-auto', 'Auto-link a Plaid sandbox Item without a browser (requires PLAID_ENV=sandbox)')
-  .option('--use', "Set the provider to 'plaid' in config after a successful connection")
-  .action(async (opts: { sandboxAuto?: boolean; use?: boolean }) => {
-    await connectCommand({ sandboxAuto: opts.sandboxAuto, use: opts.use })
+  .option('--use', "Set the provider in config to the one just connected, after a successful connection")
+  .action(async (opts: { provider: string; sandboxAuto?: boolean; use?: boolean }) => {
+    await connectCommand({ provider: opts.provider, sandboxAuto: opts.sandboxAuto, use: opts.use })
   })
 
 // ── clad ui ──────────────────────────────────────────────────────────────

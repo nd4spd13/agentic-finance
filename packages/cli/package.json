@@ -23,6 +23,7 @@
   "dependencies": {
     "@clad/core": "workspace:*",
     "@clad/plaid-adapter": "workspace:*",
+    "@clad/simplefin-adapter": "workspace:*",
     "commander": "^12.1.0",
     "express": "^4.19.2",
     "open": "^10.1.0",
