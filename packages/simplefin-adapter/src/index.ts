@@ -23,3 +23,29 @@ export type {
   SimpleFinHolding,
   SimpleFinConnection,
 } from './client.js'
+export {
+  epochSecondsToDateString,
+  mapAccount,
+  mapAccountId,
+  mapAccountSet,
+  mapAccountType,
+  mapTransaction,
+  mapTransactionId,
+  parseSimpleFinAmount,
+  resolveConnection,
+  SimpleFinMappingError,
+} from './mapping.js'
+export type {
+  SimpleFinAccountDto,
+  SimpleFinAccountSetDto,
+  SimpleFinConnectionDto,
+  SimpleFinHoldingDto,
+  SimpleFinTransactionDto,
+} from './mapping.js'
+export { SimpleFinCache } from './cache.js'
+export type {
+  CachedAccount,
+  CachedTransaction,
+  SimpleFinCacheOptions,
+  StalenessInfo,
+} from './cache.js'
