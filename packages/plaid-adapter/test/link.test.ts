@@ -1,4 +1,4 @@
-import { createServer } from 'node:http'
+import { Agent, createServer, request as httpRequest } from 'node:http'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -91,6 +91,46 @@ async function postJson(url: string, payload: unknown): Promise<Response> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  })
+}
+
+interface RawResponse {
+  status: number
+  body: string
+}
+
+/**
+ * Sends a request over a caller-supplied `node:http` keep-alive `Agent`, so a
+ * second call with the same agent can reuse the exact TCP socket the first
+ * call opened. `fetch`'s connection pooling isn't controllable enough to
+ * reliably reproduce "a request lands on an already-established socket after
+ * the flow settled" — the real-world bug being tested here — so these tests
+ * drive `node:http` directly instead of the `postJson` helper above.
+ */
+function requestKeepAlive(
+  url: string,
+  agent: Agent,
+  options: { method: 'GET' | 'POST'; payload?: unknown } = { method: 'GET' }
+): Promise<RawResponse> {
+  return new Promise((resolve, reject) => {
+    const body = options.payload !== undefined ? JSON.stringify(options.payload) : undefined
+    const req = httpRequest(
+      url,
+      {
+        method: options.method,
+        agent,
+        headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : undefined,
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () =>
+          resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf-8') })
+        )
+      }
+    )
+    req.on('error', reject)
+    req.end(body)
   })
 }
 
@@ -288,6 +328,68 @@ describe('runLinkFlow', () => {
 
     const result = await runLinkFlow({ client, tokenStore: store, openBrowser })
     expect(result.itemId).toBe(FAKE_ITEM_ID)
+  })
+
+  it('returns 410 for a late /callback that lands on the exit-request socket after the flow settled', async () => {
+    const store = makeFakeTokenStore()
+    let exchanges = 0
+    const client = makeLinkClient({ onExchange: () => { exchanges += 1 } })
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 })
+
+    try {
+      const openBrowser = async (url: string): Promise<void> => {
+        // Settle the flow via /exit, then immediately reuse the same
+        // keep-alive socket for a "late" /callback. server.close() doesn't
+        // touch already-established sockets, so this reproduces the exact
+        // race from the bug report rather than asserting on a mock.
+        const exit = await requestKeepAlive(`${url}/exit`, agent, {
+          method: 'POST',
+          payload: { error: { error_code: 'INSTITUTION_NOT_AVAILABLE' }, metadata: {} },
+        })
+        expect(exit.status).toBe(200)
+
+        const late = await requestKeepAlive(`${url}/callback`, agent, {
+          method: 'POST',
+          payload: { public_token: FAKE_PUBLIC_TOKEN, metadata: SUCCESS_METADATA },
+        })
+        expect(late.status).toBe(410)
+        expect(late.body).toContain('This connect session has ended')
+      }
+
+      await expect(runLinkFlow({ client, tokenStore: store, openBrowser })).rejects.toBeInstanceOf(
+        LinkFlowError
+      )
+      // The late callback must never have reached exchangeAndStore.
+      expect(exchanges).toBe(0)
+      expect(store.listItems()).toHaveLength(0)
+    } finally {
+      agent.destroy()
+    }
+  })
+
+  it('returns 410 for a GET of the page on the same socket after the flow has settled', async () => {
+    const store = makeFakeTokenStore()
+    const client = makeLinkClient()
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 })
+
+    try {
+      const openBrowser = async (url: string): Promise<void> => {
+        const ok = await requestKeepAlive(`${url}/callback`, agent, {
+          method: 'POST',
+          payload: { public_token: FAKE_PUBLIC_TOKEN, metadata: SUCCESS_METADATA },
+        })
+        expect(ok.status).toBe(200)
+
+        const late = await requestKeepAlive(url, agent, { method: 'GET' })
+        expect(late.status).toBe(410)
+        expect(late.body).toContain('This connect session has ended')
+      }
+
+      const result = await runLinkFlow({ client, tokenStore: store, openBrowser })
+      expect(result.itemId).toBe(FAKE_ITEM_ID)
+    } finally {
+      agent.destroy()
+    }
   })
 })
 

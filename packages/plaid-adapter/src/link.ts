@@ -23,6 +23,10 @@
  *  - The callback server binds `127.0.0.1` only and gates every request behind
  *    a per-run random path segment so other local processes can't drive it.
  *  - The server is always closed — on success, failure, or timeout.
+ *  - Once the flow has settled, every further request on the pathId (a stale
+ *    page reload, a re-clicked "Open Plaid Link" button, or a request racing
+ *    the socket teardown below) gets a terminal 410 and can never reach
+ *    `exchangeAndStore` — the caller may already be closing the `TokenStore`.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -124,6 +128,12 @@ export async function runLinkFlow(options: RunLinkFlowOptions): Promise<LinkFlow
       if (timer) clearTimeout(timer)
       // Stop accepting new connections immediately; in-flight responses finish.
       server.close()
+      // `close()` alone leaves already-established keep-alive sockets open, so
+      // a request that raced the settle could still reach the handler after
+      // `settled` flips. Drop idle sockets now so as few late requests as
+      // possible get the chance; the isSettled() check in handleRequest is
+      // what actually guarantees a late one can't exchange a token.
+      server.closeIdleConnections?.()
     }
     const succeed = (result: LinkFlowResult): void => {
       if (settled) return
@@ -139,12 +149,21 @@ export async function runLinkFlow(options: RunLinkFlowOptions): Promise<LinkFlow
     }
 
     const handler = (req: IncomingMessage, res: ServerResponse): void => {
-      handleRequest(req, res, { pathId, linkToken, client, tokenStore, succeed, fail }).catch(
-        (error) => {
-          respondText(res, 500, 'Internal error')
-          fail(toLinkFlowError('The Plaid Link callback server errored', error))
-        }
-      )
+      handleRequest(req, res, {
+        pathId,
+        linkToken,
+        client,
+        tokenStore,
+        succeed,
+        fail,
+        // `handler` closes over the executor's `settled` directly so the
+        // request handler always sees its current value, even for a request
+        // that was already in flight when succeed()/fail() ran.
+        isSettled: () => settled,
+      }).catch((error) => {
+        respondText(res, 500, 'Internal error')
+        fail(toLinkFlowError('The Plaid Link callback server errored', error))
+      })
     }
 
     const server = createServer(handler)
@@ -175,7 +194,11 @@ interface HandlerContext {
   tokenStore: TokenStore
   succeed: (result: LinkFlowResult) => void
   fail: (error: Error) => void
+  /** True once `succeed`/`fail` has run — see the settle-gate below. */
+  isSettled: () => boolean
 }
+
+const SETTLED_MESSAGE = 'This connect session has ended. Return to the app and start a new connection.'
 
 async function handleRequest(
   req: IncomingMessage,
@@ -184,6 +207,19 @@ async function handleRequest(
 ): Promise<void> {
   const { pathId } = ctx
   const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname
+  const isPathIdRequest = path === `/${pathId}` || path.startsWith(`/${pathId}/`)
+
+  // The flow settles exactly once (see succeed()/fail()). Any request that
+  // lands afterward — a reloaded page, a re-clicked button using the still-
+  // embedded link token, or a late request delivered over a keep-alive
+  // socket that outlived server.close() — must be a dead end: it can never
+  // call exchangeAndStore, since the caller may already be tearing down the
+  // TokenStore it would write to.
+  if (isPathIdRequest && ctx.isSettled()) {
+    res.writeHead(410, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(renderClosePage(SETTLED_MESSAGE))
+    return
+  }
 
   if (req.method === 'GET' && path === `/${pathId}`) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
@@ -408,17 +444,41 @@ function renderLinkPage(linkToken: string, pathId: string): string {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-        }).catch(function () { /* server may already be shutting down */ });
+        });
+      }
+
+      // The flow is over the moment Link exits or a callback fails: the
+      // server has already settled (or is about to) and will 410 anything
+      // else on this pathId. Disabling the button here stops the user from
+      // re-opening Link and "completing" a connection nothing is listening
+      // for anymore.
+      function lockPage() {
+        document.getElementById('open').disabled = true;
+        document.getElementById('status').textContent =
+          'This connect session has ended. Return to the app and start a new connection.';
       }
 
       var handler = Plaid.create({
         token: LINK_TOKEN,
         onSuccess: function (public_token, metadata) {
           document.getElementById('status').textContent = 'Finishing up…';
-          post(CALLBACK_URL, { public_token: public_token, metadata: metadata });
+          post(CALLBACK_URL, { public_token: public_token, metadata: metadata })
+            .then(function (res) {
+              if (!res.ok) lockPage();
+            })
+            .catch(function () {
+              // Server may already be shutting down; either way this session is over.
+              lockPage();
+            });
         },
         onExit: function (err, metadata) {
-          post(EXIT_URL, { error: err, metadata: metadata });
+          post(EXIT_URL, { error: err, metadata: metadata }).catch(function () {
+            /* server may already be shutting down */
+          });
+          // Exiting is terminal from the browser's perspective regardless of
+          // whether this notification reaches the server, so lock immediately
+          // rather than waiting on the network round trip.
+          lockPage();
         },
       });
 
