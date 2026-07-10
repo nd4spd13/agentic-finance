@@ -196,7 +196,9 @@ export default function SettingsForm({
           <p style={s.successText}>
             Plaid credentials are saved. Enter new values to replace them, or clear them below.
           </p>
-        ) : null}
+        ) : (
+          <p style={s.mutedText}>No Plaid credentials saved yet.</p>
+        )}
         <form onSubmit={handleSaveCredentials}>
           <label style={s.label} htmlFor="plaid-client-id">
             Client ID
