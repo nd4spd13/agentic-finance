@@ -18,6 +18,8 @@ import {
   getConfigPath,
   getConfigDir,
   desktopOnlyPlaidDbPath,
+  effectivePlaidDbPath,
+  effectivePlaidEnv,
 } from '../src/main/lib/config.js'
 
 const TEST_DIR = join(tmpdir(), `clad-desktop-test-${process.pid}`)
@@ -105,6 +107,50 @@ describe('config', () => {
     expect(desktopOnlyPlaidDbPath()).not.toBe(defaultConfig().plaid_db)
     expect(desktopOnlyPlaidDbPath()).toContain(getConfigDir())
     expect(desktopOnlyPlaidDbPath().endsWith('plaid-desktop.sqlite')).toBe(true)
+  })
+
+  /**
+   * D3.3 — env-scoped token-store path resolution. `'production'` must
+   * return `config.plaid_db` byte-for-byte (CLI interop — the CLI has no env
+   * scoping of its own); `'sandbox'` must derive a sibling path the CLI has
+   * no reason to ever touch.
+   */
+  describe('effectivePlaidDbPath', () => {
+    it('returns config.plaid_db unchanged for production', () => {
+      const cfg = defaultConfig()
+      expect(effectivePlaidDbPath(cfg, 'production')).toBe(cfg.plaid_db)
+    })
+
+    it('derives a -sandbox sibling path (same dir, same extension) for sandbox', () => {
+      const cfg = { ...defaultConfig(), plaid_db: join(TEST_DIR, 'plaid.sqlite') }
+      expect(effectivePlaidDbPath(cfg, 'sandbox')).toBe(join(TEST_DIR, 'plaid-sandbox.sqlite'))
+    })
+
+    it('sandbox and production never resolve to the same path', () => {
+      const cfg = defaultConfig()
+      expect(effectivePlaidDbPath(cfg, 'sandbox')).not.toBe(effectivePlaidDbPath(cfg, 'production'))
+    })
+
+    it('derives the sandbox sibling relative to whatever plaid_db currently is, not a fixed default', () => {
+      const cfg = { ...defaultConfig(), plaid_db: join(TEST_DIR, 'plaid-desktop.sqlite') }
+      expect(effectivePlaidDbPath(cfg, 'sandbox')).toBe(join(TEST_DIR, 'plaid-desktop-sandbox.sqlite'))
+    })
+  })
+
+  /**
+   * D3.3 — packaged-build normalization: a packaged build is always
+   * production, regardless of what config.json says, applied at read time.
+   */
+  describe('effectivePlaidEnv', () => {
+    it('forces production when isPackaged is true, regardless of the configured env', () => {
+      expect(effectivePlaidEnv('sandbox', true)).toBe('production')
+      expect(effectivePlaidEnv('production', true)).toBe('production')
+    })
+
+    it('passes the configured env through unchanged when isPackaged is false', () => {
+      expect(effectivePlaidEnv('sandbox', false)).toBe('sandbox')
+      expect(effectivePlaidEnv('production', false)).toBe('production')
+    })
   })
 
   describe('ensureConfigBootstrap', () => {
