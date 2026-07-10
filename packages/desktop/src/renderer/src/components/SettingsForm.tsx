@@ -192,10 +192,12 @@ export default function SettingsForm({
             Stored credentials can&apos;t be unlocked — this usually happens after app updates on unsigned
             builds. Please re-enter them below.
           </p>
-        ) : (
-          <p style={s.mutedText}>
-            Status: {config.plaidCredentialsStatus === 'set' ? 'Credentials saved.' : 'Not set.'}
+        ) : config.plaidCredentialsStatus === 'set' ? (
+          <p style={s.successText}>
+            Plaid credentials are saved. Enter new values to replace them, or clear them below.
           </p>
+        ) : (
+          <p style={s.mutedText}>No Plaid credentials saved yet.</p>
         )}
         <form onSubmit={handleSaveCredentials}>
           <label style={s.label} htmlFor="plaid-client-id">
@@ -209,6 +211,7 @@ export default function SettingsForm({
             onChange={(e) => setClientId(e.target.value)}
             disabled={savingCreds}
             autoComplete="off"
+            placeholder={config.plaidCredentialsStatus === 'set' ? 'saved — enter to replace' : undefined}
           />
           <label style={s.label} htmlFor="plaid-secret">
             Secret
@@ -221,6 +224,7 @@ export default function SettingsForm({
             onChange={(e) => setSecret(e.target.value)}
             disabled={savingCreds}
             autoComplete="off"
+            placeholder={config.plaidCredentialsStatus === 'set' ? 'saved — enter to replace' : undefined}
           />
           {credsMessage && <p style={credsMessage.ok ? s.successText : s.errorText}>{credsMessage.text}</p>}
           <button type="submit" style={s.button} disabled={savingCreds || !clientId || !secret}>
