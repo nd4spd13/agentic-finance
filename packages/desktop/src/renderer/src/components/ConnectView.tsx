@@ -285,6 +285,14 @@ export default function ConnectView(): JSX.Element {
                 ● {CONNECTION_LABEL[status.plaidConnection]}
               </strong>
             </p>
+            {/* D3.3: `status.plaidEnv` is the EFFECTIVE env (already normalized
+                to 'production' in a packaged build) — a new "Connect a bank"
+                click below lands in exactly this env's own token store, never
+                the other one's. See `ConnectProvidersStatus.plaidEnv` in
+                shared/ipc.ts. */}
+            <p style={s.mutedText}>
+              A new connection links into: <strong>{status.plaidEnv === 'production' ? 'Production' : 'Sandbox'}</strong>
+            </p>
             {!status.plaidCredentialsConfigured && (
               <p style={s.warnText}>
                 Add your Plaid Client ID/Secret in Settings before connecting a bank.

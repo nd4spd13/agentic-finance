@@ -26,7 +26,7 @@
 
 import { getCladCore } from './clad-core.js'
 import { getCladPlaidAdapter } from './plaid-adapter.js'
-import type { CladConfig } from './config.js'
+import { effectivePlaidDbPath, type CladConfig } from './config.js'
 
 export interface ProviderFactoryInput {
   config: CladConfig
@@ -58,13 +58,22 @@ export function missingPlaidPrereqs(input: Pick<ProviderFactoryInput, 'plaidCred
  * reused would accumulate open file handles over a long session. Never
  * embeds credential/passphrase *values*, only whether each is present, even
  * though this string never crosses IPC.
+ *
+ * D3.3: embeds `effectivePlaidDbPath(config, config.plaid_env)` rather than
+ * the raw `config.plaid_db` — that's the actual SQLite file
+ * `createFinancialProvider` below opens, so the fingerprint is an honest
+ * identity for "what on-disk resource is this provider instance actually
+ * backed by", not just "what were the raw config inputs". `config.plaid_env`
+ * is included too (redundantly, once paths are env-scoped) — kept
+ * deliberately explicit rather than relying on the derived path alone to
+ * imply it.
  */
 export function providerFingerprint(input: ProviderFactoryInput): string {
   const { config, plaidCredentials, passphrase } = input
   return [
     config.provider,
     config.plaid_env,
-    config.plaid_db,
+    effectivePlaidDbPath(config, config.plaid_env),
     plaidCredentials ? 'creds:set' : 'creds:unset',
     passphrase ? 'pass:set' : 'pass:unset',
   ].join('|')
@@ -93,8 +102,13 @@ export async function createFinancialProvider(input: ProviderFactoryInput): Prom
       secret: plaidCredentials!.secret,
       env: config.plaid_env,
     })
-    const tokenStore = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase: passphrase! })
-    const provider = new PlaidAdapter({ client, tokenStore, dbPath: config.plaid_db })
+    // D3.3: the env-scoped path, not raw config.plaid_db — see
+    // `effectivePlaidDbPath`'s doc comment (config.ts) for why 'production'
+    // resolves to config.plaid_db verbatim (CLI interop) while 'sandbox'
+    // resolves to a derived sibling file.
+    const dbPath = effectivePlaidDbPath(config, config.plaid_env)
+    const tokenStore = new SqliteTokenStore({ dbPath, passphrase: passphrase! })
+    const provider = new PlaidAdapter({ client, tokenStore, dbPath })
     return { ok: true, provider }
   } catch (err) {
     const { redactSecrets } = await getCladCore()
