@@ -31,6 +31,9 @@ import {
   saveConfig,
   getConfigDir,
   desktopOnlyPlaidDbPath,
+  effectivePlaidDbPath,
+  effectivePlaidEnv,
+  type CladConfig,
 } from './lib/config.js'
 import { PassphraseCustody, verifyCliPassphrase } from './lib/passphrase.js'
 import { PlaidSecretsStore } from './lib/plaid-secrets.js'
@@ -85,6 +88,7 @@ import {
   type AuditLogPage,
   type ConnectProvidersStatus,
   type StartPlaidLinkInput,
+  type PlaidEnvName,
 } from '../shared/ipc.js'
 
 // `__dirname` (ambient via @types/node) is a CommonJS global — valid here
@@ -94,7 +98,8 @@ import {
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let passphraseCustodySingleton: PassphraseCustody | null = null
-let plaidSecretsSingleton: PlaidSecretsStore | null = null
+/** D3.3: one `PlaidSecretsStore` per env, lazily constructed and cached — see `getPlaidSecrets`/`getActivePlaidSecrets` below. */
+const plaidSecretsStores = new Map<PlaidEnvName, PlaidSecretsStore>()
 
 function getPassphraseCustody(): PassphraseCustody {
   if (!passphraseCustodySingleton) {
@@ -103,11 +108,48 @@ function getPassphraseCustody(): PassphraseCustody {
   return passphraseCustodySingleton
 }
 
-function getPlaidSecrets(): PlaidSecretsStore {
-  if (!plaidSecretsSingleton) {
-    plaidSecretsSingleton = new PlaidSecretsStore(app.getPath('userData'), safeStorage)
+/**
+ * D3.3: `PlaidSecretsStore` is now env-scoped (one sealed file per env — see
+ * its own module doc comment), so there is no longer a single credentials
+ * singleton — callers ask for the store for a SPECIFIC env. Almost every
+ * call site wants the ACTIVE env, not an arbitrary one; use
+ * `getActivePlaidSecrets()` for that (it re-resolves the active env fresh
+ * from config on every call, same "never cache config" discipline as
+ * `loadConfig`/`loadEffectiveConfig` elsewhere in this file).
+ */
+function getPlaidSecrets(env: PlaidEnvName): PlaidSecretsStore {
+  let store = plaidSecretsStores.get(env)
+  if (!store) {
+    store = new PlaidSecretsStore(app.getPath('userData'), env, safeStorage)
+    plaidSecretsStores.set(env, store)
   }
-  return plaidSecretsSingleton
+  return store
+}
+
+/** The `PlaidSecretsStore` for whatever env is ACTIVE right now (see `loadEffectiveConfig`). */
+function getActivePlaidSecrets(): PlaidSecretsStore {
+  return getPlaidSecrets(loadEffectiveConfig().plaid_env)
+}
+
+/**
+ * D3.3: `loadConfig()` with `plaid_env` normalized for a packaged build —
+ * see `effectivePlaidEnv`'s doc comment (config.ts) for why this has to
+ * happen at read time rather than only being enforced on write
+ * (`configSetProviderAndEnv` below still rejects persisting `'sandbox'` from
+ * a packaged build, but a config.json authored by a DEV build against the
+ * same `CLAD_CONFIG_DIR` can legitimately say `plaid_env: 'sandbox'` on disk
+ * even while a packaged build is what's currently reading it).
+ *
+ * Every deps object that used to pass the raw `loadConfig` to a `main/lib/**`
+ * manager (McpServerManager, DashboardDataStore, PlaidLinkFlowManager, the
+ * migration-status/Plaid-connection-state helpers) now passes THIS instead,
+ * so "packaged == production, always" holds everywhere those managers touch
+ * `config.plaid_env` — including transitively, e.g. `mcp-server-env.ts`'s
+ * `PLAID_ENV`/`CLAD_PLAID_DB` for the spawned server child.
+ */
+function loadEffectiveConfig(): CladConfig {
+  const config = loadConfig()
+  return { ...config, plaid_env: effectivePlaidEnv(config.plaid_env, app.isPackaged) }
 }
 
 /**
@@ -204,9 +246,13 @@ async function broadcastStatus(): Promise<void> {
   updateTray(status)
 }
 
+// D3.3: `loadEffectiveConfig` (not raw `loadConfig`) everywhere below —
+// packaged == production always, and `getActivePlaidSecrets()` resolves
+// whichever env slot is active, both re-derived fresh on every call (same
+// "never cache config" discipline the rest of this file already follows).
 const mcpManager = new McpServerManager({
-  loadConfig,
-  loadPlaidCredentials: () => getPlaidSecrets().load(),
+  loadConfig: loadEffectiveConfig,
+  loadPlaidCredentials: () => getActivePlaidSecrets().load(),
   getActivePassphrase: getActiveTokenStorePassphrase,
   onStatusChange: (status) => {
     latestMcpStatus = status
@@ -220,8 +266,8 @@ const mcpManager = new McpServerManager({
 // provider-specific logic itself, so a future SimpleFIN provider slots in
 // with no change here.
 const dashboardStore = new DashboardDataStore({
-  loadConfig,
-  loadPlaidCredentials: () => getPlaidSecrets().load(),
+  loadConfig: loadEffectiveConfig,
+  loadPlaidCredentials: () => getActivePlaidSecrets().load(),
   getActivePassphrase: getActiveTokenStorePassphrase,
 })
 
@@ -235,8 +281,8 @@ const dashboardStore = new DashboardDataStore({
 // plus an additional "not a packaged build at all" check — sandbox-auto has
 // no place in a build an end user might run against their own account.
 const plaidLinkFlow = new PlaidLinkFlowManager({
-  loadConfig,
-  loadPlaidCredentials: () => getPlaidSecrets().load(),
+  loadConfig: loadEffectiveConfig,
+  loadPlaidCredentials: () => getActivePlaidSecrets().load(),
   getActivePassphrase: getActiveTokenStorePassphrase,
   openExternal: (url) => shell.openExternal(url),
   isDevBuild: () => !app.isPackaged,
@@ -246,17 +292,18 @@ const plaidLinkFlow = new PlaidLinkFlowManager({
 })
 
 function buildDisplayConfig(): DisplayConfig {
-  const config = loadConfig()
+  const config = loadEffectiveConfig()
   return {
     configDir: getConfigDir(),
     policyPath: config.policy_path,
     auditDbPath: config.audit_db,
     approvalDbPath: config.approval_db,
-    plaidDbPath: config.plaid_db,
+    plaidDbPath: effectivePlaidDbPath(config, config.plaid_env),
     provider: config.provider,
     plaidEnv: config.plaid_env,
-    plaidCredentialsStatus: getPlaidSecrets().status(),
+    plaidCredentialsStatus: getPlaidSecrets(config.plaid_env).status(),
     closeToTray: config.close_to_tray,
+    isPackaged: app.isPackaged,
   }
 }
 
@@ -276,20 +323,40 @@ function buildDisplayConfig(): DisplayConfig {
  *    happily fabricate and seal a brand-new random passphrase if no file
  *    existed yet, which is wrong to risk as a side effect of a status check
  *    reached from the `cli-store-detected` branch below too.
+ *
+ * D3.3: deliberately pinned to the 'production' env's `effectivePlaidDbPath`
+ * — i.e. `config.plaid_db` verbatim — REGARDLESS of the currently ACTIVE
+ * env, not `effectivePlaidDbPath(config, config.plaid_env)` like every other
+ * consumer in this file. A legacy CLI-managed store can only ever exist at
+ * that one path: the CLI has no env scoping of its own (see
+ * `effectivePlaidDbPath`'s doc comment), and 'sandbox''s derived `-sandbox`
+ * sibling is a brand-new desktop-only path the CLI has no way to have ever
+ * written to. Following the active env here instead would be a real
+ * regression: a fresh dev-build install defaults to `plaid_env: 'sandbox'`
+ * (see `defaultConfig()`), so on a machine that already has a genuine CLI
+ * store, checking the active (sandbox) path would report `needed: false` —
+ * silently skipping the one-time migration prompt — and `getOrCreate()`
+ * would go on to seal a fresh random passphrase that has nothing to do with
+ * the CLI's store. Later switching to 'production' would then try to open
+ * that real CLI store under the wrong passphrase and fail. Pinning to
+ * 'production' here means the prompt still surfaces on first launch, before
+ * any env switch, exactly as it did pre-D3.3 (when there was only one
+ * env-agnostic path).
  */
 function computeMigrationStatus(): MigrationStatus {
-  const config = loadConfig()
+  const config = loadEffectiveConfig()
+  const dbPath = effectivePlaidDbPath(config, 'production')
   const custody = getPassphraseCustody()
 
   if (custody.hasCustodyFile()) {
     if (custody.probeCustody() === 'undecryptable') {
-      return { needed: true, reason: 'passphrase-undecryptable', plaidDbPath: config.plaid_db }
+      return { needed: true, reason: 'passphrase-undecryptable', plaidDbPath: dbPath }
     }
-    return { needed: false, plaidDbPath: config.plaid_db }
+    return { needed: false, plaidDbPath: dbPath }
   }
 
-  const needed = existsSync(config.plaid_db)
-  return { needed, reason: needed ? 'cli-store-detected' : undefined, plaidDbPath: config.plaid_db }
+  const needed = existsSync(dbPath)
+  return { needed, reason: needed ? 'cli-store-detected' : undefined, plaidDbPath: dbPath }
 }
 
 // ---- Tray (D1.3) ------------------------------------------------------------
@@ -439,9 +506,19 @@ function createWindow(): void {
 
 ipcMain.handle(IPC_CHANNELS.configGet, () => buildDisplayConfig())
 
+// D3.3: a packaged build is production-only — no env choice at all. This
+// rejects (rather than silently ignoring) an attempt to persist
+// `plaidEnv: 'sandbox'` from a packaged build, as defense-in-depth: the
+// renderer's Settings screen doesn't even render the sandbox/production
+// `<select>` when `DisplayConfig.isPackaged` is true (see
+// `SettingsForm.tsx`), so this branch should only ever be reachable via a
+// deliberately hand-crafted IPC call, not normal UI use.
 ipcMain.handle(
   IPC_CHANNELS.configSetProviderAndEnv,
   (_event, input: SetProviderAndEnvInput): OperationResult => {
+    if (app.isPackaged && input.plaidEnv !== 'production') {
+      return { ok: false, error: 'This build is production-only; the Plaid environment cannot be changed.' }
+    }
     try {
       const config = loadConfig()
       saveConfig({ ...config, provider: input.provider, plaid_env: input.plaidEnv })
@@ -465,15 +542,19 @@ ipcMain.handle(
   }
 )
 
-ipcMain.handle(IPC_CHANNELS.plaidCredentialsHas, () => getPlaidSecrets().has())
+// D3.3: every handler below resolves the ACTIVE env's credentials slot fresh
+// via `getActivePlaidSecrets()` — a dev build's env switcher (see
+// `configSetProviderAndEnv` above) takes effect on the very next call to any
+// of these, with no restart needed.
+ipcMain.handle(IPC_CHANNELS.plaidCredentialsHas, () => getActivePlaidSecrets().has())
 
 ipcMain.handle(
   IPC_CHANNELS.plaidCredentialsSet,
-  (_event, input: SetPlaidCredentialsInput): OperationResult => getPlaidSecrets().save(input)
+  (_event, input: SetPlaidCredentialsInput): OperationResult => getActivePlaidSecrets().save(input)
 )
 
 ipcMain.handle(IPC_CHANNELS.plaidCredentialsClear, (): OperationResult => {
-  getPlaidSecrets().clear()
+  getActivePlaidSecrets().clear()
   return { ok: true }
 })
 
@@ -482,8 +563,13 @@ ipcMain.handle(IPC_CHANNELS.migrationGetStatus, () => computeMigrationStatus())
 ipcMain.handle(
   IPC_CHANNELS.migrationSubmitCliPassphrase,
   async (_event, passphrase: string): Promise<OperationResult> => {
-    const config = loadConfig()
-    const verified = await verifyCliPassphrase(config.plaid_db, passphrase)
+    // Same 'production'-pinned path as computeMigrationStatus() above — this
+    // handler only ever runs in response to that status reporting
+    // `needed: true`, which (per its doc comment) only ever happens against
+    // the production-verbatim path.
+    const config = loadEffectiveConfig()
+    const dbPath = effectivePlaidDbPath(config, 'production')
+    const verified = await verifyCliPassphrase(dbPath, passphrase)
     if (!verified.ok) {
       return { ok: false, error: verified.error }
     }
@@ -492,6 +578,16 @@ ipcMain.handle(
   }
 )
 
+// D3.3 note: deliberately writes the RAW `plaid_db` field (via `loadConfig`/
+// `saveConfig`, not the env-normalized `loadEffectiveConfig`) — see
+// `desktopOnlyPlaidDbPath`'s doc comment (config.ts). Migration only ever
+// triggers for the 'production' path (see `computeMigrationStatus` above),
+// where the raw field and the effective path are identical, so this repoints
+// the exact same thing either way; the distinction matters only in that
+// `effectivePlaidDbPath` keeps deriving the 'sandbox' sibling from whatever
+// this field is set to afterward (`plaid-desktop-sandbox.sqlite`, not the
+// CLI-adjacent `plaid-sandbox.sqlite`) — coherent with "start fresh" meaning
+// "stop touching the CLI's file, in either env".
 ipcMain.handle(IPC_CHANNELS.migrationStartFresh, (): OperationResult => {
   try {
     const config = loadConfig()
@@ -646,16 +742,18 @@ ipcMain.handle(
 // ---- IPC handlers (D3.1 Plaid Link / D3.2 connect UI) ----------------------
 
 ipcMain.handle(IPC_CHANNELS.connectGetProvidersStatus, async (): Promise<ConnectProvidersStatus> => {
-  const deps = { loadConfig, getActivePassphrase: getActiveTokenStorePassphrase }
+  const config = loadEffectiveConfig()
+  const deps = { loadConfig: loadEffectiveConfig, getActivePassphrase: getActiveTokenStorePassphrase }
   const [plaidConnection, simplefinConnection] = await Promise.all([
     getPlaidConnectionState(deps),
     getSimpleFinConnectionState(deps),
   ])
   return {
-    plaidCredentialsConfigured: getPlaidSecrets().has(),
+    plaidCredentialsConfigured: getPlaidSecrets(config.plaid_env).has(),
     plaidConnection,
     simplefinConnection,
     sandboxAutoAvailable: !app.isPackaged,
+    plaidEnv: config.plaid_env,
   }
 })
 

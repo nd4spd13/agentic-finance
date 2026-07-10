@@ -56,7 +56,7 @@
 
 import { getCladPlaidAdapter } from './plaid-adapter.js'
 import { getCladCore } from './clad-core.js'
-import type { CladConfig } from './config.js'
+import { effectivePlaidDbPath, type CladConfig } from './config.js'
 
 export type PlaidLinkFlowState = 'idle' | 'pending' | 'success' | 'error'
 
@@ -151,7 +151,11 @@ export async function getPlaidConnectionState(deps: {
 
   let store: InstanceType<typeof SqliteTokenStore> | undefined
   try {
-    store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase })
+    // D3.3: env-scoped path — see `effectivePlaidDbPath`'s doc comment
+    // (config.ts). A sandbox connection is invisible here when `config`
+    // reports `plaid_env: 'production'` (and vice versa) by design: they're
+    // different physical SQLite files.
+    store = new SqliteTokenStore({ dbPath: effectivePlaidDbPath(config, config.plaid_env), passphrase })
     return store.listItems().length > 0 ? 'connected' : 'not-connected'
   } catch {
     return 'unavailable'
@@ -232,7 +236,11 @@ export class PlaidLinkFlowManager {
 
     let tokenStore: InstanceType<typeof SqliteTokenStore>
     try {
-      tokenStore = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase })
+      // D3.3: env-scoped path — see `effectivePlaidDbPath`'s doc comment
+      // (config.ts). A newly-linked Item lands in the ACTIVE env's file,
+      // matching whatever `getPlaidConnectionState` above reports for the
+      // same config.
+      tokenStore = new SqliteTokenStore({ dbPath: effectivePlaidDbPath(config, config.plaid_env), passphrase })
     } catch (err) {
       const message = await this.describeError(err)
       if (attemptId !== this.currentAttemptId) return this.status

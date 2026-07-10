@@ -50,13 +50,30 @@ export interface DisplayConfig {
   policyPath: string
   auditDbPath: string
   approvalDbPath: string
+  /** D3.3: the env-scoped path actually in use for `plaidEnv` below (see `main/lib/config.ts`'s `effectivePlaidDbPath`) — NOT necessarily the raw `plaid_db` field from config.json when `plaidEnv` is `'sandbox'`. */
   plaidDbPath: string
   provider: CladProvider
+  /**
+   * The EFFECTIVE Plaid environment — already normalized to `'production'`
+   * when `isPackaged` is true, regardless of what config.json's `plaid_env`
+   * field says (see `main/lib/config.ts`'s `effectivePlaidEnv`). Renderer
+   * code should treat this as the source of truth, not re-derive it.
+   */
   plaidEnv: PlaidEnvName
-  /** Whether Plaid credentials are currently set, unset, or sealed-but-unreadable — never their value. */
+  /** Whether Plaid credentials are currently set, unset, or sealed-but-unreadable for the ACTIVE env (`plaidEnv` above) — never their value. */
   plaidCredentialsStatus: PlaidCredentialsStatus
   /** D1.3: whether closing the main window hides it (tray stays alive) instead of quitting. */
   closeToTray: boolean
+  /**
+   * D3.3: `app.isPackaged`. Drives Settings' Plaid-environment UI — a
+   * packaged build shows a static "Production" indication instead of the
+   * sandbox/production `<select>`, since packaged builds are production-only
+   * and `configSetProviderAndEnv` rejects any attempt to set `'sandbox'`
+   * while this is true. Reuses this existing display-config channel rather
+   * than adding a new one, per the product decision that introduced env
+   * gating.
+   */
+  isPackaged: boolean
 }
 
 export interface SetProviderAndEnvInput {
@@ -440,6 +457,8 @@ export interface ConnectProvidersStatus {
   simplefinConnection: ProviderConnectionState
   /** Whether the sandbox-auto (no-browser) Plaid dev flag should be shown at all in this build — see `plaid-link-flow.ts`'s `isDevBuild`. */
   sandboxAutoAvailable: boolean
+  /** D3.3: the EFFECTIVE Plaid environment a new "Connect a bank" flow will link into — same normalized value as `DisplayConfig.plaidEnv` (already `'production'` in a packaged build regardless of config.json). */
+  plaidEnv: PlaidEnvName
 }
 
 // ---- Audit log viewer (D2.2) ------------------------------------------------

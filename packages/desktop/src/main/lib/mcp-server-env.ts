@@ -16,10 +16,21 @@
  * the child here is always the Electron binary itself (S0.4 finding) rather
  * than a system `node`.
  *
+ * D3.3: `CLAD_PLAID_DB` is resolved through `effectivePlaidDbPath` (not
+ * `config.plaid_db` directly) so the spawned server opens the SAME env-scoped
+ * SQLite file the desktop app itself is using — `config` here is always
+ * expected to already be the *effective* config (see `main/index.ts`'s
+ * `loadEffectiveConfig`, which normalizes `plaid_env` to `'production'` for
+ * a packaged build before it ever reaches this function), so `PLAID_ENV`
+ * below and the derived `CLAD_PLAID_DB` path always agree with each other
+ * and with what the desktop app itself is doing — the child never sees a
+ * sandbox path/env pair while the parent app is running production, or
+ * vice versa.
+ *
  * Pure object construction — no `electron` import, safe to unit-test.
  */
 
-import type { CladConfig } from './config.js'
+import { effectivePlaidDbPath, type CladConfig } from './config.js'
 
 export interface PlaidSpawnSecrets {
   clientId: string
@@ -38,7 +49,7 @@ export function buildServerEnv(
     CLAD_AUDIT_DB: config.audit_db,
     CLAD_APPROVAL_DB: config.approval_db,
     CLAD_PROVIDER: config.provider,
-    CLAD_PLAID_DB: config.plaid_db,
+    CLAD_PLAID_DB: effectivePlaidDbPath(config, config.plaid_env),
     // The spawned child is always the Electron binary run as plain Node
     // (see mcp-server-path.ts's doc comment) — never a system `node`.
     ELECTRON_RUN_AS_NODE: '1',
