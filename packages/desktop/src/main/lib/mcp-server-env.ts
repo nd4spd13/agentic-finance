@@ -4,17 +4,26 @@
  * whether mcp-server's spawn env should keep using a temp per-launch
  * policy/audit/approval set (as the spike did) versus the real ~/.clad/*
  * paths via a ported config.ts". Resolved here: real config paths, always;
- * `PLAID_*` / `CLAD_TOKEN_PASSPHRASE` only when the `plaid` provider is
- * selected and both credentials and an active token-store passphrase are
- * available (the caller — `McpServerManager` — pre-flights that and never
- * calls this with a mismatched combination, but this function stays
- * defensive: no `plaidSecrets` in, no Plaid env vars out).
+ * provider-specific secrets only when the matching provider is selected and
+ * its prereqs are available (the caller — `McpServerManager` — pre-flights
+ * that and never calls this with a mismatched combination, but this function
+ * stays defensive: no `secrets` in, no provider-specific env vars out):
+ *
+ *  - `'plaid'`: `PLAID_CLIENT_ID` / `PLAID_SECRET` / `PLAID_ENV` /
+ *    `CLAD_TOKEN_PASSPHRASE`, from `secrets.plaid`.
+ *  - `'simplefin'`: `CLAD_TOKEN_PASSPHRASE` only, from `secrets.simplefin` —
+ *    mirrors `createSimpleFinProvider`'s env reads in
+ *    `packages/mcp-server/src/provider-factory.ts` (the reference
+ *    implementation): no client id/secret/env triad, just the token-store
+ *    passphrase.
  *
  * Mirrors `packages/cli/src/commands/serve.ts` field-for-field for the
  * non-secret vars (`CLAD_POLICY_PATH`/`CLAD_AUDIT_DB`/`CLAD_APPROVAL_DB`/
- * `CLAD_PROVIDER`/`CLAD_PLAID_DB`), plus `ELECTRON_RUN_AS_NODE: '1'` since
- * the child here is always the Electron binary itself (S0.4 finding) rather
- * than a system `node`.
+ * `CLAD_PROVIDER`/`CLAD_PLAID_DB`/`CLAD_SIMPLEFIN_DB` — that file forwards
+ * both DB paths unconditionally regardless of the active provider, and this
+ * function does the same for consistency), plus `ELECTRON_RUN_AS_NODE: '1'`
+ * since the child here is always the Electron binary itself (S0.4 finding)
+ * rather than a system `node`.
  *
  * Pure object construction — no `electron` import, safe to unit-test.
  */
@@ -28,10 +37,19 @@ export interface PlaidSpawnSecrets {
   passphrase: string
 }
 
-export function buildServerEnv(
-  config: CladConfig,
-  plaidSecrets?: PlaidSpawnSecrets
-): Record<string, string> {
+export interface SimpleFinSpawnSecrets {
+  /** The token-store passphrase — see passphrase.ts. Same passphrase/store mechanism `PlaidSpawnSecrets.passphrase` uses (both back onto `@clad/core`'s `SqliteTokenStore`), just with no accompanying client id/secret. */
+  passphrase: string
+}
+
+export interface McpSpawnSecrets {
+  /** Only consulted when `config.provider === 'plaid'`. */
+  plaid?: PlaidSpawnSecrets
+  /** Only consulted when `config.provider === 'simplefin'`. */
+  simplefin?: SimpleFinSpawnSecrets
+}
+
+export function buildServerEnv(config: CladConfig, secrets?: McpSpawnSecrets): Record<string, string> {
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     CLAD_POLICY_PATH: config.policy_path,
@@ -39,16 +57,21 @@ export function buildServerEnv(
     CLAD_APPROVAL_DB: config.approval_db,
     CLAD_PROVIDER: config.provider,
     CLAD_PLAID_DB: config.plaid_db,
+    CLAD_SIMPLEFIN_DB: config.simplefin_db,
     // The spawned child is always the Electron binary run as plain Node
     // (see mcp-server-path.ts's doc comment) — never a system `node`.
     ELECTRON_RUN_AS_NODE: '1',
   }
 
-  if (config.provider === 'plaid' && plaidSecrets) {
-    env.PLAID_CLIENT_ID = plaidSecrets.clientId
-    env.PLAID_SECRET = plaidSecrets.secret
+  if (config.provider === 'plaid' && secrets?.plaid) {
+    env.PLAID_CLIENT_ID = secrets.plaid.clientId
+    env.PLAID_SECRET = secrets.plaid.secret
     env.PLAID_ENV = config.plaid_env
-    env.CLAD_TOKEN_PASSPHRASE = plaidSecrets.passphrase
+    env.CLAD_TOKEN_PASSPHRASE = secrets.plaid.passphrase
+  }
+
+  if (config.provider === 'simplefin' && secrets?.simplefin) {
+    env.CLAD_TOKEN_PASSPHRASE = secrets.simplefin.passphrase
   }
 
   return env

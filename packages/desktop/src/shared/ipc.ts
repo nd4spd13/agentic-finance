@@ -31,7 +31,7 @@
 
 // ---- Config (D1.1) --------------------------------------------------------
 
-export type CladProvider = 'dummy' | 'plaid'
+export type CladProvider = 'dummy' | 'plaid' | 'simplefin'
 export type PlaidEnvName = 'sandbox' | 'production'
 
 /**
@@ -161,15 +161,15 @@ export interface ClaudeDesktopConnectPreview {
 // ---- Dashboard (D2.3) -------------------------------------------------------
 
 /**
- * `'no-provider-configured'` — the `plaid` provider is selected but Plaid
- * credentials and/or the token-store passphrase aren't fully resolved yet
- * (`'dummy'` is always "configured" — zero setup, see `main/lib/provider-
- * factory.ts`). `'ready'` — the last fetch (or the absence of one) is
- * otherwise normal. `'error'` — the last `refreshDashboard()` attempt
- * failed; `accounts`/`transactions` still reflect the last successful
- * fetch, if any (shown honestly stale rather than hidden — desktop-app.md
- * D2.3's framing: "Stale data shown honestly beats fresh data that burns
- * quota").
+ * `'no-provider-configured'` — the `plaid` or `simplefin` provider is
+ * selected but its prereqs (Plaid credentials + passphrase, or just the
+ * passphrase for SimpleFIN) aren't fully resolved yet (`'dummy'` is always
+ * "configured" — zero setup, see `main/lib/provider-factory.ts`). `'ready'`
+ * — the last fetch (or the absence of one) is otherwise normal. `'error'` —
+ * the last `refreshDashboard()` attempt failed; `accounts`/`transactions`
+ * still reflect the last successful fetch, if any (shown honestly stale
+ * rather than hidden — desktop-app.md D2.3's framing: "Stale data shown
+ * honestly beats fresh data that burns quota").
  */
 export type DashboardProviderState = 'no-provider-configured' | 'ready' | 'error'
 

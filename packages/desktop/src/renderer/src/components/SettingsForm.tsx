@@ -153,6 +153,7 @@ export default function SettingsForm({
         >
           <option value="dummy">Demo data (no bank connection)</option>
           <option value="plaid">Plaid</option>
+          <option value="simplefin">SimpleFIN</option>
         </select>
 
         <label style={s.label} htmlFor="plaid-env">

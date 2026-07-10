@@ -56,6 +56,8 @@ function makeDummyConfig(dir: string): CladConfig {
     provider: 'dummy',
     plaid_db: join(dir, 'plaid.sqlite'),
     plaid_env: 'sandbox',
+    close_to_tray: true,
+    simplefin_db: join(dir, 'simplefin.sqlite'),
   }
 }
 
@@ -151,6 +153,40 @@ describe('McpServerManager', () => {
     expect(status.state).toBe('crashed')
     expect(status.pid).toBeUndefined()
     expect(status.lastError).toMatch(/credentials|passphrase/i)
+  }, 10_000)
+
+  it('fails fast with a clear error when provider=simplefin but the passphrase is missing (no process spawned)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+    const config: CladConfig = { ...makeDummyConfig(dir), provider: 'simplefin' }
+    manager = new McpServerManager({
+      loadConfig: () => config,
+      loadPlaidCredentials: () => null,
+      getActivePassphrase: () => null,
+      onStatusChange: () => undefined,
+    })
+
+    const status = await manager.start()
+
+    expect(status.state).toBe('crashed')
+    expect(status.pid).toBeUndefined()
+    expect(status.lastError).toMatch(/passphrase/i)
+  }, 10_000)
+
+  it('start() spawns a real simplefin-provider server (passphrase only, no Plaid credentials needed) and reaches "running" with tools listed', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+    const config: CladConfig = { ...makeDummyConfig(dir), provider: 'simplefin' }
+    manager = new McpServerManager({
+      loadConfig: () => config,
+      loadPlaidCredentials: () => null,
+      getActivePassphrase: () => 'a-test-passphrase',
+      onStatusChange: () => undefined,
+    })
+
+    const status = await manager.start()
+
+    expect(status.state).toBe('running')
+    expect(typeof status.pid).toBe('number')
+    expect(status.tools).toContain('clad_get_balances')
   }, 10_000)
 
   it('detects an unexpected process exit and auto-restarts with a new process', async () => {

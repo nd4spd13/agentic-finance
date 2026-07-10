@@ -57,9 +57,26 @@ describe('config', () => {
     expect(loaded).toEqual(cfg)
   })
 
+  it('saveConfig + loadConfig roundtrip preserves provider: simplefin', () => {
+    const cfg = { ...defaultConfig(), provider: 'simplefin' as const }
+    saveConfig(cfg)
+    const loaded = loadConfig()
+    expect(loaded).toEqual(cfg)
+    expect(loaded.provider).toBe('simplefin')
+  })
+
   it('loadConfig returns defaults when no config file exists', () => {
     const loaded = loadConfig()
     expect(loaded).toEqual(defaultConfig())
+  })
+
+  it('loadConfig rejects an invalid provider value, falling back to the default (regression: previously any non-"plaid" value silently mapped to "dummy", which was correct pre-simplefin but would have swallowed a real "simplefin" value with the old ===\'plaid\' check)', () => {
+    ensureConfigDir()
+    const badConfig = { ...defaultConfig(), provider: 'not-a-real-provider' }
+    writeFileSync(getConfigPath(), JSON.stringify(badConfig, null, 2) + '\n', 'utf-8')
+
+    const loaded = loadConfig()
+    expect(loaded.provider).toBe('dummy')
   })
 
   it('loadConfig defaults plaid_env when absent from an existing config.json (pre-desktop CLI config)', () => {
