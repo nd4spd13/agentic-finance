@@ -70,6 +70,11 @@ const cladBridge: CladBridge = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.plaidLinkStatusChanged, listener)
   },
   connectSimpleFin: (setupToken: string) => ipcRenderer.invoke(IPC_CHANNELS.simplefinConnect, setupToken),
+  listPlaidItems: () => ipcRenderer.invoke(IPC_CHANNELS.connectListPlaidItems),
+  removePlaidItem: (itemId: string) => ipcRenderer.invoke(IPC_CHANNELS.connectRemovePlaidItem, itemId),
+  listSimpleFinItems: () => ipcRenderer.invoke(IPC_CHANNELS.connectListSimpleFinItems),
+  removeSimpleFinItem: (itemId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.connectRemoveSimpleFinItem, itemId),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

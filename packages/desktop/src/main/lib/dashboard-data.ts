@@ -129,6 +129,33 @@ export class DashboardDataStore {
 
   constructor(private readonly deps: DashboardDataDeps) {}
 
+  /**
+   * Drops the in-memory snapshot AND the cached provider, so `getSnapshot()`
+   * reports `lastRefreshed: null` (nothing fetched this session) and the next
+   * `refresh()` rebuilds the provider against current on-disk state.
+   *
+   * Called after a connection is removed (`connect:removePlaidItem` in
+   * `main/index.ts`): the previously-fetched accounts/transactions may still
+   * include the just-removed item's, and this layer can't surgically drop one
+   * item's rows (the snapshot carries no per-account item id — see
+   * `DashboardAccountSnapshot`). Rather than force a network fetch from inside
+   * the remove handler (which would violate the "never fetch unprompted" rule
+   * this store is built around, and could burn quota or surface a fetch error
+   * as a side effect of removal), this resets to the honest "click Refresh to
+   * load data" state. The dashboard's existing one-shot auto-refresh (D2.3
+   * owner-QA amendment — fires when it next mounts with `lastRefreshed ===
+   * null` and `state === 'ready'`) then re-fetches once when the user next
+   * opens it, so it self-heals without an unprompted fetch here.
+   */
+  invalidate(): void {
+    this.accounts = []
+    this.transactions = []
+    this.lastRefreshed = null
+    this.lastError = undefined
+    this.cachedProvider = null
+    this.cachedFingerprint = null
+  }
+
   /** Pure, synchronous, no network — see module doc comment. Safe to call as often as the renderer likes (e.g. on every mount). */
   getSnapshot(): DashboardSnapshot {
     const config = this.deps.loadConfig()

@@ -302,6 +302,25 @@ export class PlaidCache {
     stmt.run(itemId, cursor, now)
   }
 
+  // ---------------------------------------------------------------------
+  // Removal
+  // ---------------------------------------------------------------------
+
+  /**
+   * Purges every cached row this module owns for a single item — its cached
+   * accounts, its cached transactions, and its `/transactions/sync` cursor.
+   * Used when an item is disconnected (desktop "Remove connection"): the
+   * `TokenStore` deletes the item's encrypted access token from `items`/`meta`
+   * in the same file, and this drops the plaintext-but-non-secret cached data
+   * that would otherwise linger forever with no token left to refresh it.
+   * A no-op for an item that has nothing cached.
+   */
+  removeItem(itemId: string): void {
+    this.db.prepare('DELETE FROM accounts_cache WHERE item_id = ?').run(itemId)
+    this.db.prepare('DELETE FROM transactions_cache WHERE item_id = ?').run(itemId)
+    this.db.prepare('DELETE FROM cursors WHERE item_id = ?').run(itemId)
+  }
+
   close(): void {
     this.db.close()
   }

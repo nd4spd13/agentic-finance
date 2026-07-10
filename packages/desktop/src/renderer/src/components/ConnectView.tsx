@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type {
   ConnectProvidersStatus,
+  LinkedItem,
   PlaidLinkFlowStatus,
   ProviderConnectionState,
+  RemoveLinkedItemResult,
   SimpleFinConnectResult,
 } from '../../../shared/ipc.js'
 import * as s from '../styles.js'
@@ -20,6 +22,111 @@ const CONNECTION_COLOR: Record<ProviderConnectionState, string> = {
 }
 
 /**
+ * Lists a provider's linked items, each with a per-item Remove control that
+ * requires an inline confirm click before it fires (disconnecting is
+ * destructive — for Plaid it revokes the access token upstream). Only ever
+ * renders the display-safe metadata the main process sends (institution name
+ * + created date); a token/access URL never crosses IPC to begin with.
+ *
+ * `onRemove` is expected to resolve to a `RemoveLinkedItemResult` and to have
+ * already refreshed the parent's item list / connection status by the time it
+ * resolves (see `ConnectView`), so this component only has to surface the
+ * result's own warning/error.
+ */
+function LinkedItemsSection({
+  items,
+  loadError,
+  onRemove,
+  removeNote,
+}: {
+  items: LinkedItem[] | null
+  loadError: string | null
+  onRemove: (itemId: string) => Promise<RemoveLinkedItemResult>
+  removeNote: string
+}): JSX.Element {
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionWarning, setActionWarning] = useState<string | null>(null)
+
+  async function handleRemove(itemId: string): Promise<void> {
+    setBusyId(itemId)
+    setActionError(null)
+    setActionWarning(null)
+    try {
+      const result = await onRemove(itemId)
+      if (!result.ok) {
+        setActionError(result.error ?? 'Removing the connection failed.')
+      } else if (result.warning) {
+        setActionWarning(result.warning)
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyId(null)
+      setConfirmingId(null)
+    }
+  }
+
+  return (
+    <div style={{ marginTop: '1rem' }}>
+      <h3 style={{ margin: '0 0 0.25rem', fontSize: 14 }}>Linked items</h3>
+      {loadError && <p style={s.errorText}>Could not load linked items: {loadError}</p>}
+      {!loadError && items === null && <p style={s.mutedText}>Loading…</p>}
+      {!loadError && items !== null && items.length === 0 && (
+        <p style={s.mutedText}>No linked items.</p>
+      )}
+      {!loadError &&
+        items !== null &&
+        items.map((item) => (
+          <div key={item.itemId} style={s.listRow}>
+            <span>
+              <strong>{item.institutionName}</strong>{' '}
+              <span style={s.mutedText}>· linked {new Date(item.createdAt).toLocaleDateString()}</span>
+            </span>
+            {confirmingId === item.itemId ? (
+              <span>
+                <button
+                  type="button"
+                  style={s.buttonDanger}
+                  disabled={busyId === item.itemId}
+                  onClick={() => handleRemove(item.itemId)}
+                >
+                  {busyId === item.itemId ? 'Removing…' : 'Confirm remove'}
+                </button>
+                <button
+                  type="button"
+                  style={s.buttonSecondary}
+                  disabled={busyId === item.itemId}
+                  onClick={() => setConfirmingId(null)}
+                >
+                  Cancel
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                style={s.buttonDanger}
+                disabled={busyId !== null}
+                onClick={() => {
+                  setActionError(null)
+                  setActionWarning(null)
+                  setConfirmingId(item.itemId)
+                }}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        ))}
+      {!loadError && items !== null && items.length > 0 && <p style={s.mutedText}>{removeNote}</p>}
+      {actionWarning && <p style={s.warnText}>{actionWarning}</p>}
+      {actionError && <p style={s.errorText}>{actionError}</p>}
+    </div>
+  )
+}
+
+/**
  * D3.2 — the "Add connection" screen. One place to see every supported
  * provider's connection state and drive its connect flow:
  *  - Plaid: D3.1's in-app Link flow (system browser + loopback server,
@@ -28,6 +135,11 @@ const CONNECTION_COLOR: Record<ProviderConnectionState, string> = {
  *  - SimpleFIN: SF6's paste-a-token flow. The setup token is one-time-use
  *    and flows to the main process only — the resulting access URL is never
  *    sent back here (see `SimpleFinConnectResult` in `shared/ipc.ts`).
+ *
+ * Under each provider card it also lists that provider's linked items with a
+ * per-item Remove control (see `LinkedItemsSection` above and
+ * `main/lib/connection-management.ts`) — the only way to disconnect a linked
+ * item for either provider.
  *
  * Rendered as its own top-level tab (not a Settings subsection) — see
  * `App.tsx`'s doc comment for why: connecting a bank is a first-class,
@@ -45,6 +157,11 @@ export default function ConnectView(): JSX.Element {
   const [simplefinBusy, setSimplefinBusy] = useState(false)
   const [simplefinResult, setSimplefinResult] = useState<SimpleFinConnectResult | null>(null)
 
+  const [plaidItems, setPlaidItems] = useState<LinkedItem[] | null>(null)
+  const [plaidItemsError, setPlaidItemsError] = useState<string | null>(null)
+  const [simplefinItems, setSimplefinItems] = useState<LinkedItem[] | null>(null)
+  const [simplefinItemsError, setSimplefinItemsError] = useState<string | null>(null)
+
   async function reloadProvidersStatus(): Promise<void> {
     try {
       setStatus(await window.clad.getConnectProvidersStatus())
@@ -54,15 +171,38 @@ export default function ConnectView(): JSX.Element {
     }
   }
 
+  async function reloadPlaidItems(): Promise<void> {
+    try {
+      setPlaidItems(await window.clad.listPlaidItems())
+      setPlaidItemsError(null)
+    } catch (err) {
+      setPlaidItemsError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function reloadSimpleFinItems(): Promise<void> {
+    try {
+      setSimplefinItems(await window.clad.listSimpleFinItems())
+      setSimplefinItemsError(null)
+    } catch (err) {
+      setSimplefinItemsError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     void reloadProvidersStatus()
+    void reloadPlaidItems()
+    void reloadSimpleFinItems()
     window.clad.getPlaidLinkStatus().then((s) => {
       if (!cancelled) setLinkStatus(s)
     })
     const unsubscribe = window.clad.onPlaidLinkStatusChanged((s) => {
       setLinkStatus(s)
-      if (s.state === 'success' || s.state === 'error') void reloadProvidersStatus()
+      if (s.state === 'success' || s.state === 'error') {
+        void reloadProvidersStatus()
+        void reloadPlaidItems()
+      }
     })
     return () => {
       cancelled = true
@@ -95,6 +235,22 @@ export default function ConnectView(): JSX.Element {
     }
   }
 
+  async function handleRemovePlaidItem(itemId: string): Promise<RemoveLinkedItemResult> {
+    const result = await window.clad.removePlaidItem(itemId)
+    // Refresh the list + connection status regardless of the outcome — even a
+    // warning-carrying success has already deleted the item locally.
+    await reloadPlaidItems()
+    await reloadProvidersStatus()
+    return result
+  }
+
+  async function handleRemoveSimpleFinItem(itemId: string): Promise<RemoveLinkedItemResult> {
+    const result = await window.clad.removeSimpleFinItem(itemId)
+    await reloadSimpleFinItems()
+    await reloadProvidersStatus()
+    return result
+  }
+
   async function handleSimpleFinConnect(event: React.FormEvent): Promise<void> {
     event.preventDefault()
     setSimplefinBusy(true)
@@ -105,7 +261,10 @@ export default function ConnectView(): JSX.Element {
       // The setup token is one-time-use and now consumed either way (claimed,
       // or already invalid) — never leave it sitting in the field.
       setSetupToken('')
-      if (result.ok) await reloadProvidersStatus()
+      if (result.ok) {
+        await reloadProvidersStatus()
+        await reloadSimpleFinItems()
+      }
     } finally {
       setSimplefinBusy(false)
     }
@@ -200,6 +359,15 @@ export default function ConnectView(): JSX.Element {
                 )}
               </>
             )}
+
+            {status.plaidConnection !== 'unavailable' && (
+              <LinkedItemsSection
+                items={plaidItems}
+                loadError={plaidItemsError}
+                onRemove={handleRemovePlaidItem}
+                removeNote="Removing a connection revokes its access token with Plaid (when your credentials are available) and deletes it from this device."
+              />
+            )}
           </>
         )}
       </div>
@@ -251,6 +419,15 @@ export default function ConnectView(): JSX.Element {
               </>
             )}
             {simplefinResult && !simplefinResult.ok && <p style={s.errorText}>{simplefinResult.error}</p>}
+
+            {status.simplefinConnection !== 'unavailable' && (
+              <LinkedItemsSection
+                items={simplefinItems}
+                loadError={simplefinItemsError}
+                onRemove={handleRemoveSimpleFinItem}
+                removeNote="Removing a connection deletes it from this device. SimpleFIN has no revoke API — to fully revoke a token, do so on the SimpleFIN Bridge website."
+              />
+            )}
           </>
         )}
       </div>
