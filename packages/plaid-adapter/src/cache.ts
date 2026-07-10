@@ -10,6 +10,14 @@ import type { Account, Transaction } from '@clad/core'
  *
  * Follows the `node:sqlite` `DatabaseSync` style used by
  * `packages/core/src/audit/logger.ts`.
+ *
+ * `accounts_cache.institution` (D3 QA amendment, 2026-07-10) persists
+ * `Account.institution` so a degraded (`stale: true`) read still carries
+ * which institution each account belongs to — see `PlaidAdapter`'s
+ * `fetchAccountsForItem`/`getBalance`, which populate it from
+ * `StoredItemMeta.institutionName`. A one-off `ALTER TABLE` in the
+ * constructor migrates any `plaid.sqlite` created before this column
+ * existed; see the comment there for why.
  */
 
 /** A cached account row, including which Plaid item it belongs to. */
@@ -28,6 +36,7 @@ interface AccountRow {
   name: string
   type: string
   subtype: string | null
+  institution: string | null
   mask: string | null
   balance_current: number
   balance_available: number | null
@@ -60,6 +69,7 @@ export class PlaidCache {
         name TEXT NOT NULL,
         type TEXT NOT NULL,
         subtype TEXT,
+        institution TEXT,
         mask TEXT,
         balance_current REAL NOT NULL,
         balance_available REAL,
@@ -67,6 +77,20 @@ export class PlaidCache {
         updated_at TEXT NOT NULL
       )
     `)
+    // Migrates a `plaid.sqlite` created before the `institution` column
+    // existed (added alongside PlaidAdapter populating `Account.institution`
+    // from `StoredItemMeta.institutionName` — D3 QA amendment, 2026-07-10).
+    // SQLite's ALTER TABLE has no `ADD COLUMN IF NOT EXISTS` form, so probe
+    // by attempting the add and swallowing the "duplicate column" error a
+    // database that already has the column — including one just created by
+    // the CREATE TABLE above — throws.
+    try {
+      this.db.exec('ALTER TABLE accounts_cache ADD COLUMN institution TEXT')
+    } catch (error) {
+      if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) {
+        throw error
+      }
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS transactions_cache (
         transaction_id TEXT PRIMARY KEY,
@@ -103,14 +127,15 @@ export class PlaidCache {
     const now = new Date().toISOString()
     const stmt = this.db.prepare(`
       INSERT INTO accounts_cache (
-        account_id, item_id, name, type, subtype, mask,
+        account_id, item_id, name, type, subtype, institution, mask,
         balance_current, balance_available, currency, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id) DO UPDATE SET
         item_id = excluded.item_id,
         name = excluded.name,
         type = excluded.type,
         subtype = excluded.subtype,
+        institution = excluded.institution,
         mask = excluded.mask,
         balance_current = excluded.balance_current,
         balance_available = excluded.balance_available,
@@ -124,6 +149,7 @@ export class PlaidCache {
         account.name,
         account.type,
         account.subtype ?? null,
+        account.institution ?? null,
         account.mask ?? null,
         account.balance_current,
         account.balance_available ?? null,
@@ -288,6 +314,7 @@ function rowToAccount(row: AccountRow): CachedAccount {
     name: row.name,
     type: row.type as Account['type'],
     subtype: row.subtype ?? undefined,
+    institution: row.institution ?? undefined,
     mask: row.mask ?? undefined,
     balance_current: row.balance_current,
     balance_available: row.balance_available ?? undefined,

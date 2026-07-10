@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DashboardDataStore, type DashboardDataDeps } from '../src/main/lib/dashboard-data.js'
+import type { Account } from '@clad/core'
+import { DashboardDataStore, toDashboardAccount, type DashboardDataDeps } from '../src/main/lib/dashboard-data.js'
 import type { CladConfig } from '../src/main/lib/config.js'
 
 let dir: string | undefined
@@ -77,6 +78,9 @@ describe('DashboardDataStore.refresh (dummy provider)', () => {
     // simply has no such fields to leak (see toDashboardAccount).
     expect(Object.keys(snapshot.accounts[0]).sort()).not.toContain('account_number')
     expect(Object.keys(snapshot.accounts[0]).sort()).not.toContain('routing_number')
+    // DummyDataProvider never sets Account.institution — the dashboard's
+    // "—" fallback (Dashboard.tsx) is expected for it.
+    expect(snapshot.accounts[0].institution).toBeUndefined()
 
     expect(snapshot.transactions.length).toBeGreaterThan(0)
     // Sorted most-recent-first.
@@ -156,5 +160,25 @@ describe('DashboardDataStore switching providers', () => {
     expect(recovered.state).toBe('ready')
     expect(recovered.error).toBeUndefined()
     expect(recovered.accounts.length).toBeGreaterThan(0)
+  })
+})
+
+describe('toDashboardAccount', () => {
+  const baseAccount: Account = {
+    id: 'acc_1',
+    name: 'Checking',
+    type: 'checking',
+    balance_current: 100,
+    currency: 'USD',
+  }
+
+  it('carries a provider-populated institution through to the snapshot shape', () => {
+    const mapped = toDashboardAccount({ ...baseAccount, institution: 'Fake Bank' })
+    expect(mapped.institution).toBe('Fake Bank')
+  })
+
+  it('leaves institution undefined when the provider does not populate one (e.g. DummyDataProvider)', () => {
+    const mapped = toDashboardAccount(baseAccount)
+    expect(mapped.institution).toBeUndefined()
   })
 })

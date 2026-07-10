@@ -7,10 +7,29 @@
  * fetch-on-first-read, no fetch hidden inside a getter. `getSnapshot()` is a
  * pure, synchronous read of whatever was last fetched (in-memory only —
  * resets on app restart; that's intentional, not a gap, see below). The ONLY
- * method that ever talks to the provider is `refresh()`, wired to the
- * renderer's explicit "Refresh" button (`dashboard:refresh` in
- * `shared/ipc.ts` / `main/index.ts`). Quoting the plan directly: "Stale data
- * shown honestly beats fresh data that burns quota."
+ * method that ever talks to the provider is `refresh()`, wired to
+ * `dashboard:refresh` in `shared/ipc.ts` / `main/index.ts`. Quoting the plan
+ * directly: "Stale data shown honestly beats fresh data that burns quota."
+ * That core rule is unconditional and unchanged by the amendment below: this
+ * module still never initiates a fetch itself, still has no timer/interval
+ * anywhere in it, and `refresh()` is still the only method that reaches the
+ * provider.
+ *
+ * 2026-07-10 owner-QA amendment: the renderer (`Dashboard.tsx`) is now
+ * allowed exactly ONE automatic call to `refreshDashboard` per app session —
+ * fired when the dashboard first mounts with `lastRefreshed === null` (i.e.
+ * `getSnapshot()`/`getDashboardSnapshot` reports nothing has been fetched
+ * yet this session) and `state === 'ready'` (provider fully configured; a
+ * `'no-provider-configured'` or already-`'error'` snapshot never triggers
+ * it). Product rationale: a fresh launch showing "never refreshed" and an
+ * empty dashboard until the user notices and clicks Refresh was worse UX
+ * than the rate-limit purity the original D2.3 rule optimized for. This is
+ * still bounded to one provider call per session — not polling, not
+ * fetch-on-every-mount, not a timer — the renderer guards it with a
+ * one-shot ref so a failed auto-refresh doesn't retry/loop; the user can
+ * still always hit Refresh manually afterward. See `Dashboard.tsx`'s doc
+ * comment for the renderer-side guard and `desktop-app.md`'s D2.3 section
+ * for the amended plan wording.
  *
  * Why an in-memory-only cache (no disk persistence) is the right amount of
  * scope here: `PlaidAdapter` already owns a real degrade-to-SQLite-cache
@@ -59,6 +78,8 @@ export interface DashboardAccountSnapshot {
   name: string
   type: 'checking' | 'savings' | 'credit' | 'loan' | 'investment'
   mask?: string
+  /** The account's financial institution, when the active provider can resolve one (see `@clad/core`'s `Account.institution` doc comment) — `undefined` for `DummyDataProvider`. */
+  institution?: string
   balanceCurrent: number
   balanceAvailable?: number
   currency: string
@@ -206,12 +227,14 @@ export class DashboardDataStore {
   }
 }
 
-function toDashboardAccount(account: import('@clad/core').Account): DashboardAccountSnapshot {
+/** Exported for direct unit testing of the field mapping (see `test/dashboard-data.test.ts`) — same rationale as `@clad/plaid-adapter`'s exported `mapAccount`/`mapTransaction`. */
+export function toDashboardAccount(account: import('@clad/core').Account): DashboardAccountSnapshot {
   return {
     id: account.id,
     name: account.name,
     type: account.type,
     mask: account.mask,
+    institution: account.institution,
     balanceCurrent: account.balance_current,
     balanceAvailable: account.balance_available,
     currency: account.currency,

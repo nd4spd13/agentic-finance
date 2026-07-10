@@ -180,6 +180,8 @@ export interface DashboardAccount {
   type: 'checking' | 'savings' | 'credit' | 'loan' | 'investment'
   /** Last few digits only, when the provider supplies one (e.g. Plaid's account mask). */
   mask?: string
+  /** The account's financial institution, when the provider can resolve one (SimpleFIN has always populated this; Plaid started populating it too as of the D3 QA amendment, 2026-07-10) — `undefined` for the dummy provider. */
+  institution?: string
   balanceCurrent: number
   balanceAvailable?: number
   currency: string

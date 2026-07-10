@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Account, Transaction } from '@clad/core'
 import { PlaidCache } from '../src/cache.js'
@@ -85,6 +86,69 @@ describe('PlaidCache', () => {
       expect(cached.subtype).toBeUndefined()
       expect(cached.mask).toBeUndefined()
       expect(cached.balance_available).toBeUndefined()
+    })
+
+    it('persists and reads back institution', () => {
+      cache.upsertAccounts('item_1', [{ ...account, institution: 'Fake Bank' }])
+      const [cached] = cache.getAllAccounts()
+      expect(cached.institution).toBe('Fake Bank')
+    })
+
+    it('leaves institution undefined when not provided', () => {
+      cache.upsertAccounts('item_1', [account])
+      const [cached] = cache.getAllAccounts()
+      expect(cached.institution).toBeUndefined()
+    })
+
+    it('updates institution on conflict rather than keeping the old value', () => {
+      cache.upsertAccounts('item_1', [{ ...account, institution: 'Old Bank' }])
+      cache.upsertAccounts('item_1', [{ ...account, institution: 'New Bank' }])
+      const [cached] = cache.getAllAccounts()
+      expect(cached.institution).toBe('New Bank')
+    })
+
+    it('reads accounts written by a pre-institution schema (migrated database)', () => {
+      // Simulates a `plaid.sqlite` created before the `institution` column
+      // existed: insert directly with the pre-migration column list, then
+      // confirm a freshly-opened PlaidCache (which runs the ALTER TABLE
+      // migration on construction) can still read the row. Uses its own
+      // db file (rather than the shared `cache`/`dbPath` from `beforeEach`,
+      // which is already on the current schema by the time this test runs).
+      const legacyDbPath = join(dir, 'legacy-plaid.sqlite')
+      const legacyDb = new DatabaseSync(legacyDbPath)
+      legacyDb.exec(`
+        CREATE TABLE accounts_cache (
+          account_id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL,
+          subtype TEXT,
+          mask TEXT,
+          balance_current REAL NOT NULL,
+          balance_available REAL,
+          currency TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `)
+      legacyDb
+        .prepare(
+          `INSERT INTO accounts_cache (
+            account_id, item_id, name, type, subtype, mask,
+            balance_current, balance_available, currency, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run('acc_legacy', 'item_1', 'Legacy Checking', 'checking', null, null, 100, null, 'USD', '2026-01-01T00:00:00.000Z')
+      legacyDb.close()
+
+      const migrated = new PlaidCache(legacyDbPath)
+      const [cached] = migrated.getAllAccounts()
+      expect(cached.id).toBe('acc_legacy')
+      expect(cached.institution).toBeUndefined()
+
+      // And the migrated table accepts new writes with institution set.
+      migrated.upsertAccounts('item_1', [{ ...account, id: 'acc_new', institution: 'New Bank' }])
+      expect(migrated.getAccount('acc_new')?.institution).toBe('New Bank')
+      migrated.close()
     })
   })
 

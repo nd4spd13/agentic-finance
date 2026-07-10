@@ -58,6 +58,16 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       expect(accounts.every(a => a.stale === undefined)).toBe(true)
     })
 
+    it("populates institution from the owning item's institutionName", async () => {
+      const client = makeFakeClient({
+        accountsGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
+      })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+
+      const accounts = await adapter.getAccounts('user_1')
+      expect(accounts[0].institution).toBe('Fake Bank')
+    })
+
     it('aggregates accounts across multiple stored items', async () => {
       tokenStore.saveItem({
         itemId: 'item_2',
@@ -76,6 +86,8 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
 
       const accounts = await adapter.getAccounts('user_1')
       expect(accounts.map(a => a.id).sort()).toEqual(['plaid_acc_checking', 'plaid_acc_credit'])
+      expect(accounts.find(a => a.id === 'plaid_acc_checking')?.institution).toBe('Fake Bank')
+      expect(accounts.find(a => a.id === 'plaid_acc_credit')?.institution).toBe('Second Bank')
     })
 
     it('serves cached accounts with stale: true when Plaid is unreachable', async () => {
@@ -94,6 +106,8 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       expect(accounts).toHaveLength(1)
       expect(accounts[0].stale).toBe(true)
       expect(accounts[0].id).toBe('plaid_acc_checking')
+      // institution survives the degrade-to-cache path.
+      expect(accounts[0].institution).toBe('Fake Bank')
     })
 
     it('throws ProviderUnavailableError when Plaid fails and there is no cache', async () => {
@@ -136,6 +150,23 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       })
       expect(balance.stale).toBeUndefined()
       expect(typeof balance.last_updated).toBe('string')
+    })
+
+    it("getBalance's own accounts_cache write preserves institution (doesn't clobber it with a later refresh)", async () => {
+      const client = makeFakeClient({
+        accountsGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
+        accountsBalanceGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
+      })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      await adapter.getAccounts('user_1') // warms the cache with institution: 'Fake Bank'
+      await adapter.getBalance('user_1', 'plaid_acc_checking') // re-upserts via getBalance's own cache write
+
+      // Degrade getAccounts to whatever is now in the cache to observe what
+      // getBalance actually persisted.
+      const flakyClient = makeFakeClient({ accountsGet: vi.fn().mockRejectedValue(new Error('down')) })
+      const adapter2 = new PlaidAdapter({ client: flakyClient, tokenStore, dbPath })
+      const accounts = await adapter2.getAccounts('user_1')
+      expect(accounts[0].institution).toBe('Fake Bank')
     })
 
     it('serves the cached balance with stale: true when Plaid is unreachable', async () => {

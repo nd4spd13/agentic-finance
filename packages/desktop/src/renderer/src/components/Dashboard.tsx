@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DashboardSnapshot } from '../../../shared/ipc.js'
 import * as s from '../styles.js'
 
@@ -8,18 +8,26 @@ import * as s from '../styles.js'
  * `provider-factory.ts` — dummy or Plaid today, SimpleFIN slots in later
  * with no change here).
  *
- * RATE-LIMIT DISCIPLINE (desktop-app.md D2.3, critical): mounting this
- * component only ever reads the cache (`getDashboardSnapshot`) — it never
- * triggers a fetch on its own, and there is no polling interval anywhere in
- * this file. The "Refresh" button is the ONLY user action that calls
- * `refreshDashboard`, which is the only IPC call that ever reaches a real
- * provider. The `lastRefreshed` stamp is shown next to it so stale data is
- * never mistaken for live data.
+ * RATE-LIMIT DISCIPLINE (desktop-app.md D2.3, critical — amended 2026-07-10,
+ * see `dashboard-data.ts`'s module doc for the full amendment): mounting
+ * this component reads the cache (`getDashboardSnapshot`) and MAY fire
+ * exactly one automatic `refreshDashboard` call per mount — never more.
+ * There is still no polling interval anywhere in this file, no
+ * fetch-on-every-mount, and no auto-refresh while the provider isn't fully
+ * configured. The auto-refresh effect below only fires once (guarded by
+ * `autoRefreshAttempted`, which survives React StrictMode's dev-mode double
+ * effect invoke) and only when the just-loaded snapshot reports
+ * `lastRefreshed === null` (nothing fetched yet this session) and
+ * `state === 'ready'`. A failed auto-refresh still marks the guard so it
+ * never retries/loops — the "Refresh" button remains available to try
+ * again manually. The `lastRefreshed` stamp is shown next to it so stale
+ * data is never mistaken for live data.
  */
 export default function Dashboard(): JSX.Element {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const autoRefreshAttempted = useRef(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -34,14 +42,28 @@ export default function Dashboard(): JSX.Element {
     load()
   }, [load])
 
-  async function handleRefresh(): Promise<void> {
+  const handleRefresh = useCallback(async (): Promise<void> => {
     setRefreshing(true)
     try {
       setSnapshot(await window.clad.refreshDashboard())
     } finally {
       setRefreshing(false)
     }
-  }
+  }, [])
+
+  // One-shot auto-refresh on launch (2026-07-10 owner-QA amendment — see
+  // this component's doc comment above and dashboard-data.ts's module doc).
+  // Runs after the initial `load()` resolves; a ref (not state) tracks
+  // whether this session has already attempted it so re-renders — including
+  // the one `handleRefresh` itself triggers — never fire it a second time.
+  useEffect(() => {
+    if (loading || !snapshot) return
+    if (autoRefreshAttempted.current) return
+    if (snapshot.lastRefreshed !== null || snapshot.state !== 'ready') return
+
+    autoRefreshAttempted.current = true
+    void handleRefresh()
+  }, [loading, snapshot, handleRefresh])
 
   if (loading || !snapshot) {
     return (
@@ -87,21 +109,34 @@ export default function Dashboard(): JSX.Element {
               : 'No data yet — click Refresh to load balances.'}
           </p>
         ) : (
-          snapshot.accounts.map((account) => (
-            <div key={account.id} style={s.listRow}>
-              <div>
-                <div>{account.name}</div>
-                <div style={s.mutedText}>
-                  {account.type}
-                  {account.mask && ` · •••• ${account.mask}`}
-                  {account.stale && ' · stale'}
-                </div>
-              </div>
-              <div style={account.balanceCurrent < 0 ? s.amountNegative : undefined}>
-                {formatCurrency(account.balanceCurrent, account.currency)}
-              </div>
-            </div>
-          ))
+          <div style={{ overflowX: 'auto' }}>
+            <table style={s.table}>
+              <thead>
+                <tr style={s.tableHeaderRow}>
+                  <th style={s.tableCell}>Name</th>
+                  <th style={s.tableCell}>Institution</th>
+                  <th style={s.tableCell}>Type</th>
+                  <th style={s.tableCell}>Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {snapshot.accounts.map((account) => (
+                  <tr key={account.id} style={s.tableRow}>
+                    <td style={s.tableCell}>
+                      {account.name}
+                      {account.mask && ` · •••• ${account.mask}`}
+                      {account.stale && ' · stale'}
+                    </td>
+                    <td style={s.tableCell}>{account.institution ?? '—'}</td>
+                    <td style={s.tableCell}>{account.type}</td>
+                    <td style={{ ...s.tableCell, ...(account.balanceCurrent < 0 ? s.amountNegative : undefined) }}>
+                      {formatCurrency(account.balanceCurrent, account.currency)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
