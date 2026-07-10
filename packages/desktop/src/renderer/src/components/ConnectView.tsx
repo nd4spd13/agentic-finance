@@ -39,7 +39,7 @@ export default function ConnectView(): JSX.Element {
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const [linkStatus, setLinkStatus] = useState<PlaidLinkFlowStatus>({ state: 'idle' })
-  const [busy, setBusy] = useState(false)
+  const [cancelBusy, setCancelBusy] = useState(false)
 
   const [setupToken, setSetupToken] = useState('')
   const [simplefinBusy, setSimplefinBusy] = useState(false)
@@ -70,22 +70,28 @@ export default function ConnectView(): JSX.Element {
     }
   }, [])
 
+  // Deliberately no busy latch here: the `startPlaidLink` invoke doesn't
+  // resolve until the whole Link flow settles (success/error/timeout) —
+  // potentially minutes later, while the user is off in their browser. The
+  // UI's pending/terminal states arrive within milliseconds through the
+  // `onPlaidLinkStatusChanged` subscription above, and overlapping starts are
+  // already guarded main-side (`PlaidLinkFlowManager.start` returns the
+  // in-flight status instead of starting a second flow). Latching a busy flag
+  // across this await is exactly the bug this replaced: it kept the Cancel
+  // button disabled for the entire flow. The resolved value is only a final
+  // re-sync — after a cancel it's the manager's *current* status, so it never
+  // resurrects the abandoned flow's state.
   async function handleStartPlaidLink(sandboxAuto?: boolean): Promise<void> {
-    setBusy(true)
-    try {
-      const next = await window.clad.startPlaidLink(sandboxAuto ? { sandboxAuto } : undefined)
-      setLinkStatus(next)
-    } finally {
-      setBusy(false)
-    }
+    const next = await window.clad.startPlaidLink(sandboxAuto ? { sandboxAuto } : undefined)
+    setLinkStatus(next)
   }
 
   async function handleCancelPlaidLink(): Promise<void> {
-    setBusy(true)
+    setCancelBusy(true)
     try {
       setLinkStatus(await window.clad.cancelPlaidLink())
     } finally {
-      setBusy(false)
+      setCancelBusy(false)
     }
   }
 
@@ -131,7 +137,7 @@ export default function ConnectView(): JSX.Element {
                 <p style={s.mutedText}>
                   Waiting for Plaid Link to finish in your browser… this can take a few minutes.
                 </p>
-                <button type="button" style={s.buttonSecondary} disabled={busy} onClick={handleCancelPlaidLink}>
+                <button type="button" style={s.buttonSecondary} disabled={cancelBusy} onClick={handleCancelPlaidLink}>
                   Cancel
                 </button>
               </>
@@ -155,7 +161,7 @@ export default function ConnectView(): JSX.Element {
                 <button
                   type="button"
                   style={s.buttonSecondary}
-                  disabled={busy}
+                  disabled={cancelBusy}
                   onClick={handleCancelPlaidLink}
                 >
                   Dismiss
@@ -166,7 +172,7 @@ export default function ConnectView(): JSX.Element {
             {linkStatus.state === 'error' && (
               <>
                 <p style={s.errorText}>{linkStatus.error}</p>
-                <button type="button" style={s.buttonSecondary} disabled={busy} onClick={handleCancelPlaidLink}>
+                <button type="button" style={s.buttonSecondary} disabled={cancelBusy} onClick={handleCancelPlaidLink}>
                   Dismiss
                 </button>
               </>
@@ -177,7 +183,7 @@ export default function ConnectView(): JSX.Element {
                 <button
                   type="button"
                   style={s.button}
-                  disabled={busy || !status.plaidCredentialsConfigured}
+                  disabled={!status.plaidCredentialsConfigured}
                   onClick={() => handleStartPlaidLink()}
                 >
                   Connect a bank
@@ -186,7 +192,7 @@ export default function ConnectView(): JSX.Element {
                   <button
                     type="button"
                     style={s.buttonSecondary}
-                    disabled={busy || !status.plaidCredentialsConfigured}
+                    disabled={!status.plaidCredentialsConfigured}
                     onClick={() => handleStartPlaidLink(true)}
                   >
                     Sandbox auto-connect (dev only, no browser)
