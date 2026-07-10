@@ -37,6 +37,17 @@ export interface PlaidAdapterOptions {
  * `accountId` argument is routed to its owning item via the accounts
  * cache (falling back to scanning all items if the account isn't cached
  * yet, e.g. on a cold cache after a failed initial sync).
+ *
+ * Populates `Account.institution` from the owning item's
+ * `StoredItemMeta.institutionName` on every account this adapter returns
+ * (D3 QA amendment, 2026-07-10 — the Dashboard aggregates accounts across
+ * multiple items with no other way to tell them apart). This is a
+ * deliberate departure from `@clad/core`'s `Account.institution` doc
+ * comment, which called per-account institution "redundant" for Plaid
+ * since one item is always exactly one institution — that reasoning holds
+ * for a single-item view, but not once accounts from many items are
+ * flattened into one list for display, which is exactly what the
+ * Dashboard does.
  */
 export class PlaidAdapter implements FinancialDataProvider {
   private readonly client: PlaidClientLike
@@ -79,7 +90,10 @@ export class PlaidAdapter implements FinancialDataProvider {
       }
       const accessToken = this.tokenStore.getAccessToken(itemId)
       const response = await this.client.accountsBalanceGet({ access_token: accessToken })
-      const accounts = response.data.accounts.map(mapAccount)
+      const institution = this.resolveInstitutionNameForItem(itemId)
+      const accounts = response.data.accounts
+        .map(mapAccount)
+        .map(account => ({ ...account, institution }))
       this.cache.upsertAccounts(itemId, accounts)
 
       const account = accounts.find(a => a.id === accountId)
@@ -176,7 +190,9 @@ export class PlaidAdapter implements FinancialDataProvider {
     try {
       const accessToken = this.tokenStore.getAccessToken(item.itemId)
       const response = await this.client.accountsGet({ access_token: accessToken })
-      const accounts = response.data.accounts.map(mapAccount)
+      const accounts = response.data.accounts
+        .map(mapAccount)
+        .map(account => ({ ...account, institution: item.institutionName }))
       this.cache.upsertAccounts(item.itemId, accounts)
       return accounts
     } catch (error) {
@@ -290,6 +306,17 @@ export class PlaidAdapter implements FinancialDataProvider {
   /** Resolves the owning item for an account via the accounts cache. */
   private resolveItemIdForAccount(accountId: string): string | undefined {
     return this.cache.getItemIdForAccount(accountId)
+  }
+
+  /**
+   * Looks up an item's institution name via the token store, or `undefined`
+   * if the item is no longer stored (e.g. deleted between resolving
+   * `itemId` and this call). Used by `getBalance`, which — unlike
+   * `fetchAccountsForItem` — only has an `itemId`, not the full
+   * `StoredItemMeta`.
+   */
+  private resolveInstitutionNameForItem(itemId: string): string | undefined {
+    return this.tokenStore.listItems().find(i => i.itemId === itemId)?.institutionName
   }
 }
 
