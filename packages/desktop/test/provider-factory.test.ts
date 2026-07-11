@@ -2,10 +2,12 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DummyDataProvider } from '@clad/core'
+import { DummyDataProvider, SqliteTokenStore } from '@clad/core'
+import { SimpleFinAdapter } from '@clad/simplefin-adapter'
 import {
   createFinancialProvider,
   missingPlaidPrereqs,
+  missingSimpleFinPrereqs,
   providerFingerprint,
 } from '../src/main/lib/provider-factory.js'
 import { effectivePlaidDbPath, type CladConfig } from '../src/main/lib/config.js'
@@ -28,6 +30,7 @@ function makeConfig(overrides: Partial<CladConfig> = {}): CladConfig {
     plaid_db: join(base, 'plaid.sqlite'),
     plaid_env: 'sandbox',
     close_to_tray: true,
+    simplefin_db: join(base, 'simplefin.sqlite'),
     ...overrides,
   }
 }
@@ -51,6 +54,19 @@ describe('missingPlaidPrereqs', () => {
       missingPlaidPrereqs({ plaidCredentials: { clientId: 'id', secret: 'sec' }, passphrase: null })
     ).toHaveLength(1)
     expect(missingPlaidPrereqs({ plaidCredentials: null, passphrase: 'pass' })).toHaveLength(1)
+  })
+})
+
+describe('missingSimpleFinPrereqs', () => {
+  it('lists the passphrase when missing', () => {
+    const missing = missingSimpleFinPrereqs({ passphrase: null })
+    expect(missing).toHaveLength(1)
+    expect(missing[0]).toContain('passphrase')
+  })
+
+  it('is empty when the passphrase is present (no client id/secret/env triad required, unlike Plaid)', () => {
+    const missing = missingSimpleFinPrereqs({ passphrase: 'pass' })
+    expect(missing).toEqual([])
   })
 })
 
@@ -80,6 +96,28 @@ describe('providerFingerprint', () => {
       passphrase: 'super-secret-passphrase',
     })
     expect(fp).not.toContain('super-secret')
+  })
+
+  it('changes when simplefin_db changes while provider: simplefin (so a config edit rebuilds the cached provider)', () => {
+    const config = makeConfig({ provider: 'simplefin' })
+    const base = providerFingerprint({ config, plaidCredentials: null, passphrase: 'p' })
+    const changed = providerFingerprint({
+      config: { ...config, simplefin_db: join(dir!, 'other-simplefin.sqlite') },
+      plaidCredentials: null,
+      passphrase: 'p',
+    })
+    expect(changed).not.toBe(base)
+  })
+
+  it('ignores simplefin_db changes when provider is not simplefin (no unnecessary cache invalidation for another provider)', () => {
+    const config = makeConfig({ provider: 'plaid' })
+    const base = providerFingerprint({ config, plaidCredentials: { clientId: 'a', secret: 'b' }, passphrase: 'p' })
+    const changed = providerFingerprint({
+      config: { ...config, simplefin_db: join(dir!, 'other-simplefin.sqlite') },
+      plaidCredentials: { clientId: 'a', secret: 'b' },
+      passphrase: 'p',
+    })
+    expect(changed).toBe(base)
   })
 
   /**
@@ -136,6 +174,53 @@ describe('createFinancialProvider', () => {
       // Never echoes the credential values themselves back in the error text.
       expect(result.error).not.toContain('my-super-secret-value')
       expect(result.error).not.toContain('my-client-id-xyz')
+    }
+  })
+
+  it('fails with a display-safe message when simplefin is selected but the passphrase is missing', async () => {
+    const config = makeConfig({ provider: 'simplefin' })
+    const result = await createFinancialProvider({ config, plaidCredentials: null, passphrase: null })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error).toContain('SimpleFIN')
+      expect(result.error).toContain('passphrase')
+    }
+  })
+
+  it('returns a SimpleFinAdapter for provider: simplefin when only a passphrase is supplied (no client id/secret needed)', async () => {
+    const config = makeConfig({ provider: 'simplefin' })
+    const result = await createFinancialProvider({ config, plaidCredentials: null, passphrase: 'my-passphrase' })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.provider).toBeInstanceOf(SimpleFinAdapter)
+    }
+  })
+
+  it('ignores plaidCredentials entirely for provider: simplefin', async () => {
+    const config = makeConfig({ provider: 'simplefin' })
+    const result = await createFinancialProvider({
+      config,
+      plaidCredentials: { clientId: 'irrelevant', secret: 'irrelevant' },
+      passphrase: 'my-passphrase',
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it('fails with a redacted message when the simplefin passphrase does not match an existing token store (wrong key)', async () => {
+    const config = makeConfig({ provider: 'simplefin' })
+    // Pre-create the store with one passphrase...
+    new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: 'the-real-passphrase' })
+
+    // ...then try to open it with a different one.
+    const result = await createFinancialProvider({
+      config,
+      plaidCredentials: null,
+      passphrase: 'a-totally-wrong-passphrase',
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error).not.toContain('the-real-passphrase')
+      expect(result.error).not.toContain('a-totally-wrong-passphrase')
     }
   })
 

@@ -41,9 +41,12 @@
  * yet this session", not a stale/wrong number silently served as current.
  *
  * Provider-agnostic by construction: this module only ever talks to the
- * `FinancialDataProvider` interface via `createFinancialProvider()` — when
- * the SimpleFIN adapter lands on main (separate PR) and `provider-
- * factory.ts` grows a `'simplefin'` branch, nothing here needs to change.
+ * `FinancialDataProvider` interface via `createFinancialProvider()`. Now that
+ * `provider-factory.ts` has grown a `'simplefin'` branch
+ * (feat/desktop-simplefin-provider), the only change needed here was a
+ * parallel pre-flight gate in `getSnapshot()`/`refresh()` (mirroring the
+ * existing `'plaid'` one) against the new `missingSimpleFinPrereqs` helper —
+ * the fetch/map/cache logic below stayed untouched.
  *
  * Field shapes below (`DashboardAccountSnapshot`/`DashboardTransactionSnapshot`/
  * `DashboardSnapshot`) are a deliberate standalone mirror of the identically-
@@ -54,7 +57,12 @@
  */
 
 import { getCladCore } from './clad-core.js'
-import { createFinancialProvider, missingPlaidPrereqs, providerFingerprint } from './provider-factory.js'
+import {
+  createFinancialProvider,
+  missingPlaidPrereqs,
+  missingSimpleFinPrereqs,
+  providerFingerprint,
+} from './provider-factory.js'
 import type { CladConfig, CladProvider } from './config.js'
 
 /**
@@ -150,6 +158,22 @@ export class DashboardDataStore {
       }
     }
 
+    if (config.provider === 'simplefin') {
+      const missing = missingSimpleFinPrereqs({
+        passphrase: this.deps.getActivePassphrase(),
+      })
+      if (missing.length > 0) {
+        return {
+          state: 'no-provider-configured',
+          provider: config.provider,
+          accounts: this.accounts,
+          transactions: this.transactions,
+          lastRefreshed: this.lastRefreshed,
+          error: `The SimpleFIN provider is selected but not fully set up. Missing: ${missing.join('; ')}.`,
+        }
+      }
+    }
+
     return {
       state: this.lastError ? 'error' : 'ready',
       provider: config.provider,
@@ -180,15 +204,19 @@ export class DashboardDataStore {
       const factoryResult = await createFinancialProvider({ config, plaidCredentials, passphrase })
       if (!factoryResult.ok) {
         // Two distinct cases collapse into "not ok" here: (1) the common
-        // "plaid selected but credentials/passphrase missing" case, which
-        // getSnapshot() already re-derives independently via
-        // missingPlaidPrereqs() and takes priority over lastError — nothing
-        // to update for that one; (2) a genuine construction failure (e.g.
-        // an invalid plaid_env) despite prereqs being present, which
-        // getSnapshot() has no other way to learn about — surface it via
-        // lastError so it isn't silently swallowed as a bare 'ready' state
-        // with no data and no explanation.
-        if (missingPlaidPrereqs({ plaidCredentials, passphrase }).length === 0) {
+        // "selected provider missing its prereqs" case, which getSnapshot()
+        // already re-derives independently (via missingPlaidPrereqs()/
+        // missingSimpleFinPrereqs(), whichever matches config.provider) and
+        // takes priority over lastError — nothing to update for that one;
+        // (2) a genuine construction failure (e.g. an invalid plaid_env, or
+        // a wrong-passphrase SimpleFIN token store) despite prereqs being
+        // present, which getSnapshot() has no other way to learn about —
+        // surface it via lastError so it isn't silently swallowed as a bare
+        // 'ready' state with no data and no explanation.
+        const alreadyExplainedByGetSnapshot =
+          (config.provider === 'plaid' && missingPlaidPrereqs({ plaidCredentials, passphrase }).length > 0) ||
+          (config.provider === 'simplefin' && missingSimpleFinPrereqs({ passphrase }).length > 0)
+        if (!alreadyExplainedByGetSnapshot) {
           this.lastError = factoryResult.error
         }
         return this.getSnapshot()

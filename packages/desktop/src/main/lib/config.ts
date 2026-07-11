@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 
-export type CladProvider = 'dummy' | 'plaid'
+export type CladProvider = 'dummy' | 'plaid' | 'simplefin'
 export type PlaidEnvName = 'sandbox' | 'production'
 
 export interface CladConfig {
@@ -55,10 +55,16 @@ export interface CladConfig {
    * pointed at the same `CLAD_CONFIG_DIR`, and vice versa. Unlike `plaid_env`
    * above, this isn't a desktop-only addition — it's filling in a field the
    * CLI's config has always had that this port simply hadn't needed until
-   * D3.2. `provider` deliberately stays `'dummy' | 'plaid'` here (unchanged)
-   * — D3.2 only wires the connect flow (claim + store), not routing the
-   * dashboard/MCP server through SimpleFIN as the active provider; that's
-   * `provider-factory.ts` follow-up work, out of scope for this task.
+   * D3.2.
+   *
+   * D3.2 only wired the connect flow (claim + store) — `provider` stayed
+   * `'dummy' | 'plaid'` and nothing consumed a saved token yet. This
+   * follow-up (feat/desktop-simplefin-provider) is that "route the
+   * dashboard/MCP server through SimpleFIN as the active provider" work:
+   * `provider` now includes `'simplefin'` (see `CladProvider` above), and
+   * `main/lib/provider-factory.ts` / `main/lib/mcp-server-env.ts` know how to
+   * build a real `SimpleFinAdapter` (in-process) / spawn the MCP child with
+   * `CLAD_PROVIDER=simplefin` (out-of-process) from it.
    */
   simplefin_db: string
 }
@@ -107,7 +113,8 @@ export function loadConfig(): CladConfig {
     server_pid_file: parsed.server_pid_file
       ? resolve(parsed.server_pid_file.replace('~', homedir()))
       : defaults.server_pid_file,
-    provider: parsed.provider === 'plaid' ? 'plaid' : defaults.provider,
+    provider:
+      parsed.provider === 'plaid' || parsed.provider === 'simplefin' ? parsed.provider : defaults.provider,
     plaid_db: parsed.plaid_db
       ? resolve(parsed.plaid_db.replace('~', homedir()))
       : defaults.plaid_db,

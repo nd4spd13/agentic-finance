@@ -24,6 +24,7 @@ function makeConfig(overrides: Partial<CladConfig> = {}): CladConfig {
     plaid_db: join(base, 'plaid.sqlite'),
     plaid_env: 'sandbox',
     close_to_tray: true,
+    simplefin_db: join(base, 'simplefin.sqlite'),
     ...overrides,
   }
 }
@@ -160,6 +161,46 @@ describe('DashboardDataStore switching providers', () => {
     expect(recovered.state).toBe('ready')
     expect(recovered.error).toBeUndefined()
     expect(recovered.accounts.length).toBeGreaterThan(0)
+  })
+})
+
+describe('DashboardDataStore with provider: simplefin and missing prerequisites', () => {
+  it('getSnapshot reports no-provider-configured with a helpful, display-safe message (no Plaid Client ID/Secret mentioned)', () => {
+    const store = new DashboardDataStore(
+      makeDeps({ loadConfig: () => makeConfig({ provider: 'simplefin' }) })
+    )
+    const snapshot = store.getSnapshot()
+    expect(snapshot.state).toBe('no-provider-configured')
+    expect(snapshot.error).toContain('passphrase')
+    expect(snapshot.error).not.toContain('Client ID/Secret')
+    expect(snapshot.accounts).toEqual([])
+  })
+
+  it('refresh() also reports no-provider-configured and never throws', async () => {
+    const store = new DashboardDataStore(
+      makeDeps({ loadConfig: () => makeConfig({ provider: 'simplefin' }) })
+    )
+    const snapshot = await store.refresh()
+    expect(snapshot.state).toBe('no-provider-configured')
+    expect(snapshot.lastRefreshed).toBeNull()
+  })
+})
+
+describe('DashboardDataStore with provider: simplefin and only a passphrase (no Plaid credentials at all)', () => {
+  it('refresh() succeeds with an empty accounts list when no SimpleFIN item has been connected yet', async () => {
+    const store = new DashboardDataStore(
+      makeDeps({
+        loadConfig: () => makeConfig({ provider: 'simplefin' }),
+        loadPlaidCredentials: () => null,
+        getActivePassphrase: () => 'a-real-passphrase',
+      })
+    )
+
+    const snapshot = await store.refresh()
+    expect(snapshot.state).toBe('ready')
+    expect(snapshot.error).toBeUndefined()
+    expect(snapshot.accounts).toEqual([])
+    expect(snapshot.lastRefreshed).not.toBeNull()
   })
 })
 

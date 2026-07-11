@@ -27,7 +27,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { resolveMcpServerEntry } from './mcp-server-path.js'
-import { buildServerEnv, type PlaidSpawnSecrets } from './mcp-server-env.js'
+import { buildServerEnv, type McpSpawnSecrets } from './mcp-server-env.js'
 import { getCladCore } from './clad-core.js'
 import type { CladConfig } from './config.js'
 
@@ -140,7 +140,7 @@ export class McpServerManager {
 
     const config = this.deps.loadConfig()
 
-    let plaidSecrets: PlaidSpawnSecrets | undefined
+    let secrets: McpSpawnSecrets | undefined
     if (config.provider === 'plaid') {
       const creds = this.deps.loadPlaidCredentials()
       const passphrase = this.deps.getActivePassphrase()
@@ -150,19 +150,28 @@ export class McpServerManager {
         this.setState('crashed')
         return
       }
-      plaidSecrets = { ...creds, passphrase }
+      secrets = { plaid: { ...creds, passphrase } }
+    } else if (config.provider === 'simplefin') {
+      const passphrase = this.deps.getActivePassphrase()
+      if (!passphrase) {
+        this.lastError =
+          'SimpleFIN provider selected but the token-store passphrase is not set yet. Finish the migration/setup prompt first.'
+        this.setState('crashed')
+        return
+      }
+      secrets = { simplefin: { passphrase } }
     }
 
-    await this.spawnWithEnv(config, plaidSecrets, attemptId)
+    await this.spawnWithEnv(config, secrets, attemptId)
   }
 
   private async spawnWithEnv(
     config: CladConfig,
-    plaidSecrets: PlaidSpawnSecrets | undefined,
+    secrets: McpSpawnSecrets | undefined,
     attemptId: number
   ): Promise<void> {
     const serverEntry = resolveMcpServerEntry()
-    const env = buildServerEnv(config, plaidSecrets)
+    const env = buildServerEnv(config, secrets)
 
     const transport = new StdioClientTransport({
       command: process.execPath,

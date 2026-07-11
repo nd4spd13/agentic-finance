@@ -12,27 +12,31 @@
  * SimpleFIN adapter lands on main ... it should slot in via the same
  * factory pattern with no dashboard changes"): callers (`dashboard-data.ts`)
  * only ever see the `FinancialDataProvider` interface, never a
- * provider-specific type. Adding a `'simplefin'` branch here later is the
- * only change a future PR needs to make.
+ * provider-specific type. The `'simplefin'` branch below is that adapter
+ * landing (feat/desktop-simplefin-provider) — `dashboard-data.ts` only had
+ * to grow a parallel pre-flight check against the new
+ * `missingSimpleFinPrereqs` helper, no provider-specific logic of its own.
  *
  * Same S0.2 rule as everywhere else under `src/main/**`: `@clad/core` /
- * `@clad/plaid-adapter` are ESM-only and crash the CJS main bundle on a
- * static import — this module only ever reaches them through
- * `getCladCore()` / `getCladPlaidAdapter()` (enforced by the desktop
- * eslint override). Type references use the inline `import('@clad/core')...`
- * form (a `TSImportType`, not an `ImportDeclaration`) so even type-only
- * usage never trips that rule or risks a real bundled import.
+ * `@clad/plaid-adapter` / `@clad/simplefin-adapter` are ESM-only and crash
+ * the CJS main bundle on a static import — this module only ever reaches
+ * them through `getCladCore()` / `getCladPlaidAdapter()` /
+ * `getCladSimpleFinAdapter()` (enforced by the desktop eslint override).
+ * Type references use the inline `import('@clad/core')...` form (a
+ * `TSImportType`, not an `ImportDeclaration`) so even type-only usage never
+ * trips that rule or risks a real bundled import.
  */
 
 import { getCladCore } from './clad-core.js'
 import { getCladPlaidAdapter } from './plaid-adapter.js'
+import { getCladSimpleFinAdapter } from './simplefin-adapter.js'
 import { effectivePlaidDbPath, type CladConfig } from './config.js'
 
 export interface ProviderFactoryInput {
   config: CladConfig
-  /** `null` when Plaid credentials haven't been saved yet (see `plaid-secrets.ts`). Ignored entirely when `config.provider === 'dummy'`. */
+  /** `null` when Plaid credentials haven't been saved yet (see `plaid-secrets.ts`). Ignored entirely unless `config.provider === 'plaid'` (in particular, ignored for `'simplefin'` — it has no client id/secret/env triad, only a token-store passphrase). */
   plaidCredentials: { clientId: string; secret: string } | null
-  /** `null` when passphrase custody isn't resolved yet (e.g. CLI-migration prompt still pending). Ignored entirely when `config.provider === 'dummy'`. */
+  /** `null` when passphrase custody isn't resolved yet (e.g. CLI-migration prompt still pending). Ignored entirely when `config.provider === 'dummy'` — consulted by both `'plaid'` and `'simplefin'`, which share the same `@clad/core` `SqliteTokenStore` mechanism. */
   passphrase: string | null
 }
 
@@ -49,15 +53,32 @@ export function missingPlaidPrereqs(input: Pick<ProviderFactoryInput, 'plaidCred
 }
 
 /**
+ * Same shape/purpose as `missingPlaidPrereqs` above, but SimpleFIN needs
+ * only the token-store passphrase — no client id/secret/env triad (its whole
+ * pitch is no developer account and no company-held credentials; the only
+ * "credential" is the per-item access URL a user obtains themselves via the
+ * D3.2 connect flow, which this factory never touches directly). Mirrors
+ * `createSimpleFinProvider`'s prereq check in
+ * `packages/mcp-server/src/provider-factory.ts` (the reference
+ * implementation this desktop factory follows).
+ */
+export function missingSimpleFinPrereqs(input: Pick<ProviderFactoryInput, 'passphrase'>): string[] {
+  const missing: string[] = []
+  if (!input.passphrase) missing.push('a resolved token-store passphrase (finish the migration/setup prompt first)')
+  return missing
+}
+
+/**
  * A cheap identity for "does the provider need to be rebuilt", used by
  * `dashboard-data.ts` to reuse one long-lived provider instance across
  * repeated manual refreshes instead of opening a fresh `SqliteTokenStore`/
- * `PlaidCache` handle (and its underlying `node:sqlite` connection) on every
- * click — those are never explicitly closed by `PlaidAdapter` (it has no
- * `close()`), so leaving the old one to be garbage-collected instead of
- * reused would accumulate open file handles over a long session. Never
- * embeds credential/passphrase *values*, only whether each is present, even
- * though this string never crosses IPC.
+ * `PlaidCache`/`SimpleFinCache` handle (and its underlying `node:sqlite`
+ * connection) on every click — neither `PlaidAdapter` nor `SimpleFinAdapter`
+ * are ever explicitly closed (no `close()` method on either), so leaving the
+ * old one to be garbage-collected instead of reused would accumulate open
+ * file handles over a long session. Never embeds credential/passphrase
+ * *values*, only whether each is present, even though this string never
+ * crosses IPC.
  *
  * D3.3: embeds `effectivePlaidDbPath(config, config.plaid_env)` rather than
  * the raw `config.plaid_db` — that's the actual SQLite file
@@ -74,6 +95,11 @@ export function providerFingerprint(input: ProviderFactoryInput): string {
     config.provider,
     config.plaid_env,
     effectivePlaidDbPath(config, config.plaid_env),
+    // Only folded in for 'simplefin' — a config edit to simplefin_db while
+    // a different provider is active shouldn't invalidate that provider's
+    // cached instance (matches the "only what this provider actually reads"
+    // discipline the plaid_env/effective-path entries above already follow).
+    config.provider === 'simplefin' ? config.simplefin_db : 'simplefin_db:n/a',
     plaidCredentials ? 'creds:set' : 'creds:unset',
     passphrase ? 'pass:set' : 'pass:unset',
   ].join('|')
@@ -87,6 +113,29 @@ export async function createFinancialProvider(input: ProviderFactoryInput): Prom
     return { ok: true, provider: new DummyDataProvider() }
   }
 
+  if (config.provider === 'simplefin') {
+    const missing = missingSimpleFinPrereqs({ passphrase })
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        error: `The SimpleFIN provider is selected but not fully set up. Missing: ${missing.join('; ')}.`,
+      }
+    }
+
+    try {
+      const { SqliteTokenStore } = await getCladCore()
+      const { SimpleFinAdapter } = await getCladSimpleFinAdapter()
+      const tokenStore = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: passphrase! })
+      const provider = new SimpleFinAdapter({ tokenStore, dbPath: config.simplefin_db })
+      return { ok: true, provider }
+    } catch (err) {
+      const { redactSecrets } = await getCladCore()
+      const message = err instanceof Error ? err.message : String(err)
+      return { ok: false, error: redactSecrets(message) }
+    }
+  }
+
+  // Only 'plaid' remains at this point (CladProvider is 'dummy' | 'plaid' | 'simplefin').
   const missing = missingPlaidPrereqs({ plaidCredentials, passphrase })
   if (missing.length > 0) {
     return {
