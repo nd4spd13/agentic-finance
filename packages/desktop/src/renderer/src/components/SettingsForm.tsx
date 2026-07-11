@@ -32,10 +32,27 @@ export default function SettingsForm({
     setSavingProvider(true)
     setProviderMessage(null)
     try {
+      // Packaged builds never render the environment <select> below, so
+      // `plaidEnv` state here is always already 'production' in that case —
+      // this call can't accidentally request 'sandbox'. The main process
+      // still rejects it defensively either way (`configSetProviderAndEnv`
+      // in `main/index.ts`).
       const result = await window.clad.setProviderAndEnv({ provider, plaidEnv })
       if (result.ok) {
         setProviderMessage({ ok: true, text: 'Saved.' })
-        onConfigChange({ ...config, provider, plaidEnv })
+        // Re-fetch the full config (rather than hand-merging provider/plaidEnv
+        // into the existing one) so the Plaid credentials card below —
+        // labeled and scoped to `config.plaidEnv` — immediately reflects the
+        // newly-active env's own saved status, not the previous env's.
+        const fresh = await window.clad.getConfig()
+        setPlaidEnv(fresh.plaidEnv)
+        // Stale unsaved credential input was typed against whichever env's
+        // card was showing before this save — clear it rather than let it
+        // carry over and get saved into the new env's slot by mistake.
+        setClientId('')
+        setSecret('')
+        setCredsMessage(null)
+        onConfigChange(fresh)
       } else {
         setProviderMessage({ ok: false, text: result.error ?? 'Failed to save.' })
       }
@@ -156,18 +173,27 @@ export default function SettingsForm({
           <option value="simplefin">SimpleFIN</option>
         </select>
 
-        <label style={s.label} htmlFor="plaid-env">
-          Plaid environment
-        </label>
-        <select
-          id="plaid-env"
-          style={s.select}
-          value={plaidEnv}
-          onChange={(e) => setPlaidEnv(e.target.value as PlaidEnvName)}
-        >
-          <option value="sandbox">Sandbox</option>
-          <option value="production">Production</option>
-        </select>
+        {config.isPackaged ? (
+          <p style={s.mutedText}>
+            Plaid environment: <strong>Production</strong> — packaged builds are production-only and
+            can&apos;t switch to Sandbox.
+          </p>
+        ) : (
+          <>
+            <label style={s.label} htmlFor="plaid-env">
+              Plaid environment
+            </label>
+            <select
+              id="plaid-env"
+              style={s.select}
+              value={plaidEnv}
+              onChange={(e) => setPlaidEnv(e.target.value as PlaidEnvName)}
+            >
+              <option value="sandbox">Sandbox</option>
+              <option value="production">Production</option>
+            </select>
+          </>
+        )}
 
         <button type="button" style={s.button} onClick={handleSaveProvider} disabled={savingProvider}>
           Save
@@ -178,7 +204,16 @@ export default function SettingsForm({
       </div>
 
       <div style={s.card}>
-        <h2 style={{ marginTop: 0 }}>Plaid credentials</h2>
+        <h2 style={{ marginTop: 0 }}>
+          Plaid credentials{' '}
+          <span style={{ fontWeight: 400, fontSize: '0.75em' }}>
+            ({config.plaidEnv === 'production' ? 'Production' : 'Sandbox'})
+          </span>
+        </h2>
+        {/* D3.3: these credentials are scoped to `config.plaidEnv` — see
+            `getActivePlaidSecrets()` in main/index.ts. Switching the env
+            above and saving shows/edits that env's own slot, never the
+            other one's. */}
         <p style={s.mutedText}>
           Bring your own Plaid <code>CLIENT_ID</code> / <code>SECRET</code> (
           {/* Cross-origin navigation is intercepted by the main process's

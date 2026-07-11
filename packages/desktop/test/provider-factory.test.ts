@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DummyDataProvider, SqliteTokenStore } from '@clad/core'
@@ -10,7 +10,7 @@ import {
   missingSimpleFinPrereqs,
   providerFingerprint,
 } from '../src/main/lib/provider-factory.js'
-import type { CladConfig } from '../src/main/lib/config.js'
+import { effectivePlaidDbPath, type CladConfig } from '../src/main/lib/config.js'
 
 let dir: string | undefined
 
@@ -119,6 +119,26 @@ describe('providerFingerprint', () => {
     })
     expect(changed).toBe(base)
   })
+
+  /**
+   * D3.3 — the fingerprint must reflect the actual on-disk resource a
+   * provider instance is backed by, not just the raw config inputs: sandbox
+   * and production share the same `plaid_db` field but resolve to different
+   * physical SQLite files (see `effectivePlaidDbPath`), so a plain env
+   * switch (with everything else held constant) must still be treated as "a
+   * different provider" by `dashboard-data.ts`'s reuse-vs-rebuild check.
+   */
+  it('differs between sandbox and production for the same plaid_db field, and embeds the env-scoped path', () => {
+    const sandboxConfig = makeConfig({ provider: 'plaid', plaid_env: 'sandbox' })
+    const productionConfig = { ...sandboxConfig, plaid_env: 'production' as const }
+
+    const sandboxFp = providerFingerprint({ config: sandboxConfig, plaidCredentials: null, passphrase: null })
+    const productionFp = providerFingerprint({ config: productionConfig, plaidCredentials: null, passphrase: null })
+
+    expect(sandboxFp).not.toBe(productionFp)
+    expect(sandboxFp).toContain(effectivePlaidDbPath(sandboxConfig, 'sandbox'))
+    expect(productionFp).toContain(effectivePlaidDbPath(productionConfig, 'production'))
+  })
 })
 
 describe('createFinancialProvider', () => {
@@ -202,5 +222,34 @@ describe('createFinancialProvider', () => {
       expect(result.error).not.toContain('the-real-passphrase')
       expect(result.error).not.toContain('a-totally-wrong-passphrase')
     }
+  })
+
+  /**
+   * D3.3 — the actual SQLite file created on disk must land at the
+   * env-scoped path, not the raw `plaid_db` field, for both envs. This is
+   * the real-world consequence of `effectivePlaidDbPath`: sandbox and
+   * production never share (or fight over) the same physical file.
+   */
+  it('sandbox opens the derived -sandbox sibling file on disk, never the raw plaid_db path', async () => {
+    const config = makeConfig({ provider: 'plaid', plaid_env: 'sandbox' })
+    const result = await createFinancialProvider({
+      config,
+      plaidCredentials: { clientId: 'id', secret: 'sec' },
+      passphrase: 'pass',
+    })
+    expect(result.ok).toBe(true)
+    expect(existsSync(effectivePlaidDbPath(config, 'sandbox'))).toBe(true)
+    expect(existsSync(config.plaid_db)).toBe(false)
+  })
+
+  it('production opens config.plaid_db verbatim on disk (CLI interop)', async () => {
+    const config = makeConfig({ provider: 'plaid', plaid_env: 'production' })
+    const result = await createFinancialProvider({
+      config,
+      plaidCredentials: { clientId: 'id', secret: 'sec' },
+      passphrase: 'pass',
+    })
+    expect(result.ok).toBe(true)
+    expect(existsSync(config.plaid_db)).toBe(true)
   })
 })

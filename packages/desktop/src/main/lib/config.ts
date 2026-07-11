@@ -29,7 +29,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 
 export type CladProvider = 'dummy' | 'plaid' | 'simplefin'
 export type PlaidEnvName = 'sandbox' | 'production'
@@ -228,7 +228,70 @@ export function ensureConfigBootstrap(): CladConfig {
  * the `migration:startFresh` IPC handler). Deliberately distinct from the
  * CLI's default `plaid.sqlite` so a pre-existing CLI-managed store is never
  * overwritten or otherwise touched by choosing this path.
+ *
+ * Orthogonal to env scoping below: this only ever repoints the RAW
+ * `plaid_db` config field (what `effectivePlaidDbPath` treats as the
+ * `'production'` value). If the active env is `'sandbox'` at the time (or
+ * afterward), `effectivePlaidDbPath(config, 'sandbox')` still derives its
+ * sibling from whatever `plaid_db` currently is — e.g. after "start fresh"
+ * that's `plaid-desktop-sandbox.sqlite`, not the CLI-adjacent
+ * `plaid-sandbox.sqlite`. That's correct: "start fresh" exists specifically
+ * to stop touching the CLI's file at all, in either env.
  */
 export function desktopOnlyPlaidDbPath(): string {
   return join(getConfigDir(), 'plaid-desktop.sqlite')
+}
+
+/**
+ * D3.3 — env-scoped Plaid token store/cache path. Plaid sandbox and
+ * production are different backends with different Items; sharing one
+ * SQLite file between them would intermingle unrelated data and break
+ * lookups made against the "wrong" environment's tokens.
+ *
+ * `'production'` returns `config.plaid_db` UNCHANGED — this is load-bearing
+ * for CLI interop: the CLI has no env scoping of its own (see
+ * `packages/cli/src/config.ts` — one `plaid_db` field, full stop; `PLAID_ENV`
+ * only selects which Plaid API it talks to, never which file it reads/
+ * writes), so the desktop app's production env has to keep pointing at the
+ * exact same path the CLI would use, byte-for-byte, or the two stop seeing
+ * the same linked accounts.
+ *
+ * `'sandbox'` derives a sibling path in the same directory, same extension,
+ * with a `-sandbox` suffix inserted before the extension (`plaid.sqlite` ->
+ * `plaid-sandbox.sqlite`) — never a path the CLI has any reason to touch,
+ * so a dev build switched to sandbox can never collide with (or silently
+ * corrupt) a CLI-managed production store.
+ *
+ * Every desktop-side consumer of `config.plaid_db` (the token store itself,
+ * `providerFingerprint`, the spawned MCP server's `CLAD_PLAID_DB`, the
+ * CLI-migration detection, ...) must resolve its actual on-disk path through
+ * this function rather than reading `config.plaid_db` directly — see each
+ * call site's own doc comment for why.
+ */
+export function effectivePlaidDbPath(config: CladConfig, env: PlaidEnvName): string {
+  if (env === 'production') return config.plaid_db
+  const ext = extname(config.plaid_db)
+  const base = basename(config.plaid_db, ext)
+  return join(dirname(config.plaid_db), `${base}-sandbox${ext}`)
+}
+
+/**
+ * D3.3 — packaged-build normalization: a packaged build is ALWAYS
+ * `'production'`, regardless of what `config.json`'s `plaid_env` says (e.g.
+ * a config authored by a dev build against the same `CLAD_CONFIG_DIR`, or
+ * one hand-edited by the user). Applied at *read* time, never at *write*
+ * time — `configSetProviderAndEnv`'s handler in `main/index.ts` still
+ * rejects an attempt to persist `'sandbox'` from a packaged build outright,
+ * but this function's job is to make sure that EVEN IF an already-sandbox
+ * config.json is sitting there (the common case: a developer's own machine,
+ * running both a dev build and a locally-built packaged one against the
+ * same config dir), the packaged app never actually acts on it — no crash,
+ * no silent sandbox usage, just a normalized read.
+ *
+ * Pure and `electron`-free like every other function in this module — real
+ * callers pass `app.isPackaged` in from `main/index.ts` (the one place in
+ * this app allowed to import `electron`); see that file's `loadEffectiveConfig`.
+ */
+export function effectivePlaidEnv(configuredEnv: PlaidEnvName, isPackaged: boolean): PlaidEnvName {
+  return isPackaged ? 'production' : configuredEnv
 }
