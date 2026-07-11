@@ -391,4 +391,47 @@ describe('SimpleFinCache', () => {
       cache.close()
     })
   })
+
+  describe('removeItem', () => {
+    it('purges an item\'s accounts, transactions, and fetch-log entry', () => {
+      const clock = makeFakeClock('2026-01-01T00:00:00.000Z')
+      const cache = new SimpleFinCache({ dbPath, now: clock.now })
+      cache.recordFetch('item_1', [account], [transaction])
+      expect(cache.getAccounts('item_1')).toHaveLength(1)
+      expect(cache.getStaleness('item_1').lastFetchedAt).toBeDefined()
+
+      cache.removeItem('item_1')
+
+      expect(cache.getAccounts('item_1')).toHaveLength(0)
+      expect(cache.getTransactionsByItem('item_1')).toHaveLength(0)
+      // fetch_log entry gone → back to the "never fetched" state.
+      expect(cache.getStaleness('item_1').lastFetchedAt).toBeUndefined()
+      expect(cache.shouldRefresh('item_1')).toBe(true)
+      cache.close()
+    })
+
+    it('leaves another item\'s cached data untouched', () => {
+      const cache = new SimpleFinCache({ dbPath })
+      cache.recordFetch('item_1', [account], [transaction])
+      cache.recordFetch(
+        'item_2',
+        [{ ...account, id: 'simplefin:acct_2' }],
+        [{ ...transaction, id: 'simplefin:acct_2:txn_2', account_id: 'simplefin:acct_2' }]
+      )
+
+      cache.removeItem('item_1')
+
+      expect(cache.getAccounts('item_1')).toHaveLength(0)
+      expect(cache.getAccounts('item_2')).toHaveLength(1)
+      expect(cache.getTransactionsByItem('item_2')).toHaveLength(1)
+      expect(cache.getStaleness('item_2').lastFetchedAt).toBeDefined()
+      cache.close()
+    })
+
+    it('is a no-op for an item that has nothing cached', () => {
+      const cache = new SimpleFinCache({ dbPath })
+      expect(() => cache.removeItem('never-existed')).not.toThrow()
+      cache.close()
+    })
+  })
 })

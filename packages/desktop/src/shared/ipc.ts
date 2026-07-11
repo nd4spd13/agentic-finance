@@ -461,6 +461,38 @@ export interface ConnectProvidersStatus {
   plaidEnv: PlaidEnvName
 }
 
+// ---- Connection management (list + remove linked items) -------------------
+
+/**
+ * Display-safe view of one linked item shown under a provider card on the
+ * Connect screen. Deliberately carries ONLY non-secret metadata — an item id,
+ * the institution name, and the created date. Never a Plaid access token or a
+ * SimpleFIN access URL (this repo treats that as a hard security rule; see
+ * `main/lib/connection-management.ts`). Structurally identical to that
+ * module's own `LinkedItem`, kept as a standalone copy for the same layering
+ * reason as `DashboardAccount`/`ApprovalListItem` above (this file must stay
+ * importable from the renderer/preload build without reaching into `src/main/**`).
+ */
+export interface LinkedItem {
+  itemId: string
+  institutionName: string
+  /** ISO-8601 timestamp the item was first stored. */
+  createdAt: string
+}
+
+/**
+ * Result of removing (disconnecting) a linked item. `ok: true` with a set
+ * `warning` means the item was deleted locally but a best-effort upstream
+ * revocation (Plaid `/item/remove`) couldn't be completed — the item is gone
+ * from this machine either way. Display-safe (redacted where derived from a
+ * thrown provider error).
+ */
+export interface RemoveLinkedItemResult {
+  ok: boolean
+  warning?: string
+  error?: string
+}
+
 // ---- Audit log viewer (D2.2) ------------------------------------------------
 
 /** Display-safe view of an `@clad/core` `AuditRecord` — camelCased field names, otherwise a 1:1 copy (every field here was already non-secret; the hash-chain fields are intentionally omitted as not useful for this read-only viewer). */
@@ -538,6 +570,11 @@ export const IPC_CHANNELS = {
   /** Push-only, main -> renderer. See `onPlaidLinkStatusChanged` below. */
   plaidLinkStatusChanged: 'connect:plaidLinkStatusChanged',
   simplefinConnect: 'connect:simplefinConnect',
+  // Connection management (list + remove linked items)
+  connectListPlaidItems: 'connect:listPlaidItems',
+  connectRemovePlaidItem: 'connect:removePlaidItem',
+  connectListSimpleFinItems: 'connect:listSimpleFinItems',
+  connectRemoveSimpleFinItem: 'connect:removeSimpleFinItem',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -598,6 +635,14 @@ export interface CladBridge {
   onPlaidLinkStatusChanged(callback: (status: PlaidLinkFlowStatus) => void): () => void
   /** Claims a pasted SimpleFIN setup token and stores the resulting access URL — see `simplefin-connect.ts`. The setup token is renderer -> main only; the resulting access URL is never returned. */
   connectSimpleFin(setupToken: string): Promise<SimpleFinConnectResult>
+  /** Lists the Plaid items currently linked — display-safe metadata only, never tokens. Rejects only on a genuine store-read failure. */
+  listPlaidItems(): Promise<LinkedItem[]>
+  /** Disconnects a Plaid item: best-effort `/item/remove` revocation, then local token + cache deletion. Never rejects — failures come back as `{ ok: false, error }`. */
+  removePlaidItem(itemId: string): Promise<RemoveLinkedItemResult>
+  /** Lists the SimpleFIN items currently linked — display-safe metadata only, never access URLs. */
+  listSimpleFinItems(): Promise<LinkedItem[]>
+  /** Disconnects a SimpleFIN item locally (no revoke API exists for SimpleFIN). Never rejects — failures come back as `{ ok: false, error }`. */
+  removeSimpleFinItem(itemId: string): Promise<RemoveLinkedItemResult>
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */

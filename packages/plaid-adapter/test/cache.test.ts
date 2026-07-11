@@ -276,4 +276,39 @@ describe('PlaidCache', () => {
     expect(reopened.getCursor('item_1')).toBe('cursor_1')
     reopened.close()
   })
+
+  describe('removeItem', () => {
+    it('purges an item\'s accounts, transactions, and cursor', () => {
+      cache.upsertAccounts('item_1', [account])
+      cache.upsertTransactions('item_1', [transaction])
+      cache.saveCursor('item_1', 'cursor_1')
+
+      cache.removeItem('item_1')
+
+      expect(cache.getAccountsByItem('item_1')).toHaveLength(0)
+      expect(cache.getTransactionsByItem('item_1')).toHaveLength(0)
+      expect(cache.getCursor('item_1')).toBeUndefined()
+    })
+
+    it('leaves other items\' cached data untouched', () => {
+      cache.upsertAccounts('item_1', [account])
+      cache.upsertTransactions('item_1', [transaction])
+      cache.saveCursor('item_1', 'cursor_1')
+      const otherAccount = { ...account, id: 'acc_2' }
+      const otherTxn = { ...transaction, id: 'txn_2', account_id: 'acc_2' }
+      cache.upsertAccounts('item_2', [otherAccount])
+      cache.upsertTransactions('item_2', [otherTxn])
+      cache.saveCursor('item_2', 'cursor_2')
+
+      cache.removeItem('item_1')
+
+      expect(cache.getAccountsByItem('item_2')).toHaveLength(1)
+      expect(cache.getTransactionsByItem('item_2')).toHaveLength(1)
+      expect(cache.getCursor('item_2')).toBe('cursor_2')
+    })
+
+    it('is a no-op for an item that has nothing cached', () => {
+      expect(() => cache.removeItem('never-existed')).not.toThrow()
+    })
+  })
 })

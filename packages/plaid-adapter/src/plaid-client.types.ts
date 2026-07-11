@@ -4,6 +4,8 @@ import type {
   AccountsGetResponse,
   ItemPublicTokenExchangeRequest,
   ItemPublicTokenExchangeResponse,
+  ItemRemoveRequest,
+  ItemRemoveResponse,
   LinkTokenCreateRequest,
   LinkTokenCreateResponse,
   SandboxPublicTokenCreateRequest,
@@ -33,6 +35,15 @@ export interface PlaidClientLike {
   itemPublicTokenExchange(
     request: ItemPublicTokenExchangeRequest
   ): Promise<AxiosResponse<ItemPublicTokenExchangeResponse>>
+
+  /**
+   * Revokes an Item's access token via `/item/remove`. Used by the desktop
+   * "Remove connection" flow as a best-effort revocation before the local
+   * token store deletes its copy — see `main/lib/connection-management.ts`.
+   * Present on the real `PlaidApi`; declared here so callers stay type-safe
+   * against `PlaidClientLike` and unit tests can substitute a fake.
+   */
+  itemRemove(request: ItemRemoveRequest): Promise<AxiosResponse<ItemRemoveResponse>>
 
   accountsGet(request: AccountsGetRequest): Promise<AxiosResponse<AccountsGetResponse>>
 

@@ -99,6 +99,35 @@ describe('DashboardDataStore.refresh (dummy provider)', () => {
   })
 })
 
+describe('DashboardDataStore.invalidate', () => {
+  it('drops the cached snapshot back to the empty "never fetched this session" state', async () => {
+    const store = new DashboardDataStore(makeDeps())
+    await store.refresh()
+    expect(store.getSnapshot().accounts.length).toBeGreaterThan(0)
+
+    store.invalidate()
+
+    const snapshot = store.getSnapshot()
+    expect(snapshot.state).toBe('ready')
+    expect(snapshot.accounts).toEqual([])
+    expect(snapshot.transactions).toEqual([])
+    expect(snapshot.lastRefreshed).toBeNull()
+    expect(snapshot.error).toBeUndefined()
+  })
+
+  it('does not fetch on its own — a later refresh repopulates', async () => {
+    const store = new DashboardDataStore(makeDeps())
+    await store.refresh()
+    store.invalidate()
+    // Still empty until an explicit refresh.
+    expect(store.getSnapshot().lastRefreshed).toBeNull()
+
+    const snapshot = await store.refresh()
+    expect(snapshot.accounts.length).toBeGreaterThan(0)
+    expect(snapshot.lastRefreshed).not.toBeNull()
+  })
+})
+
 describe('DashboardDataStore with provider: plaid and missing prerequisites', () => {
   it('getSnapshot reports no-provider-configured with a helpful, display-safe message', () => {
     const store = new DashboardDataStore(

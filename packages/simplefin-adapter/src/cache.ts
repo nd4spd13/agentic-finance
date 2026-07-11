@@ -364,6 +364,34 @@ export class SimpleFinCache {
     return rows.map((row) => rowToTransaction(row, stale))
   }
 
+  // ---------------------------------------------------------------------
+  // Removal
+  // ---------------------------------------------------------------------
+
+  /**
+   * Purges every row this cache owns for a single item — its cached accounts,
+   * its cached transactions, and its `fetch_log` quota-timestamp entry. Used
+   * when a SimpleFIN item is disconnected (desktop "Remove connection"): the
+   * `TokenStore` deletes the item's encrypted access URL from `items`/`meta`
+   * in the same file, and this drops the non-secret cached data (and the
+   * fetch-log row, so a later item that happened to reuse the same id would
+   * start fresh rather than inherit a stale last-fetch time). Wrapped in a
+   * transaction for the same all-or-nothing reason `recordFetch` is. A no-op
+   * for an item that has nothing cached.
+   */
+  removeItem(itemId: string): void {
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare('DELETE FROM fetch_log WHERE item_id = ?').run(itemId)
+      this.db.prepare('DELETE FROM accounts_cache WHERE item_id = ?').run(itemId)
+      this.db.prepare('DELETE FROM transactions_cache WHERE item_id = ?').run(itemId)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   close(): void {
     this.db.close()
   }

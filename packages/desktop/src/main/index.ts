@@ -53,6 +53,14 @@ import {
   type SimpleFinConnectResult,
 } from './lib/simplefin-connect.js'
 import {
+  listPlaidItems,
+  removePlaidItem,
+  listSimpleFinItems,
+  removeSimpleFinItem,
+  type LinkedItem,
+  type RemoveLinkedItemResult,
+} from './lib/connection-management.js'
+import {
   trayTooltip,
   trayServerStatusMenuLabel,
   trayApprovalsMenuLabel,
@@ -768,6 +776,46 @@ ipcMain.handle(
   IPC_CHANNELS.simplefinConnect,
   (_event, setupToken: string): Promise<SimpleFinConnectResult> =>
     claimAndStoreSimpleFinToken(setupToken, { loadConfig, getActivePassphrase: getActiveTokenStorePassphrase })
+)
+
+// ---- IPC handlers (connection management: list + remove linked items) ------
+
+const connectionManagementDeps = {
+  loadConfig,
+  getActivePassphrase: getActiveTokenStorePassphrase,
+  loadPlaidCredentials: () => getPlaidSecrets().load(),
+}
+
+// Listing can reject (a genuine store-read failure) — the renderer wraps it
+// and shows an inline error, same posture as `approvalsList`/`auditLogQuery`.
+ipcMain.handle(
+  IPC_CHANNELS.connectListPlaidItems,
+  (): Promise<LinkedItem[]> => listPlaidItems(connectionManagementDeps)
+)
+ipcMain.handle(
+  IPC_CHANNELS.connectListSimpleFinItems,
+  (): Promise<LinkedItem[]> => listSimpleFinItems(connectionManagementDeps)
+)
+
+// Removal never throws (returns `{ ok, warning?, error? }`). On success, drop
+// the dashboard's in-memory snapshot so it no longer shows the removed item's
+// accounts — it self-heals via its one-shot auto-refresh next time the user
+// opens the Dashboard tab (see `DashboardDataStore.invalidate`'s doc comment
+// for why this is preferred over forcing a network fetch here). SimpleFIN is
+// not wired through the dashboard provider factory yet, so removing a
+// SimpleFIN item can't affect the dashboard — no invalidation needed there.
+ipcMain.handle(
+  IPC_CHANNELS.connectRemovePlaidItem,
+  async (_event, itemId: string): Promise<RemoveLinkedItemResult> => {
+    const result = await removePlaidItem(itemId, connectionManagementDeps)
+    if (result.ok) dashboardStore.invalidate()
+    return result
+  }
+)
+ipcMain.handle(
+  IPC_CHANNELS.connectRemoveSimpleFinItem,
+  (_event, itemId: string): Promise<RemoveLinkedItemResult> =>
+    removeSimpleFinItem(itemId, connectionManagementDeps)
 )
 
 // ---- App lifecycle ----------------------------------------------------------
