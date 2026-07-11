@@ -780,10 +780,15 @@ ipcMain.handle(
 
 // ---- IPC handlers (connection management: list + remove linked items) ------
 
+// D3.3: `loadEffectiveConfig`/`getActivePlaidSecrets()` — same DI shape as
+// mcpManager/dashboardStore/plaidLinkFlow above — so list/remove/disconnect
+// (and the best-effort Plaid revocation inside `removePlaidItem`) all
+// operate on the ACTIVE environment's store/credentials, never a stale
+// packaged-build-unaware `plaid_env` or the wrong env's secrets slot.
 const connectionManagementDeps = {
-  loadConfig,
+  loadConfig: loadEffectiveConfig,
   getActivePassphrase: getActiveTokenStorePassphrase,
-  loadPlaidCredentials: () => getPlaidSecrets().load(),
+  loadPlaidCredentials: () => getActivePlaidSecrets().load(),
 }
 
 // Listing can reject (a genuine store-read failure) — the renderer wraps it

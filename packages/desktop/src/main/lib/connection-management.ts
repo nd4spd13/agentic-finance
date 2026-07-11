@@ -28,17 +28,24 @@
  * desktop eslint override). Type references use the inline
  * `import('@clad/...')...` form so even type-only usage never trips that rule.
  *
- * NOTE (follow-up, `feat/plaid-env-gating`): this targets `config.plaid_db`
- * directly. Once env-gating lands its `effectivePlaidDbPath(config, env)`
- * helper, Plaid listing/removal must be re-pointed at the ACTIVE
- * environment's store (a rebase, not a rewrite — the store/cache access is
- * localized to `openPlaidStores` below).
+ * D3.3: Plaid listing/removal opens `effectivePlaidDbPath(config,
+ * config.plaid_env)` — the ACTIVE environment's store/cache file — rather
+ * than raw `config.plaid_db`, so list/remove/disconnect only ever sees the
+ * currently-selected env's items, consistent with every other Plaid surface
+ * (`provider-factory.ts`, `plaid-link-flow.ts`, `mcp-server-env.ts`). `deps`
+ * must therefore supply an *effective* config (`main/index.ts`'s
+ * `loadEffectiveConfig`) so `config.plaid_env` is already normalized for a
+ * packaged build before it reaches this module — same for the credentials
+ * `deps.loadPlaidCredentials` supplies, which must come from the ACTIVE
+ * env's `PlaidSecretsStore` slot (`getActivePlaidSecrets()` in
+ * `main/index.ts`). SimpleFIN has no env concept and is unaffected —
+ * `config.simplefin_db` is used as-is below.
  */
 
 import { getCladCore } from './clad-core.js'
 import { getCladPlaidAdapter } from './plaid-adapter.js'
 import { getCladSimpleFinAdapter } from './simplefin-adapter.js'
-import type { CladConfig } from './config.js'
+import { effectivePlaidDbPath, type CladConfig } from './config.js'
 
 /** Display-safe view of one linked item — never a token/access URL. */
 export interface LinkedItem {
@@ -100,7 +107,7 @@ export async function listPlaidItems(deps: ListDeps): Promise<LinkedItem[]> {
   const config = deps.loadConfig()
   const { SqliteTokenStore } = await getCladPlaidAdapter()
 
-  const store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase })
+  const store = new SqliteTokenStore({ dbPath: effectivePlaidDbPath(config, config.plaid_env), passphrase })
   try {
     return store.listItems().map(toLinkedItem)
   } finally {
@@ -134,7 +141,7 @@ export async function removePlaidItem(
 
   let store: InstanceType<typeof SqliteTokenStore>
   try {
-    store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase })
+    store = new SqliteTokenStore({ dbPath: effectivePlaidDbPath(config, config.plaid_env), passphrase })
   } catch (err) {
     return { ok: false, error: await describePlaidError(err) }
   }
@@ -183,7 +190,7 @@ export async function removePlaidItem(
   // is already gone shouldn't flip the whole result to failure — the item IS
   // removed — so surface it as a warning instead.
   try {
-    const cache = new PlaidCache(config.plaid_db)
+    const cache = new PlaidCache(effectivePlaidDbPath(config, config.plaid_env))
     try {
       cache.removeItem(itemId)
     } finally {
