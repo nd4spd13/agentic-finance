@@ -26,7 +26,7 @@ import {
   listSimpleFinItems,
   removeSimpleFinItem,
 } from '../src/main/lib/connection-management.js'
-import type { CladConfig } from '../src/main/lib/config.js'
+import { effectivePlaidDbPath, type CladConfig } from '../src/main/lib/config.js'
 
 const PASSPHRASE = 'unit-test-passphrase'
 const PLAID_ACCESS_TOKEN = 'access-sandbox-11112222-3333-4444-5555-666677778888'
@@ -55,12 +55,17 @@ function makeConfig(overrides: Partial<CladConfig> = {}): CladConfig {
   }
 }
 
-/** Seeds a Plaid token + cache rows for one item at the config's plaid_db. */
+/** The env-scoped path `listPlaidItems`/`removePlaidItem` actually open for `config` — see `effectivePlaidDbPath`. */
+function activePlaidDbPath(config: CladConfig): string {
+  return effectivePlaidDbPath(config, config.plaid_env)
+}
+
+/** Seeds a Plaid token + cache rows for one item at the config's ACTIVE (env-scoped) Plaid db path. */
 function seedPlaidItem(config: CladConfig, itemId: string, institution: string): void {
-  const store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase: PASSPHRASE })
+  const store = new SqliteTokenStore({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
   store.saveItem({ itemId, institutionName: institution, accessToken: PLAID_ACCESS_TOKEN })
   store.close()
-  const cache = new PlaidCache(config.plaid_db)
+  const cache = new PlaidCache(activePlaidDbPath(config))
   cache.upsertAccounts(itemId, [
     {
       id: `${itemId}-acc`,
@@ -172,11 +177,11 @@ describe('removePlaidItem', () => {
     expect(revokedToken).toBe(PLAID_ACCESS_TOKEN)
 
     // Token gone.
-    const store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase: PASSPHRASE })
+    const store = new SqliteTokenStore({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
     expect(store.listItems()).toHaveLength(0)
     store.close()
     // Cache rows gone.
-    const cache = new PlaidCache(config.plaid_db)
+    const cache = new PlaidCache(activePlaidDbPath(config))
     expect(cache.getAccountsByItem('item_1')).toHaveLength(0)
     expect(cache.getTransactionsByItem('item_1')).toHaveLength(0)
     expect(cache.getCursor('item_1')).toBeUndefined()
@@ -199,7 +204,7 @@ describe('removePlaidItem', () => {
     assertNoSecret(result.warning)
     assertNoSecret(result.error)
 
-    const store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase: PASSPHRASE })
+    const store = new SqliteTokenStore({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
     expect(store.listItems()).toHaveLength(0)
     store.close()
   })
@@ -217,7 +222,7 @@ describe('removePlaidItem', () => {
     expect(result.ok).toBe(true)
     expect(result.warning).toMatch(/credentials are not available/i)
 
-    const store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase: PASSPHRASE })
+    const store = new SqliteTokenStore({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
     expect(store.listItems()).toHaveLength(0)
     store.close()
   })
@@ -237,7 +242,7 @@ describe('removePlaidItem', () => {
 
     const items = await listPlaidItems({ loadConfig: () => config, getActivePassphrase: () => PASSPHRASE })
     expect(items.map((i) => i.itemId)).toEqual(['item_2'])
-    const cache = new PlaidCache(config.plaid_db)
+    const cache = new PlaidCache(activePlaidDbPath(config))
     expect(cache.getAccountsByItem('item_2')).toHaveLength(1)
     cache.close()
   })
@@ -257,9 +262,123 @@ describe('removePlaidItem', () => {
     expect(result.ok).toBe(true)
     expect(revokeAttempted).toBe(false)
     // The existing item is untouched.
-    const store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase: PASSPHRASE })
+    const store = new SqliteTokenStore({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
     expect(store.listItems().map((i) => i.itemId)).toEqual(['item_1'])
     store.close()
+  })
+})
+
+// ---- Plaid: env-scoping (D3.3) ---------------------------------------------
+//
+// Mirrors `test/provider-factory.test.ts`'s D3.3 coverage: sandbox and
+// production share the same `config.plaid_db` field but resolve to different
+// physical SQLite files via `effectivePlaidDbPath`, so list/remove must never
+// cross the env boundary.
+
+describe('Plaid env-scoping (D3.3)', () => {
+  it('sandbox list/remove touches the derived -sandbox file, never config.plaid_db', async () => {
+    const config = makeConfig({ plaid_env: 'sandbox' })
+    seedPlaidItem(config, 'item_sandbox', 'Sandbox Bank')
+
+    // Seeding (via the module's own env-scoped path) never created the raw
+    // plaid_db file — only the derived -sandbox sibling exists.
+    expect(existsSync(config.plaid_db)).toBe(false)
+    expect(existsSync(effectivePlaidDbPath(config, 'sandbox'))).toBe(true)
+
+    const items = await listPlaidItems({ loadConfig: () => config, getActivePassphrase: () => PASSPHRASE })
+    expect(items.map((i) => i.itemId)).toEqual(['item_sandbox'])
+
+    const result = await removePlaidItem('item_sandbox', {
+      loadConfig: () => config,
+      getActivePassphrase: () => PASSPHRASE,
+      loadPlaidCredentials: () => null,
+    })
+    expect(result.ok).toBe(true)
+
+    // Still never touched the raw plaid_db path.
+    expect(existsSync(config.plaid_db)).toBe(false)
+    const sandboxStore = new SqliteTokenStore({
+      dbPath: effectivePlaidDbPath(config, 'sandbox'),
+      passphrase: PASSPHRASE,
+    })
+    expect(sandboxStore.listItems()).toHaveLength(0)
+    sandboxStore.close()
+  })
+
+  it('production list/remove touches config.plaid_db verbatim (CLI interop)', async () => {
+    const config = makeConfig({ plaid_env: 'production' })
+    seedPlaidItem(config, 'item_prod', 'Prod Bank')
+
+    expect(effectivePlaidDbPath(config, 'production')).toBe(config.plaid_db)
+    expect(existsSync(config.plaid_db)).toBe(true)
+
+    const items = await listPlaidItems({ loadConfig: () => config, getActivePassphrase: () => PASSPHRASE })
+    expect(items.map((i) => i.itemId)).toEqual(['item_prod'])
+
+    const result = await removePlaidItem('item_prod', {
+      loadConfig: () => config,
+      getActivePassphrase: () => PASSPHRASE,
+      loadPlaidCredentials: () => null,
+    })
+    expect(result.ok).toBe(true)
+
+    const store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase: PASSPHRASE })
+    expect(store.listItems()).toHaveLength(0)
+    store.close()
+  })
+
+  it('sandbox and production items are invisible to each other despite sharing the same plaid_db field', async () => {
+    const sandboxConfig = makeConfig({ plaid_env: 'sandbox' })
+    const productionConfig = { ...sandboxConfig, plaid_env: 'production' as const }
+
+    seedPlaidItem(sandboxConfig, 'item_sandbox', 'Sandbox Bank')
+    seedPlaidItem(productionConfig, 'item_prod', 'Prod Bank')
+
+    const sandboxItems = await listPlaidItems({
+      loadConfig: () => sandboxConfig,
+      getActivePassphrase: () => PASSPHRASE,
+    })
+    const productionItems = await listPlaidItems({
+      loadConfig: () => productionConfig,
+      getActivePassphrase: () => PASSPHRASE,
+    })
+
+    expect(sandboxItems.map((i) => i.itemId)).toEqual(['item_sandbox'])
+    expect(productionItems.map((i) => i.itemId)).toEqual(['item_prod'])
+
+    // Removing the sandbox item must never touch the production file.
+    await removePlaidItem('item_sandbox', {
+      loadConfig: () => sandboxConfig,
+      getActivePassphrase: () => PASSPHRASE,
+      loadPlaidCredentials: () => null,
+    })
+    const stillProd = await listPlaidItems({
+      loadConfig: () => productionConfig,
+      getActivePassphrase: () => PASSPHRASE,
+    })
+    expect(stillProd.map((i) => i.itemId)).toEqual(['item_prod'])
+  })
+
+  it('best-effort revocation is built with the ACTIVE env credentials and env, not a fixed one', async () => {
+    const config = makeConfig({ plaid_env: 'production' })
+    seedPlaidItem(config, 'item_1', 'First Bank')
+    let capturedEnv: CladConfig['plaid_env'] | undefined
+    let capturedCreds: { clientId: string; secret: string } | undefined
+
+    const result = await removePlaidItem('item_1', {
+      loadConfig: () => config,
+      getActivePassphrase: () => PASSPHRASE,
+      loadPlaidCredentials: () => ({ clientId: 'prod-id', secret: 'prod-secret' }),
+      createClient: (creds, plaidEnv) => {
+        capturedCreds = creds
+        capturedEnv = plaidEnv
+        return makeFakeClient()
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(capturedEnv).toBe('production')
+    expect(capturedCreds).toEqual({ clientId: 'prod-id', secret: 'prod-secret' })
   })
 })
 
@@ -324,8 +443,8 @@ describe('removeSimpleFinItem', () => {
       getActivePassphrase: () => PASSPHRASE,
     })
 
-    expect(existsSync(config.plaid_db)).toBe(true)
-    const store = new SqliteTokenStore({ dbPath: config.plaid_db, passphrase: PASSPHRASE })
+    expect(existsSync(activePlaidDbPath(config))).toBe(true)
+    const store = new SqliteTokenStore({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
     expect(store.listItems().map((i) => i.itemId)).toEqual(['item_1'])
     store.close()
   })
