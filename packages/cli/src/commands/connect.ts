@@ -305,7 +305,7 @@ async function connectSimpleFin(opts: ConnectOptions): Promise<void> {
     let accounts: SimpleFinAccountSummary[] | undefined
     try {
       console.error('clad connect: fetching an initial account summary…')
-      accounts = await fetchInitialSimpleFinSummary(itemId, accessUrl, config.simplefin_db, opts.fetch)
+      accounts = await fetchInitialSimpleFinSummary(itemId, accessUrl, config.simplefin_db, passphrase, opts.fetch)
     } catch (error) {
       console.log(
         '  Could not fetch an initial account summary yet: ' + describeSimpleFinError(error)
@@ -348,9 +348,10 @@ async function fetchInitialSimpleFinSummary(
   itemId: string,
   accessUrl: string,
   dbPath: string,
+  passphrase: string,
   fetchImpl: FetchLike | undefined
 ): Promise<SimpleFinAccountSummary[]> {
-  const cache = new SimpleFinCache({ dbPath })
+  const cache = new SimpleFinCache({ dbPath, passphrase })
   try {
     const nowSeconds = Math.floor(Date.now() / 1000)
     const accountSet = await fetchAccounts(accessUrl, {

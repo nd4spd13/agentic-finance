@@ -136,7 +136,7 @@ export async function claimAndStoreSimpleFinToken(
     let accounts: SimpleFinAccountSummary[] | undefined
     let warning: string | undefined
     try {
-      accounts = await fetchInitialSimpleFinSummary(itemId, accessUrl, config.simplefin_db, deps.fetch)
+      accounts = await fetchInitialSimpleFinSummary(itemId, accessUrl, config.simplefin_db, passphrase, deps.fetch)
     } catch (err) {
       warning =
         'Could not fetch an initial account summary yet: ' +
@@ -163,10 +163,11 @@ async function fetchInitialSimpleFinSummary(
   itemId: string,
   accessUrl: string,
   dbPath: string,
+  passphrase: string,
   fetchImpl: typeof fetch | undefined
 ): Promise<SimpleFinAccountSummary[]> {
   const { fetchAccounts, mapAccountSet, MAX_WINDOW_SECONDS, SimpleFinCache } = await getCladSimpleFinAdapter()
-  const cache = new SimpleFinCache({ dbPath })
+  const cache = new SimpleFinCache({ dbPath, passphrase })
   try {
     const nowSeconds = Math.floor(Date.now() / 1000)
     const accountSet = await fetchAccounts(accessUrl, {

@@ -1,10 +1,12 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Account, Transaction } from '@clad/core'
+import { TokenStoreKeyError, type Account, type Transaction } from '@clad/core'
 import { PlaidCache } from '../src/cache.js'
+
+const TEST_PASSPHRASE = 'correct horse battery staple'
 
 describe('PlaidCache', () => {
   let dir: string
@@ -14,7 +16,7 @@ describe('PlaidCache', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'plaid-cache-test-'))
     dbPath = join(dir, 'plaid.sqlite')
-    cache = new PlaidCache(dbPath)
+    cache = new PlaidCache({ dbPath, passphrase: TEST_PASSPHRASE })
   })
 
   afterEach(() => {
@@ -107,49 +109,6 @@ describe('PlaidCache', () => {
       expect(cached.institution).toBe('New Bank')
     })
 
-    it('reads accounts written by a pre-institution schema (migrated database)', () => {
-      // Simulates a `plaid.sqlite` created before the `institution` column
-      // existed: insert directly with the pre-migration column list, then
-      // confirm a freshly-opened PlaidCache (which runs the ALTER TABLE
-      // migration on construction) can still read the row. Uses its own
-      // db file (rather than the shared `cache`/`dbPath` from `beforeEach`,
-      // which is already on the current schema by the time this test runs).
-      const legacyDbPath = join(dir, 'legacy-plaid.sqlite')
-      const legacyDb = new DatabaseSync(legacyDbPath)
-      legacyDb.exec(`
-        CREATE TABLE accounts_cache (
-          account_id TEXT PRIMARY KEY,
-          item_id TEXT NOT NULL,
-          name TEXT NOT NULL,
-          type TEXT NOT NULL,
-          subtype TEXT,
-          mask TEXT,
-          balance_current REAL NOT NULL,
-          balance_available REAL,
-          currency TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )
-      `)
-      legacyDb
-        .prepare(
-          `INSERT INTO accounts_cache (
-            account_id, item_id, name, type, subtype, mask,
-            balance_current, balance_available, currency, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run('acc_legacy', 'item_1', 'Legacy Checking', 'checking', null, null, 100, null, 'USD', '2026-01-01T00:00:00.000Z')
-      legacyDb.close()
-
-      const migrated = new PlaidCache(legacyDbPath)
-      const [cached] = migrated.getAllAccounts()
-      expect(cached.id).toBe('acc_legacy')
-      expect(cached.institution).toBeUndefined()
-
-      // And the migrated table accepts new writes with institution set.
-      migrated.upsertAccounts('item_1', [{ ...account, id: 'acc_new', institution: 'New Bank' }])
-      expect(migrated.getAccount('acc_new')?.institution).toBe('New Bank')
-      migrated.close()
-    })
   })
 
   describe('transactions_cache', () => {
@@ -271,10 +230,137 @@ describe('PlaidCache', () => {
     cache.saveCursor('item_1', 'cursor_1')
     cache.close()
 
-    const reopened = new PlaidCache(dbPath)
+    const reopened = new PlaidCache({ dbPath, passphrase: TEST_PASSPHRASE })
     expect(reopened.getAllAccounts()).toHaveLength(1)
     expect(reopened.getCursor('item_1')).toBe('cursor_1')
     reopened.close()
+  })
+
+  describe('encryption at rest (D5.1)', () => {
+    const MARKER = 'ZZZ_SECRET_MERCHANT_ZZZ'
+
+    it('never writes financial data in cleartext to the DB or the raw file', () => {
+      cache.upsertAccounts('item_1', [{ ...account, name: MARKER }])
+      cache.upsertTransactions('item_1', [
+        { ...transaction, description: MARKER, merchant_name: MARKER },
+      ])
+      cache.saveCursor('item_1', MARKER)
+      cache.close()
+
+      // (a) Open the file raw and confirm no text column in the cache tables
+      // contains the marker — the encrypted blobs must not be readable as text.
+      const raw = new DatabaseSync(dbPath)
+      const accountText = raw
+        .prepare('SELECT account_id, item_id FROM accounts_cache')
+        .all() as Array<Record<string, unknown>>
+      const txnText = raw
+        .prepare('SELECT transaction_id, item_id, account_id FROM transactions_cache')
+        .all() as Array<Record<string, unknown>>
+      const containsMarker = (rows: Array<Record<string, unknown>>): boolean =>
+        rows.some((row) => Object.values(row).some((v) => String(v).includes(MARKER)))
+      expect(containsMarker(accountText)).toBe(false)
+      expect(containsMarker(txnText)).toBe(false)
+      raw.close()
+
+      // (b) Read the raw bytes off disk and confirm the marker never appears.
+      const bytes = readFileSync(dbPath)
+      expect(bytes.includes(Buffer.from(MARKER, 'utf8'))).toBe(false)
+    })
+
+    it('round-trips the encrypted values back to the original plaintext', () => {
+      cache.upsertAccounts('item_1', [{ ...account, name: MARKER }])
+      cache.upsertTransactions('item_1', [
+        { ...transaction, description: MARKER, merchant_name: MARKER },
+      ])
+      cache.saveCursor('item_1', MARKER)
+
+      expect(cache.getAllAccounts()[0].name).toBe(MARKER)
+      const [txn] = cache.getTransactionsByAccount('acc_1')
+      expect(txn.description).toBe(MARKER)
+      expect(txn.merchant_name).toBe(MARKER)
+      expect(cache.getCursor('item_1')).toBe(MARKER)
+    })
+
+    it('throws TokenStoreKeyError when reopened with the wrong passphrase', () => {
+      cache.upsertAccounts('item_1', [account])
+      cache.close()
+
+      expect(() => new PlaidCache({ dbPath, passphrase: 'a different passphrase' })).toThrow(
+        TokenStoreKeyError
+      )
+      // Re-open with the correct passphrase so afterEach's close() is a no-op safe path.
+      cache = new PlaidCache({ dbPath, passphrase: TEST_PASSPHRASE })
+    })
+  })
+
+  describe('migration from the pre-D5.1 plaintext schema', () => {
+    const MARKER = 'ZZZ_SECRET_MERCHANT_ZZZ'
+
+    it('drops old plaintext rows, VACUUMs away the marker, and recreates encrypted tables', () => {
+      const legacyDbPath = join(dir, 'legacy-plaid.sqlite')
+      const legacyDb = new DatabaseSync(legacyDbPath)
+      legacyDb.exec(`
+        CREATE TABLE accounts_cache (
+          account_id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL,
+          subtype TEXT,
+          institution TEXT,
+          mask TEXT,
+          balance_current REAL NOT NULL,
+          balance_available REAL,
+          currency TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `)
+      legacyDb.exec(`
+        CREATE TABLE transactions_cache (
+          transaction_id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          amount REAL NOT NULL,
+          date TEXT NOT NULL,
+          description TEXT NOT NULL,
+          merchant_name TEXT,
+          category TEXT,
+          pending INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `)
+      legacyDb.exec(`
+        CREATE TABLE cursors (
+          item_id TEXT PRIMARY KEY,
+          cursor TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `)
+      legacyDb
+        .prepare(
+          `INSERT INTO accounts_cache (
+            account_id, item_id, name, type, subtype, institution, mask,
+            balance_current, balance_available, currency, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run('acc_legacy', 'item_1', MARKER, 'checking', null, null, null, 100, null, 'USD', '2026-01-01T00:00:00.000Z')
+      legacyDb.close()
+
+      // Confirm the marker really is present in the plaintext file first.
+      expect(readFileSync(legacyDbPath).includes(Buffer.from(MARKER, 'utf8'))).toBe(true)
+
+      const migrated = new PlaidCache({ dbPath: legacyDbPath, passphrase: TEST_PASSPHRASE })
+      // (a) Old rows are gone — re-fetchable by design.
+      expect(migrated.getAllAccounts()).toHaveLength(0)
+      // (b) VACUUM scrubbed the marker from the raw file.
+      migrated.close()
+      expect(readFileSync(legacyDbPath).includes(Buffer.from(MARKER, 'utf8'))).toBe(false)
+
+      // And the recreated tables accept new encrypted writes.
+      const reopened = new PlaidCache({ dbPath: legacyDbPath, passphrase: TEST_PASSPHRASE })
+      reopened.upsertAccounts('item_1', [{ ...account, id: 'acc_new' }])
+      expect(reopened.getAccount('acc_new')?.id).toBe('acc_new')
+      reopened.close()
+    })
   })
 
   describe('removeItem', () => {

@@ -28,39 +28,15 @@
  */
 
 import { DatabaseSync } from 'node:sqlite'
-import { chmodSync, statSync } from 'node:fs'
-import { randomBytes } from 'node:crypto'
 import { redactSecrets } from './redact.js'
-import { deriveKey, encrypt, decrypt, type EncryptedPayload } from './crypto.js'
-import { TokenStoreKeyError } from './token-store-errors.js'
+import { encrypt, decrypt, type EncryptedPayload } from './crypto.js'
+import { openDatabaseKey } from './key-meta.js'
+import { enforceFileMode } from './file-mode.js'
 import type { StoredItemInput, StoredItemMeta, TokenStore } from './token-store.types.js'
 
 export interface SqliteTokenStoreOptions {
   dbPath: string
   passphrase: string
-}
-
-/** The plaintext sealed under the derived key to detect wrong passphrases. */
-const KEY_CHECK_CONSTANT = 'clad-token-store-key-check-v1'
-
-/** scrypt parameter set recorded in `meta` so future reopens re-derive identically. */
-const KDF_NAME = 'scrypt'
-const KDF_N = 2 ** 15
-const KDF_R = 8
-const KDF_P = 1
-
-/** 0600 — owner read/write only. */
-const FILE_MODE = 0o600
-
-interface MetaRow {
-  kdf_name: string
-  kdf_n: number
-  kdf_r: number
-  kdf_p: number
-  salt: Buffer
-  key_check_ciphertext: Buffer
-  key_check_iv: Buffer
-  key_check_auth_tag: Buffer
 }
 
 interface ItemRow {
@@ -79,19 +55,6 @@ export class SqliteTokenStore implements TokenStore {
     this.db = new DatabaseSync(options.dbPath)
 
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS meta (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        kdf_name TEXT NOT NULL,
-        kdf_n INTEGER NOT NULL,
-        kdf_r INTEGER NOT NULL,
-        kdf_p INTEGER NOT NULL,
-        salt BLOB NOT NULL,
-        key_check_ciphertext BLOB NOT NULL,
-        key_check_iv BLOB NOT NULL,
-        key_check_auth_tag BLOB NOT NULL
-      )
-    `)
-    this.db.exec(`
       CREATE TABLE IF NOT EXISTS items (
         item_id TEXT PRIMARY KEY,
         institution_name TEXT NOT NULL,
@@ -104,21 +67,13 @@ export class SqliteTokenStore implements TokenStore {
     `)
 
     // Restrict the file to owner-only before deriving keys or touching tokens,
-    // and re-apply on every open so a drifted mode is corrected.
-    this.enforceFileMode()
-
-    const existing = this.db.prepare('SELECT * FROM meta WHERE id = 1').get() as
-      | MetaRow
-      | undefined
-
-    if (existing === undefined) {
-      this.key = this.initializeMeta(options.passphrase)
-    } else {
-      this.key = this.verifyPassphrase(options.passphrase, existing)
-    }
-
+    // and re-apply on every open so a drifted mode is corrected. The shared
+    // `openDatabaseKey` creates the `meta` table, derives the AES-256 key from
+    // the passphrase, and throws `TokenStoreKeyError` on a mismatch.
+    enforceFileMode(this.dbPath)
+    this.key = openDatabaseKey(this.db, options.passphrase)
     // Owner-only mode again: the first write may have created the file only now.
-    this.enforceFileMode()
+    enforceFileMode(this.dbPath)
   }
 
   saveItem(item: StoredItemInput): void {
@@ -190,82 +145,11 @@ export class SqliteTokenStore implements TokenStore {
     this.db.close()
   }
 
-  /** First open: generate salt, derive key, seal the key-check constant. */
-  private initializeMeta(passphrase: string): Buffer {
-    const salt = randomBytes(16)
-    const key = deriveKey(passphrase, salt)
-    const keyCheck = encrypt(key, KEY_CHECK_CONSTANT)
-
-    this.db
-      .prepare(
-        `INSERT INTO meta (
-           id, kdf_name, kdf_n, kdf_r, kdf_p, salt,
-           key_check_ciphertext, key_check_iv, key_check_auth_tag
-         ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        KDF_NAME,
-        KDF_N,
-        KDF_R,
-        KDF_P,
-        salt,
-        keyCheck.ciphertext,
-        keyCheck.iv,
-        keyCheck.authTag
-      )
-
-    return key
-  }
-
-  /**
-   * Subsequent opens: re-derive the key from the stored salt/params and confirm
-   * it decrypts the key-check record to the known constant. Any GCM auth failure
-   * (wrong passphrase) or value mismatch throws {@link TokenStoreKeyError}, whose
-   * message carries no secret material.
-   */
-  private verifyPassphrase(passphrase: string, meta: MetaRow): Buffer {
-    const key = deriveKey(passphrase, Buffer.from(meta.salt))
-    try {
-      const decrypted = decrypt(key, {
-        ciphertext: Buffer.from(meta.key_check_ciphertext),
-        iv: Buffer.from(meta.key_check_iv),
-        authTag: Buffer.from(meta.key_check_auth_tag),
-      })
-      if (decrypted !== KEY_CHECK_CONSTANT) {
-        throw new TokenStoreKeyError()
-      }
-    } catch (err) {
-      if (err instanceof TokenStoreKeyError) {
-        throw err
-      }
-      // Any crypto/decrypt failure means the derived key is wrong. Discard the
-      // underlying error (it carries no secret, but we never forward it) and
-      // surface a fixed, secret-free error instead.
-      throw new TokenStoreKeyError()
-    }
-    return key
-  }
-
   private toPayload(row: ItemRow): EncryptedPayload {
     return {
       ciphertext: Buffer.from(row.ciphertext),
       iv: Buffer.from(row.iv),
       authTag: Buffer.from(row.auth_tag),
-    }
-  }
-
-  /** chmod the DB file to 0600, only touching it if the mode has drifted. */
-  private enforceFileMode(): void {
-    if (this.dbPath === ':memory:') return
-    let currentMode: number
-    try {
-      currentMode = statSync(this.dbPath).mode & 0o777
-    } catch {
-      // File not created yet (e.g. no write has flushed it); nothing to chmod.
-      return
-    }
-    if (currentMode !== FILE_MODE) {
-      chmodSync(this.dbPath, FILE_MODE)
     }
   }
 }

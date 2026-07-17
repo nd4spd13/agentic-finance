@@ -72,7 +72,7 @@ async function createPlaidProvider(): Promise<FinancialDataProvider> {
   // propagate so the server fails fast instead of serving with a broken store.
   const tokenStore = new SqliteTokenStore({ dbPath, passphrase })
 
-  return new PlaidAdapter({ client, tokenStore, dbPath })
+  return new PlaidAdapter({ client, tokenStore, dbPath, passphrase })
 }
 
 /**
@@ -114,5 +114,5 @@ async function createSimpleFinProvider(): Promise<FinancialDataProvider> {
   // propagate so the server fails fast instead of serving with a broken store.
   const tokenStore = new SqliteTokenStore({ dbPath, passphrase })
 
-  return new SimpleFinAdapter({ tokenStore, dbPath })
+  return new SimpleFinAdapter({ tokenStore, dbPath, passphrase })
 }
