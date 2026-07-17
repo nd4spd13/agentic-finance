@@ -47,12 +47,39 @@ import { getCladPlaidAdapter } from './plaid-adapter.js'
 import { getCladSimpleFinAdapter } from './simplefin-adapter.js'
 import { effectivePlaidDbPath, type CladConfig } from './config.js'
 
+/**
+ * Display-safe summary of one cached account under a linked item — never a
+ * token/access URL. The account id is the already-namespaced `simplefin:{id}`
+ * (or Plaid item-scoped) id, which is not a secret (it is not the access URL);
+ * it is carried only as a stable React key. Balances are intentionally omitted
+ * — Linked Items answers "what is connected", not "how much is in it" (that is
+ * the Dashboard's job).
+ */
+export interface LinkedAccountSummary {
+  accountId: string
+  name: string
+  /** The account's financial institution, when the provider can resolve one. */
+  institution?: string
+  type: string
+  mask?: string
+}
+
 /** Display-safe view of one linked item — never a token/access URL. */
 export interface LinkedItem {
   itemId: string
   institutionName: string
   /** ISO-8601 timestamp the item was first stored. */
   createdAt: string
+  /**
+   * The accounts this item currently spans, from the provider cache — only
+   * populated for SimpleFIN, where one access URL/item spans *many*
+   * institutions/accounts (institution identity is per-account via `conn_id`,
+   * see `simplefin-adapter/src/mapping.ts`). Plaid leaves it `undefined`: one
+   * Plaid item is one institution, already named by `institutionName`, so
+   * there is nothing to nest. `undefined` (never fetched / no cache) and `[]`
+   * (fetched, genuinely no accounts) are distinct and both valid.
+   */
+  accounts?: LinkedAccountSummary[]
 }
 
 /**
@@ -209,7 +236,20 @@ export async function removePlaidItem(
 /**
  * Lists the SimpleFIN items currently stored — same contract as
  * `listPlaidItems`, against `config.simplefin_db` via `@clad/core`'s
- * `SqliteTokenStore` (the same store `simplefin-connect.ts` writes to).
+ * `SqliteTokenStore` (the same store `simplefin-connect.ts` writes to) — plus
+ * each item's cached accounts (institution + name + type + mask), so the
+ * Connect screen can show the real institutions/accounts an access URL spans
+ * rather than only the generic "SimpleFIN Bridge" item label. The accounts
+ * come from the same `SimpleFinCache` (same DB file, disjoint tables) the
+ * adapter fills on every fetch — a pure read here, never a network call, so
+ * listing costs nothing against the Bridge quota.
+ *
+ * Reading the cache is best-effort: a cache-open/read failure must not break
+ * the (more important) item list, so it degrades to `accounts: undefined` for
+ * every item rather than propagating. An item with no cached accounts yet
+ * (e.g. the initial summary fetch failed at connect time) likewise gets
+ * `undefined` — the UI treats "no account detail available" the same either
+ * way.
  */
 export async function listSimpleFinItems(deps: ListDeps): Promise<LinkedItem[]> {
   const passphrase = deps.getActivePassphrase()
@@ -219,11 +259,44 @@ export async function listSimpleFinItems(deps: ListDeps): Promise<LinkedItem[]> 
   const { SqliteTokenStore } = await getCladCore()
 
   const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase })
+  let metas: import('@clad/core').StoredItemMeta[]
   try {
-    return store.listItems().map(toLinkedItem)
+    metas = store.listItems()
   } finally {
     store.close()
   }
+
+  const accountsByItem = await readSimpleFinAccountsByItem(config.simplefin_db, metas)
+  return metas.map((meta) => ({ ...toLinkedItem(meta), accounts: accountsByItem.get(meta.itemId) }))
+}
+
+/**
+ * Best-effort read of each item's cached accounts, mapped to display-safe
+ * summaries. Returns an empty map (every item -> `undefined` accounts) if the
+ * cache can't be opened at all — see `listSimpleFinItems`. Opened read-only
+ * and closed here; the token store above is already closed by this point.
+ */
+async function readSimpleFinAccountsByItem(
+  dbPath: string,
+  metas: import('@clad/core').StoredItemMeta[]
+): Promise<Map<string, LinkedAccountSummary[] | undefined>> {
+  const result = new Map<string, LinkedAccountSummary[] | undefined>()
+  let cache: InstanceType<Awaited<ReturnType<typeof getCladSimpleFinAdapter>>['SimpleFinCache']> | undefined
+  try {
+    const { SimpleFinCache } = await getCladSimpleFinAdapter()
+    cache = new SimpleFinCache({ dbPath })
+    for (const meta of metas) {
+      const accounts = cache.getAccounts(meta.itemId).map(toLinkedAccountSummary)
+      // Distinguish "fetched, has accounts" from "nothing cached yet": only a
+      // non-empty list is worth nesting; an empty one reads as `undefined`.
+      result.set(meta.itemId, accounts.length > 0 ? accounts : undefined)
+    }
+  } catch {
+    // Leave the map empty — callers get `undefined` accounts for every item.
+  } finally {
+    cache?.close()
+  }
+  return result
 }
 
 /**
@@ -283,6 +356,19 @@ export async function removeSimpleFinItem(
 
 function toLinkedItem(meta: import('@clad/core').StoredItemMeta): LinkedItem {
   return { itemId: meta.itemId, institutionName: meta.institutionName, createdAt: meta.createdAt }
+}
+
+/** Maps a cached account to its display-safe summary — drops balances/currency and the itemId tag, keeps only what Linked Items shows. */
+function toLinkedAccountSummary(
+  account: import('@clad/simplefin-adapter').CachedAccount
+): LinkedAccountSummary {
+  return {
+    accountId: account.id,
+    name: account.name,
+    institution: account.institution,
+    type: account.type,
+    mask: account.mask,
+  }
 }
 
 /**

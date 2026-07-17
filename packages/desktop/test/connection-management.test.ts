@@ -398,6 +398,49 @@ describe('listSimpleFinItems', () => {
     expect(items[0]?.institutionName).toBe('SimpleFIN Bridge')
     assertNoSecret(JSON.stringify(items))
   })
+
+  it('nests each item\'s cached accounts (institution + name + mask), never an access URL', async () => {
+    const config = makeConfig()
+    // One access URL spanning two institutions — the shape a single item can't
+    // express through institutionName alone.
+    const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
+    store.saveItem({ itemId: 'sf_1', institutionName: 'SimpleFIN Bridge', accessToken: SIMPLEFIN_ACCESS_URL })
+    store.close()
+    const cache = new SimpleFinCache({ dbPath: config.simplefin_db })
+    cache.recordFetch(
+      'sf_1',
+      [
+        { id: 'simplefin:a1', name: 'Everyday Checking', type: 'checking', institution: 'Chime', mask: '1234', balance_current: 100, currency: 'USD' },
+        { id: 'simplefin:a2', name: 'Rewards Card', type: 'credit', institution: 'Amex', balance_current: -20, currency: 'USD' },
+      ],
+      []
+    )
+    cache.close()
+
+    const items = await listSimpleFinItems({ loadConfig: () => config, getActivePassphrase: () => PASSPHRASE })
+    expect(items).toHaveLength(1)
+    const accounts = items[0]?.accounts
+    expect(accounts).toHaveLength(2)
+    expect(accounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Everyday Checking', institution: 'Chime', mask: '1234', type: 'checking' }),
+        expect.objectContaining({ name: 'Rewards Card', institution: 'Amex', type: 'credit' }),
+      ])
+    )
+    assertNoSecret(JSON.stringify(items))
+  })
+
+  it('leaves accounts undefined for an item with nothing cached yet', async () => {
+    const config = makeConfig()
+    // Token stored, but no recordFetch — e.g. the initial summary fetch failed.
+    const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
+    store.saveItem({ itemId: 'sf_1', institutionName: 'SimpleFIN Bridge', accessToken: SIMPLEFIN_ACCESS_URL })
+    store.close()
+
+    const items = await listSimpleFinItems({ loadConfig: () => config, getActivePassphrase: () => PASSPHRASE })
+    expect(items).toHaveLength(1)
+    expect(items[0]?.accounts).toBeUndefined()
+  })
 })
 
 describe('removeSimpleFinItem', () => {
