@@ -1,5 +1,9 @@
 # Getting Started
 
+::: warning Legacy / developer path
+This guide covers the **`clad` CLI** setup, which still works but is now the developer/legacy path. Most users should use the local-first **Electron desktop app** ([desktop-app plan](/plans/desktop-app)) — download, set Plaid keys (or use SimpleFIN), and click "Connect to Claude Desktop" with no terminal. See the [roadmap](/roadmap).
+:::
+
 This guide walks you through setting up Clad and connecting it to an MCP-compatible agent.
 
 ## Prerequisites

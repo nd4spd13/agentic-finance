@@ -2,6 +2,10 @@
 
 Clad exposes 5 MCP tools that any MCP-compatible agent can use to interact with financial data. All tools are subject to the policies defined in your `clad.yaml`.
 
+::: danger Field/account-level redaction is not implemented yet (2026-07)
+The response examples and **Behavior** notes below describe **target** behavior — `[REDACTED]` fields, `amount_visibility_cap` applied to results, `description_visibility` masking, per-agent account filtering, "all other account details are redacted." **The current code does not do this.** The policy engine makes an allow/deny decision, and both `clad_get_transactions` and `clad_get_balances` then return the provider's **full** objects once a request is allowed (`clad_get_balances` filters only by the optional `account_type` *argument*, not by the agent's `accounts.visible` policy). Field- and account-level shaping of the returned payload is [desktop-app plan **Phase D5.2**](/plans/desktop-app). Treat the redaction described here as the spec D5.2 implements, not as shipped behavior.
+:::
+
 ## Tool Overview
 
 | Tool | Purpose | Returns |
@@ -61,9 +65,9 @@ interface GetBalancesRequest {
 
 ### Behavior
 
-- Returns only accounts the agent has `visible: true` permission for
+- ⏳ *(planned, D5.2 — not yet enforced)* Returns only accounts the agent has `visible: true` permission for — today returns all accounts, filtered only by the optional `account_type` argument
 - Returns only `balance` field if the agent has `balance: true`
-- All other account details are redacted
+- ⏳ *(planned, D5.2 — not yet enforced)* All other account details are redacted
 - If agent lacks any permission, returns `decision: deny`
 
 ### Policy Fields
@@ -138,9 +142,9 @@ interface GetTransactionsRequest {
 ### Behavior
 
 - Only returns transactions within `lookback_days` window
-- Applies `amount_visibility_cap` to amounts above the threshold
-- Redacts `description` if `description_visibility: false`
-- Returns only merchants/categories visible to the agent based on policy
+- ⏳ *(planned, D5.2 — not yet enforced)* Applies `amount_visibility_cap` to amounts above the threshold
+- ⏳ *(planned, D5.2 — not yet enforced)* Redacts `description` if `description_visibility: false`
+- ⏳ *(planned, D5.2 — not yet enforced)* Returns only merchants/categories visible to the agent based on policy
 - Enforces `start_date` and `end_date` within the lookback window
 
 ### Policy Fields

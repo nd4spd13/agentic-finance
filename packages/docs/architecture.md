@@ -200,6 +200,8 @@ Agents are identified by:
 - No cryptographic proof in basic mode (assumes trusted MCP client)
 - Optional: Agent authentication keys in production
 
+> **⚠️ Known gap / planned work (2026-07):** "assumes trusted MCP client" is the *current* behavior — `agent_id` is self-asserted (set via `CLAD_AGENT_ID` / `--agent-id` in `packages/mcp-server/src/server.ts`), so an agent can present as any profile. Replacing this with cryptographically authenticated agent identity (OAuth 2.1 client-credentials + sender-constrained tokens) is [desktop-app plan **Phase D5.3**](/plans/desktop-app). Until then, per-agent scoping assumes a trusted launcher, and field-level scoping is not yet enforced on tool output (Phase D5.2).
+
 ## Spending Constraint Evaluation
 
 When evaluating spending, Clad checks constraints in this order:
@@ -377,6 +379,8 @@ interface PolicyHook {
 
 ## Deployment
 
+> **Note (2026-07):** the commands below are the **CLI** path — still functional, but now the developer/legacy path. The primary delivery vehicle is the local-first **Electron desktop app** ([desktop-app plan](/plans/desktop-app)), which spawns and manages the MCP server for you. See the [roadmap](/roadmap).
+
 ### Single-Agent Deployment
 
 For a single agent (most common):
@@ -399,14 +403,16 @@ For multiple agents, configure separate MCP server entries in your client config
 }
 ```
 
-### Production Deployment
+### ~~Production Deployment~~ (deprecated 2026-07 — superseded by local-first)
 
-For production:
-- Run Clad as systemd service or with process manager (pm2, supervisor)
-- Store audit logs in persistent database (PostgreSQL)
-- Use webhook escalations for approval routing
-- Monitor logs and audit trail
-- Regular policy reviews and audits
+> **⚠️ Deprecated.** This described the earlier hosted-server model. It contradicts the current roadmap's **binding principles P1 (Clad servers are never a party to financial data) and P4 (local-first storage)** — Clad now ships as a local-first Electron desktop app ([roadmap](/roadmap), [desktop-app plan](/plans/desktop-app)). There is no Clad-hosted server tier, no server-side PostgreSQL audit store, and no daemon-mode production deployment. Kept struck-through for historical context only.
+
+> ~~For production:~~
+> - ~~Run Clad as systemd service or with process manager (pm2, supervisor)~~
+> - ~~Store audit logs in persistent database (PostgreSQL)~~
+> - ~~Use webhook escalations for approval routing~~
+> - ~~Monitor logs and audit trail~~
+> - ~~Regular policy reviews and audits~~
 
 ## Audit and Compliance
 

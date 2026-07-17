@@ -19,6 +19,8 @@ Positioning in one line: read-only "finance data via MCP" is commoditizing (Era,
 | P4 | Local-first storage | Tokens, transactions, audit log, approvals: encrypted SQLite on the user's machine (see `packages/plaid-adapter/src/token-store.ts` for the reference pattern). |
 | P5 | Every agent action passes policy → approval → audit | New surfaces (desktop UI, mobile approvals, card auth) are new frontends to the same `@clad/core` engine, never bypasses of it. |
 
+> **Legal basis (P1–P3).** These principles are downstream of our aggregator-terms analysis (Plaid MSA + Schedule 1, MX, Akoya, Finicity, Yodlee). The clause-level findings and the finding→decision mapping live in `compliance/aggregator-msa-analysis.md` — internal, kept outside this published docs tree. Update it when terms or providers change.
+
 ## Horizons
 
 ```mermaid
@@ -32,6 +34,8 @@ flowchart LR
     B1["Signed + notarized DMG,<br/>auto-update"]
     B2["Approvals UX polish,<br/>safe-to-spend surfaces"]
     B3["Windows port (gated)"]
+    B4["Encrypted gatekeeper:<br/>cache encryption · field shaping · agent auth"]
+    B5["User-export delivery"]
   end
   subgraph H2["H2 · Hosted edges (stateless)"]
     C1["Approval push:<br/>PWA web push / SMS deep links"]
@@ -59,6 +63,8 @@ Everything runs on the user's machine. Free. Audience: developers downloading fr
 - Apple Developer ID ($99/yr) + notarization in CI; DMG + ZIP; `electron-updater` against GitHub Releases.
 - Windows: keep CI build green from day one; publish binaries only when a real Windows user exists. Microsoft Store (MSIX, ~$19 one-time, Store signs) preferred over Authenticode when that day comes. Mac App Store: **permanent non-goal** (App Sandbox is incompatible with spawning MCP servers and writing Claude Desktop config).
 - Pre-purchase "safe to spend" surfaces: widget/menu-bar quick check; groundwork for mobile.
+- **Encrypted gatekeeper (security hardening).** Encrypt the at-rest financial-data cache, add the field-shaping layer to the MCP tools, and replace the self-asserted `agent_id` with authenticated agent identity — so per-agent scoping is actually enforceable and can't be bypassed by reading the cache file. See the desktop-app plan, **Phase D5**. **D5.1 (cache encryption) is pulled forward into H0** as a live-beta security fix — plaintext financial data at rest ships today (`accounts_cache`/`transactions_cache` in `plaid.sqlite`).
+- **User-export delivery.** An explicit, user-authenticated export that hands the user their own data in a usable form — the "delivered to the user" / portability property the encrypted cache alone does not provide (the encrypted cache is Clad-only-decryptable by design). See the desktop-app plan, **Phase D6**.
 
 ### H2 — Hosted edges (requires: recurring weekly active users asking for mobile/notifications)
 
@@ -94,6 +100,7 @@ Revenue starts here: subscription for sync + relay + push bundle.
 | Aggregator dependency (SimpleFIN→MX; Plaid pricing) | SimpleFIN rate limits (~24 req/day) already constrain adapter design | Multi-adapter architecture keeps switching cost low |
 | Support burden of bank connections | Every broken connection is a ticket | Beta stays BYO/self-serve; paid tiers gate support load to paying users |
 | SmartScreen/Gatekeeper reputation for a new publisher | User-facing install friction | Signing (H1), Microsoft Store path for Windows |
+| Plaintext financial-data cache in the beta | `accounts_cache`/`transactions_cache` in `plaid.sqlite` are unencrypted at rest — a local process can read around the MCP layer, and the tools apply no field-level shaping (P4/P5 gap) | Encrypt the cache under the safeStorage key (D5.1, pulled into H0); field-shaping (D5.2) + authenticated agent identity (D5.3) close the rest |
 
 ## How this maps to tickets
 

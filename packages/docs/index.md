@@ -43,6 +43,10 @@ features:
     details: Spending constraints aligned with Google's Agent Payments Protocol (AP2). Time-window controls and escalation routing built on established agentic permission patterns.
 ---
 
+::: warning Primary path is the desktop app
+This page and its `clad …` CLI quickstart are the **developer / legacy** path. As of 2026-07, Clad ships as a local-first **Electron desktop app** (download → set keys → connect to Claude Desktop, no terminal). See the [roadmap](/roadmap) and [desktop-app plan](/plans/desktop-app). The CLI still works and remains supported for developers.
+:::
+
 ## What is Clad?
 
 Clad sits between AI agents and financial accounts, enforcing YAML-based policies that determine what actions agents can take.
@@ -58,6 +62,8 @@ Clad sits between AI agents and financial accounts, enforcing YAML-based policie
 - **Complete auditability**: Every decision is logged with full context and chain-hashed for tamper-evidence
 
 ## Quick Start
+
+> **CLI path (legacy).** For the desktop app, see the [desktop-app plan](/plans/desktop-app) instead — it manages the MCP server for you. The steps below are for the `clad` CLI.
 
 Install Clad in your TypeScript project:
 

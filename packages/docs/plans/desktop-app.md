@@ -100,6 +100,39 @@ Acceptance for the phase: fresh machine → download app → set Plaid keys (or 
 - **D4.3 Unsigned-beta docs.** README install section: download, Gatekeeper "Open Anyway" walkthrough (Sequoia removed right-click-open), `xattr -d com.apple.quarantine` alternative. Also warn: **re-enter credentials after updating.** On unsigned builds, macOS Keychain ACLs are tied to the app's ad-hoc code-signing identity, which changes on every rebuild — a differently-signed build cannot decrypt `safeStorage` ciphertext an earlier build wrote (Plaid credentials, the token-store passphrase). The app surfaces this distinctly ("can't be unlocked" vs. "not set", D1 manual QA finding 3) and offers a re-enter/start-fresh path, but the docs should set expectations up front so it doesn't read as a bug. This caveat goes away once H1 signing (D4.4) lands.
 - **D4.4 (gated on Apple Developer enrollment) Signing + notarization.** Developer ID cert in CI secrets; hardened runtime + entitlements; notarize + staple; enable `electron-updater` (requires signed builds). Keep as a separate PR so unsigned releases keep working.
 
+## Phase D5 — Encrypted gatekeeper (security hardening)
+
+> **Why now:** the beta ships three gaps that together make per-agent scoping unenforceable at the *data* layer. (1) The financial-data cache (`accounts_cache`/`transactions_cache` in `plaid.sqlite`, see `packages/plaid-adapter/src/cache.ts`) is **plaintext at rest** — any local process can read around the MCP layer. (2) The MCP tools apply an allow/deny decision but do **no field-level shaping** of the returned payload (`clad_get_transactions` returns full objects), so the redaction `mcp-tools.md` documents doesn't actually happen. (3) Agent identity is **self-asserted** (`agentId` from `CLAD_AGENT_ID` / `--agent-id` in `packages/mcp-server/src/server.ts`), so nothing stops one agent presenting as a more-privileged profile. This phase is what makes P5 real at the data layer, not just the action layer.
+
+- **D5.1 Encrypt the financial-data cache.** Bring `accounts_cache`/`transactions_cache`/`cursors` (and the SimpleFIN equivalent) under the same AES-256-GCM + safeStorage-held-key model the token store already uses (`packages/core/src/security/crypto.ts`, `token-store.ts`). `cache.ts` is the sole reader/writer, so the change is contained. Decryption happens in the main process only; the MCP read path decrypts in-memory and never writes plaintext back. **Pull forward into H0** — plaintext financial data at rest is a live gap in the shipping beta.
+  - Acceptance: `plaid.sqlite` financial rows are unreadable without the safeStorage-derived key (verify by opening the DB out-of-process); the sync-then-read path and the degrade-to-cache (`stale: true`) fallback still work; no plaintext financial data at rest anywhere; round-trip + tamper-rejection tests mirror `crypto.test.ts`.
+
+- **D5.2 Field-shaping layer in the MCP tools.** Apply policy visibility to the *returned payload* — merchant truncation, `amount_visibility_cap`, `description_visibility`, account-field masking — inside `clad_get_transactions`/`clad_get_balances` before emission. This is the behavior `mcp-tools.md` already documents; this task makes the doc true. Raw fields never leave the tool.
+  - Acceptance: an agent whose policy caps merchant/field visibility receives only the shaped fields; unshaped values never appear in tool output or the audit payload; behavior matches the (de-flagged) `mcp-tools.md`; unit tests per field.
+
+- **D5.3 Authenticated agent identity (no self-assertion).** Replace the env-pinned/self-asserted `agent_id` with a cryptographically authenticated identity: OAuth 2.1 client-credentials per agent profile, sender-constrained tokens (DPoP, RFC 9449, or mTLS, RFC 8705), scope minted server-side from the profile (never taken from a client-supplied claim). Aligns with MCP's OAuth-2.1 resource-server model (RFC 9728 / RFC 8707) and coordinates with the KYA / `TrustProvider` plan.
+  - Acceptance: an agent cannot present as another profile by asserting an id; the scope the resource layer enforces binds to an authenticated client key; a copied/replayed token is rejected; policy lookup keys off the verified identity, not `CLAD_AGENT_ID`.
+
+- **D5.4 Threat-model verification.** Confirm the three gaps are closed *together*: no plaintext financial data readable out-of-band (D5.1); shaping holds even against a direct cache read (D5.1 + D5.2); an agent cannot spoof a profile (D5.3). A gap in any one undermines the other two.
+  - Acceptance: a written threat-model note (in the style of the S0 spike results) recording each check and its result.
+
+Placement: security-critical → H1 hardening, with **D5.1 pulled forward into H0**.
+
+## Phase D6 — User-export delivery
+
+> **Why:** D5 makes Clad a *safe gatekeeper*, but the encrypted cache is Clad-only-decryptable — the opposite of user-portable. To satisfy "delivered to the user" (data portability, and the "provide to the user" side of aggregator terms), the user needs an explicit path to their own data in a usable form. Gatekeeping and delivery are separate properties; D5 is the gatekeeper half, this is the delivery half.
+
+- **D6.1 User-authenticated full export.** A deliberate, user-authenticated (app/OS session — never an agent path), audit-logged action that decrypts the user's full data and writes it to a user-chosen location in a raw, usable format, or re-encrypts it under a user-held key. This is "Path 1" full delivery.
+  - Acceptance: export requires user auth and is unreachable from any agent/MCP path; produces a genuine user-controlled artifact; logged as a delivery event; warns the user that exported data leaves the Clad-protected environment.
+
+- **D6.2 Consent / disclosure surface.** Cover the export and any onward use with clear consent/EULA copy ("you may export your data; once exported it leaves the Clad-protected environment"); keep it **destination-agnostic** — Clad never selects, names, or steers toward a third-party destination.
+  - Acceptance: consent copy present and shown before first export; no destination steering anywhere in the UI or docs.
+
+- **D6.3 Path-separation verification.** Confirm the full-export path (D6.1) is disjoint from the scoped agent path (D5.3): user auth gates export; agent auth gates scoped reads; neither can invoke the other.
+  - Acceptance: a written check that no agent credential can trigger a full export and no export path bypasses agent scoping.
+
+Placement: H1 (delivery feature); the consent/disclosure copy (D6.2) lands alongside whichever aggregator use case is submitted for approval.
+
 ## Standing security checklist (apply to every desktop PR)
 
 1. Renderer never receives tokens, passphrases, or Plaid credentials — grep the IPC contract types.
@@ -107,3 +140,4 @@ Acceptance for the phase: fresh machine → download app → set Plaid keys (or 
 3. `contextIsolation`/`sandbox` flags unchanged; no `nodeIntegration`; no `webSecurity: false`; navigation locked to app pages (`will-navigate` handler).
 4. External URLs open in the system browser (`shell.openExternal` allowlist), never in-app.
 5. New files with secret material: `0600` perms, following `token-store.ts`.
+6. New at-rest stores of financial data (caches, exports) are encrypted under the safeStorage-held key like the token store — never plaintext SQLite (D5.1). Field-level scoping is enforced in the tool output, not assumed of the agent (D5.2).
