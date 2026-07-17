@@ -107,43 +107,62 @@ function LinkedItemsSection({
       {!loadError &&
         items !== null &&
         items.map((item) => (
-          <div key={item.itemId} style={s.listRow}>
-            <span>
-              <strong>{item.institutionName}</strong>{' '}
-              <span style={s.mutedText}>· linked {new Date(item.createdAt).toLocaleDateString()}</span>
-            </span>
-            {confirmingId === item.itemId ? (
+          <div key={item.itemId} style={{ padding: '0.5rem 0', borderBottom: '1px solid #e5e5e5' }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                fontSize: 14,
+              }}
+            >
               <span>
+                <strong>{item.institutionName}</strong>{' '}
+                <span style={s.mutedText}>· linked {new Date(item.createdAt).toLocaleDateString()}</span>
+              </span>
+              {confirmingId === item.itemId ? (
+                <span>
+                  <button
+                    type="button"
+                    style={s.buttonDanger}
+                    disabled={busyId === item.itemId}
+                    onClick={() => handleRemove(item.itemId)}
+                  >
+                    {busyId === item.itemId ? 'Removing…' : 'Confirm remove'}
+                  </button>
+                  <button
+                    type="button"
+                    style={s.buttonSecondary}
+                    disabled={busyId === item.itemId}
+                    onClick={() => setConfirmingId(null)}
+                  >
+                    Cancel
+                  </button>
+                </span>
+              ) : (
                 <button
                   type="button"
                   style={s.buttonDanger}
-                  disabled={busyId === item.itemId}
-                  onClick={() => handleRemove(item.itemId)}
+                  disabled={busyId !== null}
+                  onClick={() => {
+                    setActionError(null)
+                    setActionWarning(null)
+                    setConfirmingId(item.itemId)
+                  }}
                 >
-                  {busyId === item.itemId ? 'Removing…' : 'Confirm remove'}
+                  Remove
                 </button>
-                <button
-                  type="button"
-                  style={s.buttonSecondary}
-                  disabled={busyId === item.itemId}
-                  onClick={() => setConfirmingId(null)}
-                >
-                  Cancel
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                style={s.buttonDanger}
-                disabled={busyId !== null}
-                onClick={() => {
-                  setActionError(null)
-                  setActionWarning(null)
-                  setConfirmingId(item.itemId)
-                }}
-              >
-                Remove
-              </button>
+              )}
+            </div>
+            {/* SimpleFIN items list the real institutions behind them here; Plaid items leave `institutions` undefined and render just the row above. */}
+            {item.institutions && item.institutions.length > 0 && (
+              <ul style={{ margin: '0.35rem 0 0', padding: 0, listStyle: 'none' }}>
+                {item.institutions.map((institution) => (
+                  <li key={institution} style={{ ...s.mutedText, margin: 0, fontWeight: 600 }}>
+                    {institution}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         ))}

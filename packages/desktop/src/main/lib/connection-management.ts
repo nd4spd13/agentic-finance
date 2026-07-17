@@ -53,7 +53,25 @@ export interface LinkedItem {
   institutionName: string
   /** ISO-8601 timestamp the item was first stored. */
   createdAt: string
+  /**
+   * The distinct institutions this item currently spans, from the provider
+   * cache — only populated for SimpleFIN, where one access URL/item spans
+   * *many* institutions (institution identity is per-account via `conn_id`,
+   * see `simplefin-adapter/src/mapping.ts`), so the generic "SimpleFIN Bridge"
+   * item label alone can't say which banks are actually behind it. Deliberately
+   * institution-level, not account-level: the Connect screen answers "which
+   * institutions are linked here", and per-account detail (names, masks) made
+   * the list too busy and shipped last-4 masks over IPC for no display benefit.
+   * Sorted and de-duplicated; an account with no resolvable institution
+   * contributes `UNKNOWN_INSTITUTION`. Plaid leaves it `undefined`: one Plaid
+   * item is one institution, already named by `institutionName`. `undefined`
+   * (never fetched / no cache) and `[]` are distinct and both valid.
+   */
+  institutions?: string[]
 }
+
+/** Falls under this label when an account carries no resolvable institution. */
+const UNKNOWN_INSTITUTION = 'Unknown institution'
 
 /**
  * Result of a remove attempt. `ok: true` means the item's local token +
@@ -209,7 +227,20 @@ export async function removePlaidItem(
 /**
  * Lists the SimpleFIN items currently stored — same contract as
  * `listPlaidItems`, against `config.simplefin_db` via `@clad/core`'s
- * `SqliteTokenStore` (the same store `simplefin-connect.ts` writes to).
+ * `SqliteTokenStore` (the same store `simplefin-connect.ts` writes to) — plus
+ * the distinct institutions each item spans, so the Connect screen can show the
+ * real banks behind an access URL rather than only the generic "SimpleFIN
+ * Bridge" item label. The institutions come from the same `SimpleFinCache`
+ * (same DB file, disjoint tables) the adapter fills on every fetch — a pure
+ * read here, never a network call, so listing costs nothing against the Bridge
+ * quota.
+ *
+ * Reading the cache is best-effort: a cache-open/read failure must not break
+ * the (more important) item list, so it degrades to `institutions: undefined`
+ * for every item rather than propagating. An item with nothing cached yet
+ * (e.g. the initial summary fetch failed at connect time) likewise gets
+ * `undefined` — the UI treats "no institution detail available" the same either
+ * way.
  */
 export async function listSimpleFinItems(deps: ListDeps): Promise<LinkedItem[]> {
   const passphrase = deps.getActivePassphrase()
@@ -219,11 +250,59 @@ export async function listSimpleFinItems(deps: ListDeps): Promise<LinkedItem[]> 
   const { SqliteTokenStore } = await getCladCore()
 
   const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase })
+  let metas: import('@clad/core').StoredItemMeta[]
   try {
-    return store.listItems().map(toLinkedItem)
+    metas = store.listItems()
   } finally {
     store.close()
   }
+
+  const institutionsByItem = await readSimpleFinInstitutionsByItem(config.simplefin_db, metas)
+  return metas.map((meta) => ({ ...toLinkedItem(meta), institutions: institutionsByItem.get(meta.itemId) }))
+}
+
+/**
+ * Best-effort read of the distinct institutions each item spans, from its
+ * cached accounts. Returns an empty map (every item -> `undefined`) if the
+ * cache can't be opened at all — see `listSimpleFinItems`. Opened read-only
+ * and closed here; the token store above is already closed by this point.
+ */
+async function readSimpleFinInstitutionsByItem(
+  dbPath: string,
+  metas: import('@clad/core').StoredItemMeta[]
+): Promise<Map<string, string[] | undefined>> {
+  const result = new Map<string, string[] | undefined>()
+  let cache: InstanceType<Awaited<ReturnType<typeof getCladSimpleFinAdapter>>['SimpleFinCache']> | undefined
+  try {
+    const { SimpleFinCache } = await getCladSimpleFinAdapter()
+    cache = new SimpleFinCache({ dbPath })
+    for (const meta of metas) {
+      const institutions = distinctInstitutions(cache.getAccounts(meta.itemId))
+      // Distinguish "fetched, has institutions" from "nothing cached yet": only
+      // a non-empty list is worth showing; an empty one reads as `undefined`.
+      result.set(meta.itemId, institutions.length > 0 ? institutions : undefined)
+    }
+  } catch {
+    // Leave the map empty — callers get `undefined` institutions for every item.
+  } finally {
+    cache?.close()
+  }
+  return result
+}
+
+/**
+ * The sorted, de-duplicated institution names across a set of cached accounts.
+ * An account with no resolvable institution contributes `UNKNOWN_INSTITUTION`
+ * rather than being dropped, so the count still reflects every linked account.
+ */
+function distinctInstitutions(
+  accounts: import('@clad/simplefin-adapter').CachedAccount[]
+): string[] {
+  const names = new Set<string>()
+  for (const account of accounts) {
+    names.add(account.institution ?? UNKNOWN_INSTITUTION)
+  }
+  return [...names].sort((a, b) => a.localeCompare(b))
 }
 
 /**

@@ -466,18 +466,28 @@ export interface ConnectProvidersStatus {
 /**
  * Display-safe view of one linked item shown under a provider card on the
  * Connect screen. Deliberately carries ONLY non-secret metadata — an item id,
- * the institution name, and the created date. Never a Plaid access token or a
- * SimpleFIN access URL (this repo treats that as a hard security rule; see
- * `main/lib/connection-management.ts`). Structurally identical to that
- * module's own `LinkedItem`, kept as a standalone copy for the same layering
- * reason as `DashboardAccount`/`ApprovalListItem` above (this file must stay
- * importable from the renderer/preload build without reaching into `src/main/**`).
+ * the institution name, the created date, and (SimpleFIN only) the distinct
+ * institutions it spans. Never a Plaid access token or a SimpleFIN access URL
+ * (this repo treats that as a hard security rule; see
+ * `main/lib/connection-management.ts`). Structurally identical to that module's
+ * own `LinkedItem`, kept as a standalone copy for the same layering reason as
+ * `DashboardAccount`/`ApprovalListItem` above (this file must stay importable
+ * from the renderer/preload build without reaching into `src/main/**`).
  */
 export interface LinkedItem {
   itemId: string
   institutionName: string
   /** ISO-8601 timestamp the item was first stored. */
   createdAt: string
+  /**
+   * The distinct institutions this item spans, from the provider cache —
+   * populated only for SimpleFIN (one access URL spans many institutions),
+   * sorted and de-duplicated; `undefined` for Plaid (one item = one
+   * institution, already named by `institutionName`) and when nothing is
+   * cached yet. Deliberately institution-level, not account-level: the Connect
+   * screen answers "which institutions are linked here", not "which accounts".
+   */
+  institutions?: string[]
 }
 
 /**
