@@ -260,25 +260,28 @@ export async function listSimpleFinItems(deps: ListDeps): Promise<LinkedItem[]> 
     store.close()
   }
 
-  const institutionsByItem = await readSimpleFinInstitutionsByItem(config.simplefin_db, metas)
+  const institutionsByItem = await readSimpleFinInstitutionsByItem(config.simplefin_db, passphrase, metas)
   return metas.map((meta) => ({ ...toLinkedItem(meta), institutions: institutionsByItem.get(meta.itemId) }))
 }
 
 /**
  * Best-effort read of the distinct institutions each item spans, from its
  * cached accounts. Returns an empty map (every item -> `undefined`) if the
- * cache can't be opened at all — see `listSimpleFinItems`. Opened read-only
- * and closed here; the token store above is already closed by this point.
+ * cache can't be opened at all — see `listSimpleFinItems`. Opened here with the
+ * same custody-resolved passphrase the token store above used — the D5.1
+ * `SimpleFinCache` is encrypted at rest, so it can't be opened without it — and
+ * closed here; the token store is already closed by this point.
  */
 async function readSimpleFinInstitutionsByItem(
   dbPath: string,
+  passphrase: string,
   metas: import('@clad/core').StoredItemMeta[]
 ): Promise<Map<string, string[] | undefined>> {
   const result = new Map<string, string[] | undefined>()
   let cache: InstanceType<Awaited<ReturnType<typeof getCladSimpleFinAdapter>>['SimpleFinCache']> | undefined
   try {
     const { SimpleFinCache } = await getCladSimpleFinAdapter()
-    cache = new SimpleFinCache({ dbPath })
+    cache = new SimpleFinCache({ dbPath, passphrase })
     for (const meta of metas) {
       const institutions = distinctInstitutions(cache.getAccounts(meta.itemId))
       // Distinguish "fetched, has institutions" from "nothing cached yet": only
