@@ -493,6 +493,45 @@ export interface RemoveLinkedItemResult {
   error?: string
 }
 
+/**
+ * Result of a user-initiated SimpleFIN "Check for new accounts" — the manual
+ * complement to the adapter's automatic setup-grace window. Display-safe:
+ * counts and timings only, never an access URL or account detail. Standalone
+ * copy of `main/lib/simplefin-refresh.ts`'s `SimpleFinForceRefreshResult` for
+ * the same renderer-can't-import-`src/main/**` layering reason as `LinkedItem`.
+ */
+export interface SimpleFinForceRefreshResult {
+  ok: boolean
+  /** Items that made a live request and updated their cache. */
+  refreshedCount: number
+  /** Items skipped because they fetched within the 1-minute floor. */
+  skippedCount: number
+  /** `true` when the rolling daily budget refused at least one item. */
+  budgetExhausted: boolean
+  /** Requests spent in the rolling 24h window, after this call. */
+  requestsInLastDay: number
+  /** Display-safe; set when the passphrase isn't resolved, or a fetch failed. */
+  error?: string
+}
+
+/**
+ * Cooldown/budget status for the SimpleFIN card's refresh affordance — pure
+ * cache read, never a fetch. `available: false` mirrors the connection's own
+ * `'unavailable'` state (passphrase unresolved / store unreadable). Standalone
+ * copy of `main/lib/simplefin-refresh.ts`'s `SimpleFinRefreshStatus`.
+ */
+export interface SimpleFinRefreshStatus {
+  available: boolean
+  /** Milliseconds until an automatic refresh is next allowed; `0` when due now. */
+  msUntilRefreshAllowed: number
+  /** `true` while at least one item is inside its post-setup grace window. */
+  inSetupGrace: boolean
+  /** Requests spent in the rolling 24h window. */
+  requestsInLastDay: number
+  /** Remaining force-refresh budget in the rolling 24h window. */
+  forceRefreshBudgetRemaining: number
+}
+
 // ---- Audit log viewer (D2.2) ------------------------------------------------
 
 /** Display-safe view of an `@clad/core` `AuditRecord` — camelCased field names, otherwise a 1:1 copy (every field here was already non-secret; the hash-chain fields are intentionally omitted as not useful for this read-only viewer). */
@@ -575,6 +614,8 @@ export const IPC_CHANNELS = {
   connectRemovePlaidItem: 'connect:removePlaidItem',
   connectListSimpleFinItems: 'connect:listSimpleFinItems',
   connectRemoveSimpleFinItem: 'connect:removeSimpleFinItem',
+  connectSimpleFinForceRefresh: 'connect:simplefinForceRefresh',
+  connectSimpleFinRefreshStatus: 'connect:simplefinRefreshStatus',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -643,6 +684,15 @@ export interface CladBridge {
   listSimpleFinItems(): Promise<LinkedItem[]>
   /** Disconnects a SimpleFIN item locally (no revoke API exists for SimpleFIN). Never rejects — failures come back as `{ ok: false, error }`. */
   removeSimpleFinItem(itemId: string): Promise<RemoveLinkedItemResult>
+  /**
+   * User-initiated "Check for new accounts": makes a live SimpleFIN fetch
+   * subject to a 1-minute floor and a rolling daily budget (NOT a quota
+   * bypass — see `simplefin-refresh.ts`). Wire to an explicit click only.
+   * Never rejects — failures come back as `{ ok: false, error }`.
+   */
+  forceRefreshSimpleFin(): Promise<SimpleFinForceRefreshResult>
+  /** Pure cache read (never a fetch) for the SimpleFIN card's cooldown/budget display. */
+  getSimpleFinRefreshStatus(): Promise<SimpleFinRefreshStatus>
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */

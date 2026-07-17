@@ -75,6 +75,8 @@ const cladBridge: CladBridge = {
   listSimpleFinItems: () => ipcRenderer.invoke(IPC_CHANNELS.connectListSimpleFinItems),
   removeSimpleFinItem: (itemId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.connectRemoveSimpleFinItem, itemId),
+  forceRefreshSimpleFin: () => ipcRenderer.invoke(IPC_CHANNELS.connectSimpleFinForceRefresh),
+  getSimpleFinRefreshStatus: () => ipcRenderer.invoke(IPC_CHANNELS.connectSimpleFinRefreshStatus),
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

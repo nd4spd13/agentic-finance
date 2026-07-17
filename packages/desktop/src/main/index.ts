@@ -61,6 +61,12 @@ import {
   type RemoveLinkedItemResult,
 } from './lib/connection-management.js'
 import {
+  forceRefreshSimpleFin,
+  getSimpleFinRefreshStatus,
+  type SimpleFinForceRefreshResult,
+  type SimpleFinRefreshStatus,
+} from './lib/simplefin-refresh.js'
+import {
   trayTooltip,
   trayServerStatusMenuLabel,
   trayApprovalsMenuLabel,
@@ -806,9 +812,13 @@ ipcMain.handle(
 // the dashboard's in-memory snapshot so it no longer shows the removed item's
 // accounts — it self-heals via its one-shot auto-refresh next time the user
 // opens the Dashboard tab (see `DashboardDataStore.invalidate`'s doc comment
-// for why this is preferred over forcing a network fetch here). SimpleFIN is
-// not wired through the dashboard provider factory yet, so removing a
-// SimpleFIN item can't affect the dashboard — no invalidation needed there.
+// for why this is preferred over forcing a network fetch here). This applies
+// to SimpleFIN just as much as Plaid: `provider-factory.ts` has a `simplefin`
+// branch, so when `config.provider === 'simplefin'` the dashboard IS showing
+// SimpleFIN accounts and a stale snapshot would keep a just-removed item's
+// accounts visible. `invalidate()` is provider-agnostic and cheap, so both
+// remove handlers call it unconditionally on success rather than trying to
+// decide whether the removed item's provider is the active one.
 ipcMain.handle(
   IPC_CHANNELS.connectRemovePlaidItem,
   async (_event, itemId: string): Promise<RemoveLinkedItemResult> => {
@@ -819,8 +829,34 @@ ipcMain.handle(
 )
 ipcMain.handle(
   IPC_CHANNELS.connectRemoveSimpleFinItem,
-  (_event, itemId: string): Promise<RemoveLinkedItemResult> =>
-    removeSimpleFinItem(itemId, connectionManagementDeps)
+  async (_event, itemId: string): Promise<RemoveLinkedItemResult> => {
+    const result = await removeSimpleFinItem(itemId, connectionManagementDeps)
+    if (result.ok) dashboardStore.invalidate()
+    return result
+  }
+)
+
+// "Check for new accounts" — a user-initiated SimpleFIN fetch (floored +
+// budget-capped in the adapter, see `simplefin-refresh.ts`). On any real
+// refresh, drop the dashboard's in-memory snapshot so the newly-linked
+// accounts surface the next time the Dashboard tab is opened, WITHOUT an
+// unprompted fetch from the dashboard layer: the force refresh already wrote
+// the fresh rows to the shared SimpleFIN cache DB, and the dashboard's
+// one-shot auto-refresh re-reads them (see `DashboardDataStore.invalidate`).
+// Only invalidate when something was actually fetched — a fully-skipped
+// (cooldown) or failed call left the cache unchanged, so there is nothing new
+// for the dashboard to pick up.
+ipcMain.handle(
+  IPC_CHANNELS.connectSimpleFinForceRefresh,
+  async (): Promise<SimpleFinForceRefreshResult> => {
+    const result = await forceRefreshSimpleFin(connectionManagementDeps)
+    if (result.ok && result.refreshedCount > 0) dashboardStore.invalidate()
+    return result
+  }
+)
+ipcMain.handle(
+  IPC_CHANNELS.connectSimpleFinRefreshStatus,
+  (): Promise<SimpleFinRefreshStatus> => getSimpleFinRefreshStatus(connectionManagementDeps)
 )
 
 // ---- App lifecycle ----------------------------------------------------------

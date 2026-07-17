@@ -62,4 +62,4 @@ export type {
   StalenessInfo,
 } from './cache.js'
 export { SimpleFinAdapter } from './adapter.js'
-export type { SimpleFinAdapterOptions } from './adapter.js'
+export type { ForceRefreshResult, RefreshStatus, SimpleFinAdapterOptions } from './adapter.js'

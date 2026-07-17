@@ -6,6 +6,8 @@ import type {
   ProviderConnectionState,
   RemoveLinkedItemResult,
   SimpleFinConnectResult,
+  SimpleFinForceRefreshResult,
+  SimpleFinRefreshStatus,
 } from '../../../shared/ipc.js'
 import * as s from '../styles.js'
 
@@ -19,6 +21,32 @@ const CONNECTION_COLOR: Record<ProviderConnectionState, string> = {
   connected: '#1e7a34',
   'not-connected': '#666',
   unavailable: '#8a6d00',
+}
+
+/** Coarse, human "about N hours/minutes" for the refresh countdown — this is orientation, not a precise timer. */
+function formatCooldown(ms: number): string {
+  const minutes = Math.round(ms / 60000)
+  if (minutes < 1) return 'less than a minute'
+  if (minutes < 60) return `about ${minutes} minute${minutes === 1 ? '' : 's'}`
+  const hours = Math.round(minutes / 60)
+  return `about ${hours} hour${hours === 1 ? '' : 's'}`
+}
+
+/**
+ * One-line, display-safe summary of a "Check for new accounts" result. Kept
+ * out of the JSX so the several outcomes (fetched / nothing-due / budget /
+ * error) read as one exhaustive decision rather than a stack of `&&`s.
+ */
+function describeForceRefresh(result: SimpleFinForceRefreshResult): string {
+  if (!result.ok) return result.error ?? 'Could not check for new accounts.'
+  if (result.refreshedCount > 0) {
+    return 'Checked with SimpleFIN. If you linked new institutions, they’ll appear here and on the Dashboard.'
+  }
+  if (result.budgetExhausted) {
+    return 'Daily refresh limit reached. SimpleFIN allows only so many checks per day — try again later.'
+  }
+  // Nothing refreshed, budget fine: the cooldown floor skipped it.
+  return 'Just checked a moment ago — give it a minute before checking again.'
 }
 
 /**
@@ -162,6 +190,10 @@ export default function ConnectView(): JSX.Element {
   const [simplefinItems, setSimplefinItems] = useState<LinkedItem[] | null>(null)
   const [simplefinItemsError, setSimplefinItemsError] = useState<string | null>(null)
 
+  const [simplefinRefreshStatus, setSimplefinRefreshStatus] = useState<SimpleFinRefreshStatus | null>(null)
+  const [simplefinForceBusy, setSimplefinForceBusy] = useState(false)
+  const [simplefinForceResult, setSimplefinForceResult] = useState<SimpleFinForceRefreshResult | null>(null)
+
   async function reloadProvidersStatus(): Promise<void> {
     try {
       setStatus(await window.clad.getConnectProvidersStatus())
@@ -189,11 +221,23 @@ export default function ConnectView(): JSX.Element {
     }
   }
 
+  // Best-effort: the cooldown/budget line is a nicety, not load-bearing, so a
+  // status read that fails just leaves it hidden rather than surfacing an
+  // error of its own.
+  async function reloadSimpleFinRefreshStatus(): Promise<void> {
+    try {
+      setSimplefinRefreshStatus(await window.clad.getSimpleFinRefreshStatus())
+    } catch {
+      setSimplefinRefreshStatus(null)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     void reloadProvidersStatus()
     void reloadPlaidItems()
     void reloadSimpleFinItems()
+    void reloadSimpleFinRefreshStatus()
     window.clad.getPlaidLinkStatus().then((s) => {
       if (!cancelled) setLinkStatus(s)
     })
@@ -248,7 +292,26 @@ export default function ConnectView(): JSX.Element {
     const result = await window.clad.removeSimpleFinItem(itemId)
     await reloadSimpleFinItems()
     await reloadProvidersStatus()
+    await reloadSimpleFinRefreshStatus()
     return result
+  }
+
+  // "Check for new accounts": a live fetch, floored + budget-capped main-side.
+  // On success we reload the linked-items list and refresh-status line so the
+  // freshly-fetched institutions/accounts and the updated cooldown/budget are
+  // reflected immediately. The main process also invalidates the dashboard
+  // snapshot, so opening the Dashboard next shows the new accounts.
+  async function handleForceRefreshSimpleFin(): Promise<void> {
+    setSimplefinForceBusy(true)
+    setSimplefinForceResult(null)
+    try {
+      const result = await window.clad.forceRefreshSimpleFin()
+      setSimplefinForceResult(result)
+      await reloadSimpleFinItems()
+      await reloadSimpleFinRefreshStatus()
+    } finally {
+      setSimplefinForceBusy(false)
+    }
   }
 
   async function handleSimpleFinConnect(event: React.FormEvent): Promise<void> {
@@ -264,6 +327,7 @@ export default function ConnectView(): JSX.Element {
       if (result.ok) {
         await reloadProvidersStatus()
         await reloadSimpleFinItems()
+        await reloadSimpleFinRefreshStatus()
       }
     } finally {
       setSimplefinBusy(false)
@@ -427,6 +491,45 @@ export default function ConnectView(): JSX.Element {
               </>
             )}
             {simplefinResult && !simplefinResult.ok && <p style={s.errorText}>{simplefinResult.error}</p>}
+
+            {status.simplefinConnection === 'connected' && (
+              <div style={{ marginTop: '1rem' }}>
+                <button
+                  type="button"
+                  style={s.buttonSecondary}
+                  onClick={handleForceRefreshSimpleFin}
+                  disabled={simplefinForceBusy}
+                >
+                  {simplefinForceBusy ? 'Checking…' : 'Check for new accounts'}
+                </button>
+                <p style={{ ...s.mutedText, marginBottom: 0 }}>
+                  Linked more institutions on the SimpleFIN Bridge? New accounts show up automatically
+                  within about 10 minutes of connecting; this checks right now instead.
+                  {simplefinRefreshStatus?.available &&
+                    simplefinRefreshStatus.msUntilRefreshAllowed > 0 && (
+                      <> Next automatic check in {formatCooldown(simplefinRefreshStatus.msUntilRefreshAllowed)}.</>
+                    )}
+                  {simplefinRefreshStatus?.available &&
+                    simplefinRefreshStatus.forceRefreshBudgetRemaining <= 3 && (
+                      <> {simplefinRefreshStatus.forceRefreshBudgetRemaining} manual check
+                      {simplefinRefreshStatus.forceRefreshBudgetRemaining === 1 ? '' : 's'} left today.</>
+                    )}
+                </p>
+                {simplefinForceResult && (
+                  <p
+                    style={
+                      simplefinForceResult.ok
+                        ? simplefinForceResult.refreshedCount > 0
+                          ? s.successText
+                          : s.warnText
+                        : s.errorText
+                    }
+                  >
+                    {describeForceRefresh(simplefinForceResult)}
+                  </p>
+                )}
+              </div>
+            )}
 
             {status.simplefinConnection !== 'unavailable' && (
               <LinkedItemsSection
