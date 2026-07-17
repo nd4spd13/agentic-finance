@@ -18,12 +18,41 @@ import type { Account, Transaction, TransactionQueryOpts } from '@clad/core'
  *
  * Fail-closed design: {@link SimpleFinCache.shouldRefresh} returns `true`
  * only when a fetch is either the very first one ever for that item, or
- * `minRefreshIntervalMs` has provably elapsed since the last successful
- * one. Every ambiguous case — no prior record beyond the first bootstrap
- * fetch aside, a corrupt/unparseable stored timestamp, or a clock that
- * appears to have moved backwards (`now() < lastFetchedAt`) — resolves to
- * `false`: serve the cache with staleness info rather than risk burning a
- * request. "When in doubt, serve stale" (plan security invariant #4).
+ * the effective refresh interval has provably elapsed since the last
+ * successful one. Every ambiguous case — a corrupt/unparseable stored
+ * timestamp, or a clock that appears to have moved backwards
+ * (`now() < lastFetchedAt`) — resolves to `false`: serve the cache with
+ * staleness info rather than risk burning a request. "When in doubt, serve
+ * stale" (plan security invariant #4).
+ *
+ * **`shouldRefresh` vs `getStaleness().stale` — two different questions.**
+ * These used to be one function (`shouldRefresh` was literally
+ * `getStaleness(itemId).stale`), which inverted the invariant above in
+ * exactly the cases it names. `getStaleness` answers a *display* question
+ * ("how fresh is what I'm showing?"), where an unknown age must report
+ * `stale: true` to stay honest. `shouldRefresh` answers a *quota* question
+ * ("may I spend one of ~24 daily requests?"), where an unknown age must
+ * answer `false` or the guardrail is not a guardrail. Sharing one boolean
+ * meant a backwards clock (an NTP correction is enough) made `shouldRefresh`
+ * return `true` on *every* call — an ungated fetch per read, which the
+ * developers guide says gets the access token disabled for sustained abuse.
+ * They are computed separately now and must stay that way; `stale: true` and
+ * "a fetch is allowed" are not the same claim.
+ *
+ * Ambiguity is *self-repairing* rather than permanent: a corrupt or
+ * future-dated timestamp is rewritten to `now()` by {@link
+ * SimpleFinCache.shouldRefresh} (see `repairFetchedAt`) so the item resumes
+ * normal refreshes one interval later instead of freezing forever behind a
+ * value it can never reason about. The repair deliberately does NOT touch
+ * `fetch_history` — no request was spent, so nothing may be charged to the
+ * budget.
+ *
+ * Quota budget: `fetch_log` holds one row per item (the last fetch, for the
+ * interval gate), while `fetch_history` is append-only — one row per real
+ * request — so {@link SimpleFinCache.requestsInLastDay} can count a rolling
+ * 24h window against the Bridge's ~24/day soft cap. The interval gate alone
+ * cannot do that: it only knows when *one* item last fetched, not how many
+ * requests every item has spent together.
  *
  * Eviction semantics differ from Plaid's cache on purpose: SimpleFIN's
  * `/accounts` always returns each item's *complete* current account set
@@ -83,8 +112,23 @@ export interface SimpleFinCacheOptions {
 
 const DEFAULT_MIN_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6 hours
 
+/** Rolling window `requestsInLastDay` counts over — the Bridge's cap is expressed per day. */
+const BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000
+
+/**
+ * How long `fetch_history` rows are kept. Longer than {@link
+ * BUDGET_WINDOW_MS} so a row is never pruned while it still counts against
+ * the rolling window, with room left to inspect recent history when
+ * diagnosing quota questions.
+ */
+const HISTORY_RETENTION_MS = 48 * 60 * 60 * 1000
+
 interface FetchLogRow {
   fetched_at: string
+}
+
+interface CountRow {
+  count: number
 }
 
 interface AccountRow {
@@ -127,6 +171,23 @@ export class SimpleFinCache {
         item_id TEXT PRIMARY KEY,
         fetched_at TEXT NOT NULL
       )
+    `)
+    // Append-only sibling of fetch_log: one row per real request, across all
+    // items, so requestsInLastDay() can count a rolling 24h window against
+    // the Bridge's ~24/day cap. Purely additive — fetch_log keeps its
+    // existing one-row-per-item meaning, so an existing DB (a live desktop
+    // install's simplefin.sqlite) needs no migration and loses nothing; the
+    // budget simply starts counting from the first fetch after this upgrade.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS fetch_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      )
+    `)
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_fetch_history_fetched_at
+        ON fetch_history (fetched_at)
     `)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS accounts_cache (
@@ -174,28 +235,106 @@ export class SimpleFinCache {
   // ---------------------------------------------------------------------
 
   /**
-   * Fail-closed quota gate. Returns `true` only if this item has never
-   * been fetched before (there is nothing to serve from cache yet, so a
-   * first fetch is unavoidable) or at least `minRefreshIntervalMs` has
-   * elapsed since the last successful fetch. Returns `false` — including
-   * when the last-fetch timestamp is unparseable or appears to be in the
-   * future relative to `now()` — in every other case.
+   * Fail-closed quota gate — "may I spend one of ~24 daily requests?".
+   * Deliberately NOT `getStaleness(itemId).stale`; see the module doc for
+   * why those two answers must not share a boolean.
+   *
+   * Returns `true` only if this item has never been fetched before (there is
+   * nothing to serve from cache yet, so a first fetch is unavoidable) or the
+   * effective interval has *provably* elapsed since the last successful
+   * fetch. Returns `false` in every other case, including when the stored
+   * timestamp is unparseable or sits in the future relative to `now()` — an
+   * age we cannot compute is never grounds for spending a request.
+   *
+   * `opts.intervalMs` overrides `minRefreshIntervalMs` for this call only,
+   * which is how `adapter.ts` applies its post-setup grace window without
+   * this cache needing to know what a "setup window" is. It cannot be used
+   * to bypass the gate outright: a caller passing `0` still gets the
+   * fail-closed answer for an unreadable timestamp.
    */
-  shouldRefresh(itemId: string): boolean {
-    return this.getStaleness(itemId).stale
+  shouldRefresh(itemId: string, opts?: { intervalMs?: number }): boolean {
+    const intervalMs = opts?.intervalMs ?? this.minRefreshIntervalMs
+    const lastFetchedAt = this.getFetchedAt(itemId)
+    if (lastFetchedAt === undefined) return true
+
+    const ageMs = this.ageMsOrRepair(itemId, lastFetchedAt)
+    if (ageMs === undefined) return false
+
+    return ageMs >= intervalMs
   }
 
-  /** Milliseconds until {@link shouldRefresh} would next return `true`, or `0` if it already would. */
-  msUntilRefreshAllowed(itemId: string): number {
-    const { lastFetchedAt } = this.getStaleness(itemId)
+  /**
+   * Milliseconds until {@link shouldRefresh} would next return `true`, or
+   * `0` if it already would. Mirrors `shouldRefresh`'s gate exactly (same
+   * `opts.intervalMs`, same fail-closed repair) so the countdown a caller
+   * shows can never disagree with the decision the gate actually makes —
+   * `msUntilRefreshAllowed(...) === 0` iff `shouldRefresh(...)` is `true`.
+   */
+  msUntilRefreshAllowed(itemId: string, opts?: { intervalMs?: number }): number {
+    const intervalMs = opts?.intervalMs ?? this.minRefreshIntervalMs
+    const lastFetchedAt = this.getFetchedAt(itemId)
     if (lastFetchedAt === undefined) return 0
 
-    const lastFetchedMs = new Date(lastFetchedAt).getTime()
-    if (!Number.isFinite(lastFetchedMs)) return 0
+    const ageMs = this.ageMsOrRepair(itemId, lastFetchedAt)
+    // Repaired just now: the full interval is what remains.
+    if (ageMs === undefined) return intervalMs
 
-    const elapsed = this.now().getTime() - lastFetchedMs
-    const remaining = this.minRefreshIntervalMs - elapsed
+    const remaining = intervalMs - ageMs
     return remaining > 0 ? remaining : 0
+  }
+
+  /**
+   * Number of real requests recorded in the last {@link BUDGET_WINDOW_MS},
+   * across every item — what a caller checks against the Bridge's ~24/day
+   * soft cap before allowing a user-initiated force refresh to skip the
+   * interval gate.
+   *
+   * Counts `fetch_history` (append-only, one row per request), never
+   * `fetch_log` (one row per item, overwritten each fetch — it cannot
+   * answer "how many requests today?" at all). Only rows written by
+   * {@link recordFetch} count: a timestamp repair spends no request and is
+   * never charged here.
+   */
+  requestsInLastDay(): number {
+    const since = new Date(this.now().getTime() - BUDGET_WINDOW_MS).toISOString()
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS count FROM fetch_history WHERE fetched_at >= ?')
+      .get(since) as unknown as CountRow | undefined
+    return row?.count ?? 0
+  }
+
+  /**
+   * Age of a last-fetch timestamp, or `undefined` when it cannot be trusted
+   * — in which case the row is repaired to `now()` so the item resumes
+   * normal refreshes one interval from now rather than freezing behind a
+   * value no amount of waiting can fix (a corrupt string never becomes
+   * parseable; a future timestamp from a since-corrected clock could sit
+   * ahead of `now()` for years).
+   *
+   * The repair writes `fetch_log` ONLY. Charging `fetch_history` here would
+   * bill the user's daily budget for a request that was never sent.
+   */
+  private ageMsOrRepair(itemId: string, lastFetchedAt: string): number | undefined {
+    const lastFetchedMs = new Date(lastFetchedAt).getTime()
+    if (!Number.isFinite(lastFetchedMs)) {
+      this.repairFetchedAt(itemId)
+      return undefined
+    }
+
+    const ageMs = this.now().getTime() - lastFetchedMs
+    if (ageMs < 0) {
+      this.repairFetchedAt(itemId)
+      return undefined
+    }
+
+    return ageMs
+  }
+
+  /** Rewrites an untrustworthy `fetch_log.fetched_at` to `now()`. See {@link ageMsOrRepair}. */
+  private repairFetchedAt(itemId: string): void {
+    this.db
+      .prepare('UPDATE fetch_log SET fetched_at = ? WHERE item_id = ?')
+      .run(this.now().toISOString(), itemId)
   }
 
   /**
@@ -224,8 +363,13 @@ export class SimpleFinCache {
 
   /**
    * Records a successful live fetch for `itemId`: stamps `fetched_at =
-   * now()` and *replaces* (see module docs on eviction semantics) that
-   * item's cached accounts and transactions with the given snapshot.
+   * now()` (both the `fetch_log` interval gate and the `fetch_history`
+   * budget ledger) and *replaces* (see module docs on eviction semantics)
+   * that item's cached accounts and transactions with the given snapshot.
+   *
+   * This is the ONLY method that appends to `fetch_history` — it is called
+   * once per real request, so the rolling count stays an accurate ledger of
+   * quota actually spent.
    */
   recordFetch(itemId: string, accounts: Account[], transactions: Transaction[]): void {
     const fetchedAt = this.now().toISOString()
@@ -238,6 +382,17 @@ export class SimpleFinCache {
            ON CONFLICT(item_id) DO UPDATE SET fetched_at = excluded.fetched_at`
         )
         .run(itemId, fetchedAt)
+
+      this.db
+        .prepare('INSERT INTO fetch_history (item_id, fetched_at) VALUES (?, ?)')
+        .run(itemId, fetchedAt)
+
+      // Prune inside the same transaction: the ledger stays bounded without
+      // needing a separate sweep, and a rollback below leaves both the new
+      // row and the prune undone together.
+      this.db
+        .prepare('DELETE FROM fetch_history WHERE fetched_at < ?')
+        .run(new Date(this.now().getTime() - HISTORY_RETENTION_MS).toISOString())
 
       this.db.prepare('DELETE FROM accounts_cache WHERE item_id = ?').run(itemId)
       this.db.prepare('DELETE FROM transactions_cache WHERE item_id = ?').run(itemId)
@@ -369,7 +524,7 @@ export class SimpleFinCache {
   // ---------------------------------------------------------------------
 
   /**
-   * Purges every row this cache owns for a single item — its cached accounts,
+   * Purges the rows this cache owns for a single item — its cached accounts,
    * its cached transactions, and its `fetch_log` quota-timestamp entry. Used
    * when a SimpleFIN item is disconnected (desktop "Remove connection"): the
    * `TokenStore` deletes the item's encrypted access URL from `items`/`meta`
@@ -378,6 +533,13 @@ export class SimpleFinCache {
    * start fresh rather than inherit a stale last-fetch time). Wrapped in a
    * transaction for the same all-or-nothing reason `recordFetch` is. A no-op
    * for an item that has nothing cached.
+   *
+   * `fetch_history` is deliberately left ALONE — the one thing this does not
+   * purge. Those requests were really spent against the Bridge today, and
+   * forgetting them would make remove-then-re-add a way to zero the daily
+   * budget and walk straight into the cap this cache exists to respect.
+   * The rows carry no financial data (an item id and a timestamp) and age
+   * out on their own via `recordFetch`'s prune.
    */
   removeItem(itemId: string): void {
     this.db.exec('BEGIN')

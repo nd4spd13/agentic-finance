@@ -21,6 +21,16 @@ function makeFakeClock(startIso: string) {
 
 const HOUR = 60 * 60 * 1000
 
+/**
+ * Reaches past the public API to simulate a corrupted `fetch_log` row — the
+ * "in doubt" case the fail-closed gate must handle without throwing, and
+ * without treating an uncomputable age as permission to spend a request.
+ */
+function corruptFetchedAt(cache: SimpleFinCache, itemId: string): void {
+  const db = (cache as unknown as { db: { exec: (sql: string) => void } }).db
+  db.exec(`UPDATE fetch_log SET fetched_at = 'not-a-real-timestamp' WHERE item_id = '${itemId}'`)
+}
+
 describe('SimpleFinCache', () => {
   let dir: string
   let dbPath: string
@@ -148,7 +158,13 @@ describe('SimpleFinCache', () => {
     })
 
     describe('fail-closed behavior', () => {
-      it('treats a clock that moved backwards relative to the last fetch as stale, not fresh', () => {
+      // These two cases are where `shouldRefresh` and `getStaleness().stale`
+      // deliberately disagree: an age we cannot compute is honestly *stale*
+      // to display, but is never grounds to spend one of ~24 daily requests.
+      // Both used to return `true` from shouldRefresh (they shared one
+      // boolean), which meant a backwards clock produced an ungated fetch on
+      // every single read.
+      it('refuses to spend a request when the clock moved backwards, but still reports stale', () => {
         const clock = makeFakeClock('2026-01-05T00:00:00.000Z')
         const cache = new SimpleFinCache({ dbPath, now: clock.now, minRefreshIntervalMs: HOUR })
 
@@ -159,25 +175,56 @@ describe('SimpleFinCache', () => {
         const staleness = cache.getStaleness('item_1')
         expect(staleness.ageMs).toBeLessThan(0)
         expect(staleness.stale).toBe(true)
+        expect(cache.shouldRefresh('item_1')).toBe(false)
+
+        cache.close()
+      })
+
+      it('refuses to spend a request on a corrupted stored timestamp rather than throwing', () => {
+        const cache = new SimpleFinCache({ dbPath })
+        cache.recordFetch('item_1', [account], [transaction])
+        corruptFetchedAt(cache, 'item_1')
+
+        const staleness = cache.getStaleness('item_1')
+        expect(staleness.stale).toBe(true)
+        expect(staleness.ageMs).toBeUndefined()
+        expect(cache.shouldRefresh('item_1')).toBe(false)
+
+        cache.close()
+      })
+
+      it('self-repairs an unreadable timestamp so the item resumes refreshing one interval later', () => {
+        const clock = makeFakeClock('2026-01-05T00:00:00.000Z')
+        const cache = new SimpleFinCache({ dbPath, now: clock.now, minRefreshIntervalMs: HOUR })
+
+        cache.recordFetch('item_1', [account], [transaction])
+        corruptFetchedAt(cache, 'item_1')
+
+        // First call refuses AND repairs, so the item is not frozen forever
+        // behind a value that can never become parseable.
+        expect(cache.shouldRefresh('item_1')).toBe(false)
+        expect(cache.msUntilRefreshAllowed('item_1')).toBe(HOUR)
+
+        clock.advance(HOUR - 1)
+        expect(cache.shouldRefresh('item_1')).toBe(false)
+
+        clock.advance(1)
         expect(cache.shouldRefresh('item_1')).toBe(true)
 
         cache.close()
       })
 
-      it('treats a corrupted/unparseable stored timestamp as stale rather than throwing', () => {
-        const cache = new SimpleFinCache({ dbPath })
+      it('does not charge the daily budget for a timestamp repair (no request was sent)', () => {
+        const clock = makeFakeClock('2026-01-05T00:00:00.000Z')
+        const cache = new SimpleFinCache({ dbPath, now: clock.now, minRefreshIntervalMs: HOUR })
+
         cache.recordFetch('item_1', [account], [transaction])
+        expect(cache.requestsInLastDay()).toBe(1)
 
-        // Reach past the public API to simulate a corrupted fetch_log row —
-        // this is the "in doubt" case the fail-closed design must handle
-        // without throwing or silently treating it as fresh.
-        const db = (cache as unknown as { db: { exec: (sql: string) => void } }).db
-        db.exec(`UPDATE fetch_log SET fetched_at = 'not-a-real-timestamp' WHERE item_id = 'item_1'`)
+        corruptFetchedAt(cache, 'item_1')
+        cache.shouldRefresh('item_1') // triggers the repair
 
-        const staleness = cache.getStaleness('item_1')
-        expect(staleness.stale).toBe(true)
-        expect(staleness.ageMs).toBeUndefined()
-        expect(cache.shouldRefresh('item_1')).toBe(true)
+        expect(cache.requestsInLastDay()).toBe(1)
 
         cache.close()
       })
@@ -186,6 +233,97 @@ describe('SimpleFinCache', () => {
         const cache = new SimpleFinCache({ dbPath })
         expect(() => cache.shouldRefresh('unknown_item')).not.toThrow()
         expect(() => cache.getStaleness('unknown_item')).not.toThrow()
+        cache.close()
+      })
+    })
+
+    describe('grace-window interval override', () => {
+      it('allows a refresh under a shorter override that the default interval would still block', () => {
+        const clock = makeFakeClock('2026-01-05T00:00:00.000Z')
+        const cache = new SimpleFinCache({ dbPath, now: clock.now, minRefreshIntervalMs: HOUR })
+
+        cache.recordFetch('item_1', [account], [transaction])
+        clock.advance(10 * 60 * 1000) // 10 minutes
+
+        expect(cache.shouldRefresh('item_1')).toBe(false)
+        expect(cache.shouldRefresh('item_1', { intervalMs: 5 * 60 * 1000 })).toBe(true)
+
+        cache.close()
+      })
+
+      it('keeps msUntilRefreshAllowed consistent with the gate under an override', () => {
+        const clock = makeFakeClock('2026-01-05T00:00:00.000Z')
+        const cache = new SimpleFinCache({ dbPath, now: clock.now, minRefreshIntervalMs: HOUR })
+
+        cache.recordFetch('item_1', [account], [transaction])
+        clock.advance(10 * 60 * 1000)
+
+        const opts = { intervalMs: 30 * 60 * 1000 }
+        expect(cache.msUntilRefreshAllowed('item_1', opts)).toBe(20 * 60 * 1000)
+        expect(cache.shouldRefresh('item_1', opts)).toBe(false)
+
+        clock.advance(20 * 60 * 1000)
+        expect(cache.msUntilRefreshAllowed('item_1', opts)).toBe(0)
+        expect(cache.shouldRefresh('item_1', opts)).toBe(true)
+
+        cache.close()
+      })
+
+      it('still fails closed on an unreadable timestamp even with a zero override', () => {
+        const cache = new SimpleFinCache({ dbPath })
+        cache.recordFetch('item_1', [account], [transaction])
+        corruptFetchedAt(cache, 'item_1')
+
+        expect(cache.shouldRefresh('item_1', { intervalMs: 0 })).toBe(false)
+
+        cache.close()
+      })
+    })
+
+    describe('rolling 24h request budget', () => {
+      it('counts one request per recordFetch across every item', () => {
+        const cache = new SimpleFinCache({ dbPath })
+        expect(cache.requestsInLastDay()).toBe(0)
+
+        // Empty snapshots keep this focused on the request ledger without
+        // colliding on accounts_cache's account_id primary key.
+        cache.recordFetch('item_1', [], [])
+        cache.recordFetch('item_2', [], [])
+        cache.recordFetch('item_1', [], [])
+
+        // fetch_log would report 2 here (one row per item, overwritten);
+        // the budget must see all 3 real requests.
+        expect(cache.requestsInLastDay()).toBe(3)
+
+        cache.close()
+      })
+
+      it('drops requests out of the count once they age past 24h', () => {
+        const clock = makeFakeClock('2026-01-05T00:00:00.000Z')
+        const cache = new SimpleFinCache({ dbPath, now: clock.now })
+
+        cache.recordFetch('item_1', [account], [transaction])
+        clock.advance(23 * HOUR)
+        expect(cache.requestsInLastDay()).toBe(1)
+
+        clock.advance(HOUR + 1)
+        expect(cache.requestsInLastDay()).toBe(0)
+
+        cache.close()
+      })
+
+      it('keeps a removed item\'s spent requests on the ledger', () => {
+        const cache = new SimpleFinCache({ dbPath })
+        cache.recordFetch('item_1', [account], [transaction])
+        cache.recordFetch('item_1', [account], [transaction])
+
+        cache.removeItem('item_1')
+
+        // Those requests really were spent today; remove-then-re-add must not
+        // become a way to zero the budget.
+        expect(cache.requestsInLastDay()).toBe(2)
+        expect(cache.getAccounts('item_1')).toEqual([])
+
         cache.close()
       })
     })

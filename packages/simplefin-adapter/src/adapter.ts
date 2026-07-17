@@ -20,6 +20,28 @@
  * here in a way it isn't for Plaid: most calls in normal operation *are*
  * cache reads, not degraded fallbacks.
  *
+ * The 6h interval is the right default for *steady state* and the wrong one
+ * for the minutes right after linking, because of a gap with no technical
+ * fix available: institutions are linked on the SimpleFIN Bridge's own
+ * website, which this app never observes. There is no webhook, no callback,
+ * no completion event — the access URL simply starts returning more accounts
+ * one day, and nothing tells us when. Two mechanisms compensate, both of
+ * them approximations of the event we cannot have:
+ *
+ *  - **Setup grace window** (`setupGraceMs`, default 1h at 10min intervals):
+ *    refresh more eagerly while the account set is still churning, which is
+ *    also the exact window the developers guide grants quota leeway for.
+ *  - **`forceRefresh()`**: explicit user intent ("Check for new accounts") is
+ *    the one signal we do reliably get. Floored at 1 minute and capped by a
+ *    rolling daily budget.
+ *
+ * Neither bypasses the guardrail — both go through `cache.shouldRefresh` with
+ * a shorter interval, so an unreadable timestamp still fails closed. And
+ * `getRefreshStatus()` exists so callers can *show* the cooldown: a Refresh
+ * button that silently no-ops for six hours is indistinguishable from a bug,
+ * which is precisely how a missing account went undiagnosed long enough to
+ * need a SQLite session to explain.
+ *
  * There is no `SimpleFinClientLike`-style injectable SDK client the way
  * `PlaidAdapterOptions.client` is: SimpleFIN has no persistent client/session
  * object to construct (`client.ts`'s `fetchAccounts` is a stateless function
@@ -85,6 +107,62 @@ import {
 import { SimpleFinAccessTokenError, SimpleFinError, SimpleFinSubscriptionError } from './errors.js'
 import { mapAccountSet } from './mapping.js'
 
+/**
+ * How long after an item is first stored the setup grace window lasts. See
+ * {@link SimpleFinAdapterOptions.setupGraceMs}.
+ */
+const DEFAULT_SETUP_GRACE_MS = 60 * 60 * 1000 // 1 hour
+
+/** Refresh interval used inside the setup grace window. */
+const DEFAULT_SETUP_GRACE_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
+
+/**
+ * The floor {@link SimpleFinAdapter.forceRefresh} applies. Note this is an
+ * *interval*, not a bypass: a force refresh is an ordinary
+ * `cache.shouldRefresh` call with a very short interval, so it inherits the
+ * gate's fail-closed handling of unreadable timestamps rather than routing
+ * around it.
+ */
+const FORCE_REFRESH_FLOOR_MS = 60 * 1000 // 1 minute
+
+/**
+ * Requests per rolling 24h that {@link SimpleFinAdapter.forceRefresh} will
+ * spend before refusing. Deliberately below the developers guide's "24
+ * requests or fewer per day" so the automatic 6h refreshes (4/item/day) and
+ * the initial claim-time fetch always have room — a user mashing "Check for
+ * new accounts" must not be able to starve the app's own upkeep or trip the
+ * abuse threshold that disables the access URL. The guide describes the cap
+ * as soft and its exact scope (per access URL? per Bridge account?) is
+ * unverified, which is the other reason to leave headroom.
+ */
+const FORCE_REFRESH_DAILY_BUDGET = 20
+
+/** Outcome of a user-initiated {@link SimpleFinAdapter.forceRefresh}. Display-safe. */
+export interface ForceRefreshResult {
+  /** Item ids that made a live request and updated their cache. */
+  refreshed: string[]
+  /** Item ids skipped because they fetched within the last {@link FORCE_REFRESH_FLOOR_MS}. */
+  skipped: string[]
+  /** `true` when the daily budget refused at least one item. */
+  budgetExhausted: boolean
+  /** Requests spent in the rolling 24h window, after this call. */
+  requestsInLastDay: number
+  /** Display-safe description of a failure that affected at least one item, if any. */
+  error?: string
+}
+
+/** What the UI needs to explain the cooldown instead of silently no-opping. Display-safe. */
+export interface RefreshStatus {
+  /** Milliseconds until an automatic refresh is next allowed; `0` when one is due now. */
+  msUntilRefreshAllowed: number
+  /** `true` while at least one item is inside its post-setup grace window. */
+  inSetupGrace: boolean
+  /** Requests spent in the rolling 24h window. */
+  requestsInLastDay: number
+  /** Remaining force-refresh budget in the rolling 24h window. */
+  forceRefreshBudgetRemaining: number
+}
+
 export interface SimpleFinAdapterOptions {
   /** Stores/decrypts each item's SimpleFIN access URL (the "token"). */
   tokenStore: TokenStore
@@ -98,6 +176,28 @@ export interface SimpleFinAdapterOptions {
   fetch?: FetchLike
   /** Forwarded to `SimpleFinCache`; default 6h. See that module for the quota-guardrail rationale. */
   minRefreshIntervalMs?: number
+  /**
+   * How long after an item's `createdAt` the shorter {@link
+   * setupGraceIntervalMs} applies instead of `minRefreshIntervalMs`.
+   * Defaults to 1 hour; `0` disables the grace window.
+   *
+   * Why this exists: linking institutions happens on the *Bridge's* website,
+   * which this app never observes — there is no webhook, no callback, no
+   * completion event to hook. The claim-time fetch therefore snapshots the
+   * account set at the least representative moment possible (before the user
+   * has finished adding institutions) and, with only the 6h interval, that
+   * snapshot is then frozen in for six hours. A user who links another bank
+   * ten minutes later has no way to see it and no way to know why. Refreshing
+   * a little more eagerly during the window where the account set is actually
+   * churning is the closest honest substitute for the event we cannot get,
+   * and it is the exact case the developers guide grants leeway for ("a
+   * little leeway above this limit ... helpful when doing initial setup").
+   * Bounded by construction: 1h at 10min intervals is at most 6 extra
+   * requests per item, once, and only ever right after linking.
+   */
+  setupGraceMs?: number
+  /** Refresh interval used inside {@link setupGraceMs}; defaults to 10 minutes. */
+  setupGraceIntervalMs?: number
   /** Injectable clock, forwarded to `SimpleFinCache` and used for this adapter's own date-window computation. Defaults to `() => new Date()`. */
   now?: () => Date
   userId?: string
@@ -109,12 +209,16 @@ export class SimpleFinAdapter implements FinancialDataProvider {
   private readonly fetchImpl: FetchLike | undefined
   private readonly now: () => Date
   private readonly userId: string | undefined
+  private readonly setupGraceMs: number
+  private readonly setupGraceIntervalMs: number
 
   constructor(options: SimpleFinAdapterOptions) {
     this.tokenStore = options.tokenStore
     this.fetchImpl = options.fetch
     this.now = options.now ?? (() => new Date())
     this.userId = options.userId
+    this.setupGraceMs = options.setupGraceMs ?? DEFAULT_SETUP_GRACE_MS
+    this.setupGraceIntervalMs = options.setupGraceIntervalMs ?? DEFAULT_SETUP_GRACE_INTERVAL_MS
     this.cache = new SimpleFinCache({
       dbPath: options.dbPath,
       minRefreshIntervalMs: options.minRefreshIntervalMs,
@@ -192,9 +296,135 @@ export class SimpleFinAdapter implements FinancialDataProvider {
 
   // Deliberately no getRecurringCharges — see the module doc comment.
 
+  /**
+   * Releases the SQLite cache handle this adapter opened in its constructor.
+   * The injected `tokenStore` is NOT closed here — the adapter received it,
+   * it doesn't own it, and the caller that constructed it (e.g. the desktop
+   * main process) closes it on its own timeline. Idempotent-safe to call once
+   * per constructed adapter; required for the construct-use-dispose callers
+   * (a per-IPC-call adapter would otherwise leak a file handle each click).
+   * The long-lived dashboard provider simply never calls it, which is fine —
+   * the handle lives as long as the process, as it did before.
+   */
+  close(): void {
+    this.cache.close()
+  }
+
+  // -----------------------------------------------------------------
+  // User-initiated refresh
+  // -----------------------------------------------------------------
+
+  /**
+   * Refreshes every stored item on explicit user request ("Check for new
+   * accounts"), subject to a 1-minute floor and the daily budget — the
+   * closest honest substitute for the Bridge-side "you linked something"
+   * event that does not exist (see {@link
+   * SimpleFinAdapterOptions.setupGraceMs}). Explicit user intent is the one
+   * signal we do get that the account set may have changed, so it is worth a
+   * request the interval gate would otherwise refuse.
+   *
+   * NOT a bypass. It runs the same `cache.shouldRefresh` gate with a very
+   * short interval, so an unreadable timestamp still fails closed exactly as
+   * it would for an automatic refresh. The only thing being relaxed is *how
+   * long*, never *whether the gate applies*.
+   *
+   * Never throws: a per-item failure lands in `error` (secret-free) while
+   * every other item still gets its chance, mirroring `getAccounts`'s
+   * degrade-to-cache posture. `ProviderAuthError` is the one exception worth
+   * propagating — a rejected access URL is not a transient failure and the
+   * user must be told to re-link.
+   */
+  async forceRefresh(): Promise<ForceRefreshResult> {
+    const items = this.tokenStore.listItems()
+    const refreshed: string[] = []
+    const skipped: string[] = []
+    let budgetExhausted = false
+    let lastError: unknown
+
+    for (const item of items) {
+      if (!this.cache.shouldRefresh(item.itemId, { intervalMs: FORCE_REFRESH_FLOOR_MS })) {
+        skipped.push(item.itemId)
+        continue
+      }
+
+      // Checked per item, immediately before spending: a multi-item account
+      // could otherwise cross the budget partway through this loop.
+      if (this.cache.requestsInLastDay() >= FORCE_REFRESH_DAILY_BUDGET) {
+        budgetExhausted = true
+        break
+      }
+
+      try {
+        await this.refreshItemIfDue(item, FORCE_REFRESH_FLOOR_MS)
+        refreshed.push(item.itemId)
+      } catch (error) {
+        if (error instanceof ProviderAuthError) throw error
+        lastError = error
+      }
+    }
+
+    return {
+      refreshed,
+      skipped,
+      budgetExhausted,
+      requestsInLastDay: this.cache.requestsInLastDay(),
+      ...(lastError ? { error: describeError(lastError) } : {}),
+    }
+  }
+
+  /**
+   * What the UI needs to explain the cooldown rather than leave a Refresh
+   * button that silently does nothing — the failure mode that made a missing
+   * account effectively undiagnosable. Pure cache reads; never touches the
+   * network.
+   *
+   * `msUntilRefreshAllowed` is reported for the item that will come due
+   * *soonest*, since that is when the next automatic refresh could surface
+   * anything new.
+   */
+  getRefreshStatus(): RefreshStatus {
+    const items = this.tokenStore.listItems()
+    const waits = items.map((item) =>
+      this.cache.msUntilRefreshAllowed(item.itemId, { intervalMs: this.setupGraceIntervalFor(item) })
+    )
+
+    return {
+      msUntilRefreshAllowed: waits.length > 0 ? Math.min(...waits) : 0,
+      inSetupGrace: items.some((item) => this.setupGraceIntervalFor(item) !== undefined),
+      requestsInLastDay: this.cache.requestsInLastDay(),
+      forceRefreshBudgetRemaining: Math.max(
+        0,
+        FORCE_REFRESH_DAILY_BUDGET - this.cache.requestsInLastDay()
+      ),
+    }
+  }
+
   // -----------------------------------------------------------------
   // Internal helpers
   // -----------------------------------------------------------------
+
+  /**
+   * The shorter grace interval while an item is still within
+   * `setupGraceMs` of being stored, or `undefined` to use the cache's
+   * normal interval.
+   *
+   * Returns `undefined` for an unreadable or future-dated `createdAt` rather
+   * than guessing: the same "an age we cannot compute is never grounds to
+   * spend a request" rule the cache's gate follows. Falling back to the
+   * normal 6h interval is the conservative direction here — the worst case is
+   * a user waits, not that a broken clock unlocks 10-minute polling forever.
+   */
+  private setupGraceIntervalFor(item: StoredItemMeta): number | undefined {
+    if (this.setupGraceMs <= 0) return undefined
+
+    const createdMs = new Date(item.createdAt).getTime()
+    if (!Number.isFinite(createdMs)) return undefined
+
+    const ageMs = this.now().getTime() - createdMs
+    if (ageMs < 0 || ageMs >= this.setupGraceMs) return undefined
+
+    return this.setupGraceIntervalMs
+  }
 
   /**
    * Refreshes every stored item that is due (per the quota guardrail),
@@ -237,8 +467,9 @@ export class SimpleFinAdapter implements FinancialDataProvider {
    * broken about previously-cached data just because the *next* live fetch
    * failed.
    */
-  private async refreshItemIfDue(item: StoredItemMeta): Promise<void> {
-    if (!this.cache.shouldRefresh(item.itemId)) return
+  private async refreshItemIfDue(item: StoredItemMeta, intervalMs?: number): Promise<void> {
+    const effectiveInterval = intervalMs ?? this.setupGraceIntervalFor(item)
+    if (!this.cache.shouldRefresh(item.itemId, { intervalMs: effectiveInterval })) return
 
     const accessUrl = this.tokenStore.getAccessToken(item.itemId)
     const nowSeconds = Math.floor(this.now().getTime() / 1000)
