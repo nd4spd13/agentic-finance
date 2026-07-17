@@ -1,7 +1,7 @@
 {
   "name": "@clad/desktop",
   "productName": "Clad",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Clad desktop app (Electron) — MCP server lifecycle, approvals, audit, dashboard.",
   "author": "Christopher Brown",
