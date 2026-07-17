@@ -86,7 +86,7 @@ describe.runIf(hasSandboxCredentials)('PlaidAdapter (Plaid sandbox integration)'
       expect(tokenStore.listItems()).toHaveLength(1)
       expect(tokenStore.listItems()[0].itemId).toBe(linkResult.itemId)
 
-      adapter = new PlaidAdapter({ client, tokenStore, dbPath: cacheDbPath })
+      adapter = new PlaidAdapter({ client, tokenStore, dbPath: cacheDbPath, passphrase: TEST_PASSPHRASE })
 
       // --- Accounts --------------------------------------------------------
       const accounts = await adapter.getAccounts(userId)

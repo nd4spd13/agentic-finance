@@ -20,6 +20,12 @@ export interface PlaidAdapterOptions {
   client: PlaidClientLike
   tokenStore: TokenStore
   dbPath: string
+  /**
+   * Passphrase that unlocks the encrypted cache (D5.1). The same passphrase
+   * already guards the `tokenStore`'s DB file — the cache shares that file, so
+   * the same key derives from the same salt (see `PlaidCache`/`openDatabaseKey`).
+   */
+  passphrase: string
   userId?: string
 }
 
@@ -61,7 +67,7 @@ export class PlaidAdapter implements FinancialDataProvider {
     this.tokenStore = options.tokenStore
     this.dbPath = options.dbPath
     this.userId = options.userId
-    this.cache = new PlaidCache(this.dbPath)
+    this.cache = new PlaidCache({ dbPath: this.dbPath, passphrase: options.passphrase })
   }
 
   async getAccounts(_userId: string): Promise<Account[]> {

@@ -28,5 +28,5 @@ export type {
   LinkedAccount,
 } from './link.js'
 export { PlaidCache } from './cache.js'
-export type { CachedAccount, CachedTransaction } from './cache.js'
+export type { CachedAccount, CachedTransaction, PlaidCacheOptions } from './cache.js'
 export { mapAccount, mapAccountType, mapRecurringCharge, mapTransaction } from './mapping.js'

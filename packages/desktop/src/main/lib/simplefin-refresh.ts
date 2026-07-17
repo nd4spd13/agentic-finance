@@ -216,6 +216,7 @@ async function buildAdapter(
   const instance = new SimpleFinAdapter({
     tokenStore,
     dbPath: config.simplefin_db,
+    passphrase,
     fetch: fetchImpl,
   })
 

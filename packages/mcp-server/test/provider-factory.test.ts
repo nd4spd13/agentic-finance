@@ -232,7 +232,7 @@ describe('SimpleFinAdapter end to end through the MCP tool handlers (SF1 fixture
     const fixtureBody = readFileSync(fixturePath, 'utf-8')
     const fetchImpl = (async () => new Response(fixtureBody, { status: 200 })) as unknown as typeof fetch
 
-    const provider = new SimpleFinAdapter({ tokenStore, dbPath, fetch: fetchImpl })
+    const provider = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: 'test-passphrase', fetch: fetchImpl })
     const context = { agentId: 'test-agent', policy, provider }
 
     const balancesResult = await getBalances.handler({}, context)

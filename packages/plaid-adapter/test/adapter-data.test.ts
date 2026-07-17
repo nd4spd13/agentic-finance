@@ -20,6 +20,8 @@ import {
 } from './fixtures/fakes.js'
 import { makePlaidTransaction } from './fixtures/transactions.js'
 
+const TEST_PASSPHRASE = 'cache-encryption-test-passphrase'
+
 describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
   let dir: string
   let dbPath: string
@@ -45,7 +47,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       const client = makeFakeClient({
         accountsGet: vi.fn(() => respond(accountsGetResponse([checkingAccount, savingsAccount]))),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
 
       const accounts = await adapter.getAccounts('user_1')
 
@@ -62,7 +64,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       const client = makeFakeClient({
         accountsGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
 
       const accounts = await adapter.getAccounts('user_1')
       expect(accounts[0].institution).toBe('Fake Bank')
@@ -82,7 +84,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
           return respond(accountsGetResponse([creditAccount]))
         }),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
 
       const accounts = await adapter.getAccounts('user_1')
       expect(accounts.map(a => a.id).sort()).toEqual(['plaid_acc_checking', 'plaid_acc_credit'])
@@ -94,13 +96,13 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       const client = makeFakeClient({
         accountsGet: vi.fn().mockResolvedValueOnce(await respond(accountsGetResponse([checkingAccount]))),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter.getAccounts('user_1') // warm the cache
 
       const flakyClient = makeFakeClient({
         accountsGet: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
       })
-      const adapter2 = new PlaidAdapter({ client: flakyClient, tokenStore, dbPath })
+      const adapter2 = new PlaidAdapter({ client: flakyClient, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
 
       const accounts = await adapter2.getAccounts('user_1')
       expect(accounts).toHaveLength(1)
@@ -114,7 +116,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       const client = makeFakeClient({
         accountsGet: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
 
       await expect(adapter.getAccounts('user_1')).rejects.toBeInstanceOf(ProviderUnavailableError)
     })
@@ -123,7 +125,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       const client = makeFakeClient({
         accountsGet: vi.fn().mockRejectedValue(makePlaidError('ITEM_LOGIN_REQUIRED')),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
 
       const error = await adapter.getAccounts('user_1').catch(e => e)
       expect(error).toBeInstanceOf(ProviderAuthError)
@@ -138,7 +140,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         accountsGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
         accountsBalanceGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter.getAccounts('user_1') // populate accounts_cache so getBalance can route by accountId
 
       const balance = await adapter.getBalance('user_1', 'plaid_acc_checking')
@@ -157,14 +159,14 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         accountsGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
         accountsBalanceGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter.getAccounts('user_1') // warms the cache with institution: 'Fake Bank'
       await adapter.getBalance('user_1', 'plaid_acc_checking') // re-upserts via getBalance's own cache write
 
       // Degrade getAccounts to whatever is now in the cache to observe what
       // getBalance actually persisted.
       const flakyClient = makeFakeClient({ accountsGet: vi.fn().mockRejectedValue(new Error('down')) })
-      const adapter2 = new PlaidAdapter({ client: flakyClient, tokenStore, dbPath })
+      const adapter2 = new PlaidAdapter({ client: flakyClient, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       const accounts = await adapter2.getAccounts('user_1')
       expect(accounts[0].institution).toBe('Fake Bank')
     })
@@ -173,14 +175,14 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       const client = makeFakeClient({
         accountsGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter.getAccounts('user_1')
 
       const flakyClient = makeFakeClient({
         accountsGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
         accountsBalanceGet: vi.fn().mockRejectedValue(new Error('ETIMEDOUT')),
       })
-      const adapter2 = new PlaidAdapter({ client: flakyClient, tokenStore, dbPath })
+      const adapter2 = new PlaidAdapter({ client: flakyClient, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
 
       const balance = await adapter2.getBalance('user_1', 'plaid_acc_checking')
       expect(balance.stale).toBe(true)
@@ -189,7 +191,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
 
     it('throws ProviderUnavailableError when there is no cache and the account is unknown', async () => {
       const client = makeFakeClient()
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await expect(adapter.getBalance('user_1', 'unknown_account')).rejects.toBeInstanceOf(
         ProviderUnavailableError
       )
@@ -221,7 +223,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         .mockResolvedValueOnce(await respond(page3))
 
       const client = makeFakeClient({ transactionsSync: syncMock })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
 
       const transactions = await adapter.getTransactions('user_1', 'plaid_acc_checking')
 
@@ -239,7 +241,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         has_more: false,
       })
       const client = makeFakeClient({ transactionsSync: vi.fn().mockResolvedValueOnce(await respond(initial)) })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter.getTransactions('user_1', 'plaid_acc_checking')
 
       const update = syncResponse({
@@ -248,7 +250,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         has_more: false,
       })
       const client2 = makeFakeClient({ transactionsSync: vi.fn().mockResolvedValueOnce(await respond(update)) })
-      const adapter2 = new PlaidAdapter({ client: client2, tokenStore, dbPath })
+      const adapter2 = new PlaidAdapter({ client: client2, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       const transactions = await adapter2.getTransactions('user_1', 'plaid_acc_checking')
 
       expect(transactions).toHaveLength(1)
@@ -265,7 +267,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         has_more: false,
       })
       const client = makeFakeClient({ transactionsSync: vi.fn().mockResolvedValueOnce(await respond(initial)) })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter.getTransactions('user_1', 'plaid_acc_checking')
 
       const removal = syncResponse({
@@ -274,7 +276,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         has_more: false,
       })
       const client2 = makeFakeClient({ transactionsSync: vi.fn().mockResolvedValueOnce(await respond(removal)) })
-      const adapter2 = new PlaidAdapter({ client: client2, tokenStore, dbPath })
+      const adapter2 = new PlaidAdapter({ client: client2, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       const transactions = await adapter2.getTransactions('user_1', 'plaid_acc_checking')
 
       expect(transactions.map(t => t.id)).toEqual(['t2'])
@@ -288,7 +290,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       })
       const syncMock1 = vi.fn().mockResolvedValueOnce(await respond(first))
       const client1 = makeFakeClient({ transactionsSync: syncMock1 })
-      const adapter1 = new PlaidAdapter({ client: client1, tokenStore, dbPath })
+      const adapter1 = new PlaidAdapter({ client: client1, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter1.getTransactions('user_1', 'plaid_acc_checking')
 
       const second = syncResponse({
@@ -298,7 +300,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       })
       const syncMock2 = vi.fn().mockResolvedValueOnce(await respond(second))
       const client2 = makeFakeClient({ transactionsSync: syncMock2 })
-      const adapter2 = new PlaidAdapter({ client: client2, tokenStore, dbPath })
+      const adapter2 = new PlaidAdapter({ client: client2, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter2.getTransactions('user_1', 'plaid_acc_checking')
 
       expect(syncMock2.mock.calls[0][0].cursor).toBe('cursor_1')
@@ -312,7 +314,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         has_more: false,
       })
       const warmClient = makeFakeClient({ transactionsSync: vi.fn().mockResolvedValueOnce(await respond(warm)) })
-      const warmAdapter = new PlaidAdapter({ client: warmClient, tokenStore, dbPath })
+      const warmAdapter = new PlaidAdapter({ client: warmClient, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await warmAdapter.getTransactions('user_1', 'plaid_acc_checking')
 
       // Second call: page 1 succeeds and advances to cursor_2, page 2 throws
@@ -342,7 +344,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         .mockResolvedValueOnce(await respond(retryPage2))
 
       const client = makeFakeClient({ transactionsSync: syncMock })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
 
       const transactions = await adapter.getTransactions('user_1', 'plaid_acc_checking')
 
@@ -361,7 +363,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
             await respond(syncResponse({ added: transactions, next_cursor: 'c1', has_more: false }))
           ),
       })
-      return new PlaidAdapter({ client, tokenStore, dbPath })
+      return new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
     }
 
     it('applies inclusive start_date/end_date and sorts descending by date', async () => {
@@ -415,13 +417,13 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
             )
           ),
       })
-      const warmAdapter = new PlaidAdapter({ client: warmClient, tokenStore, dbPath })
+      const warmAdapter = new PlaidAdapter({ client: warmClient, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await warmAdapter.getTransactions('user_1', 'plaid_acc_checking')
 
       const flakyClient = makeFakeClient({
         transactionsSync: vi.fn().mockRejectedValue(new Error('ECONNRESET')),
       })
-      const adapter2 = new PlaidAdapter({ client: flakyClient, tokenStore, dbPath })
+      const adapter2 = new PlaidAdapter({ client: flakyClient, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       const result = await adapter2.getTransactions('user_1', 'plaid_acc_checking')
 
       expect(result).toHaveLength(1)
@@ -432,7 +434,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       const client = makeFakeClient({
         transactionsSync: vi.fn().mockRejectedValue(new Error('ECONNRESET')),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await expect(adapter.getTransactions('user_1', 'plaid_acc_checking')).rejects.toBeInstanceOf(
         ProviderUnavailableError
       )
@@ -442,7 +444,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
       const client = makeFakeClient({
         transactionsSync: vi.fn().mockRejectedValue(makePlaidError('ITEM_LOGIN_REQUIRED')),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       const error = await adapter.getTransactions('user_1', 'plaid_acc_checking').catch(e => e)
       expect(error).toBeInstanceOf(ProviderAuthError)
       expect((error as ProviderAuthError).item_id).toBe('item_1')
@@ -502,7 +504,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
           )
         ),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter.getAccounts('user_1') // populate accounts_cache for routing
 
       const charges = await adapter.getRecurringCharges('user_1', 'plaid_acc_checking')
@@ -519,7 +521,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
 
     it('throws ProviderUnavailableError when the account has no known owning item', async () => {
       const client = makeFakeClient()
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await expect(adapter.getRecurringCharges('user_1', 'unknown_account')).rejects.toBeInstanceOf(
         ProviderUnavailableError
       )
@@ -530,7 +532,7 @@ describe('PlaidAdapter (data retrieval, sync, cache, degradation)', () => {
         accountsGet: vi.fn(() => respond(accountsGetResponse([checkingAccount]))),
         transactionsRecurringGet: vi.fn().mockRejectedValue(makePlaidError('ITEM_LOGIN_REQUIRED')),
       })
-      const adapter = new PlaidAdapter({ client, tokenStore, dbPath })
+      const adapter = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
       await adapter.getAccounts('user_1')
 
       const error = await adapter.getRecurringCharges('user_1', 'plaid_acc_checking').catch(e => e)

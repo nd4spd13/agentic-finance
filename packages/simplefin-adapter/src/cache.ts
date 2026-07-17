@@ -1,5 +1,14 @@
 import { DatabaseSync } from 'node:sqlite'
-import type { Account, Transaction, TransactionQueryOpts } from '@clad/core'
+import {
+  encrypt,
+  decrypt,
+  enforceFileMode,
+  openDatabaseKey,
+  type Account,
+  type EncryptedPayload,
+  type Transaction,
+  type TransactionQueryOpts,
+} from '@clad/core'
 
 /**
  * SQLite-backed cache + quota guardrail for the SimpleFIN Bridge adapter
@@ -94,6 +103,14 @@ export interface SimpleFinCacheOptions {
   /** Path to the SQLite database file (or `:memory:`). */
   dbPath: string
   /**
+   * Passphrase that unlocks the shared AES-256 key (D5.1). The same passphrase
+   * already guards this file's `SqliteTokenStore`; the cache shares the file,
+   * so one salt/key/passphrase covers both. The encrypted `accounts_cache`/
+   * `transactions_cache` blobs are sealed under this key; `fetch_log`/
+   * `fetch_history` (item id + timestamp only, no financial data) stay plaintext.
+   */
+  passphrase: string
+  /**
    * Minimum time that must elapse between live `/accounts` fetches for the
    * same item before {@link SimpleFinCache.shouldRefresh} allows another
    * one. Defaults to 6 hours, matching the plan's design ("persist
@@ -131,9 +148,8 @@ interface CountRow {
   count: number
 }
 
-interface AccountRow {
-  account_id: string
-  item_id: string
+/** The plaintext-JSON shape sealed into `accounts_cache`'s encrypted blob. */
+interface AccountBlob {
   name: string
   type: string
   subtype: string | null
@@ -144,20 +160,36 @@ interface AccountRow {
   currency: string
 }
 
-interface TransactionRow {
-  transaction_id: string
-  item_id: string
-  account_id: string
+/** The plaintext-JSON shape sealed into `transactions_cache`'s encrypted blob. */
+interface TransactionBlob {
   amount: number
   date: string
   description: string
   merchant_name: string | null
-  category: string | null
-  pending: number
+  category: string[] | null
+  pending: boolean
+}
+
+interface AccountRow {
+  account_id: string
+  item_id: string
+  ciphertext: Buffer
+  iv: Buffer
+  auth_tag: Buffer
+}
+
+interface TransactionRow {
+  transaction_id: string
+  item_id: string
+  account_id: string
+  ciphertext: Buffer
+  iv: Buffer
+  auth_tag: Buffer
 }
 
 export class SimpleFinCache {
   private readonly db: DatabaseSync
+  private readonly key: Buffer
   private readonly minRefreshIntervalMs: number
   private readonly now: () => Date
 
@@ -165,6 +197,12 @@ export class SimpleFinCache {
     this.db = new DatabaseSync(options.dbPath)
     this.minRefreshIntervalMs = options.minRefreshIntervalMs ?? DEFAULT_MIN_REFRESH_INTERVAL_MS
     this.now = options.now ?? (() => new Date())
+
+    // Migrate a pre-D5.1 plaintext cache before creating any new-format table,
+    // so detection can't be fooled by a table this constructor just created.
+    // Only the financial-data tables are dropped; `fetch_log`/`fetch_history`
+    // (the quota ledger — no financial data) are preserved across migration.
+    this.migrateFromPlaintext()
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS fetch_log (
@@ -193,14 +231,9 @@ export class SimpleFinCache {
       CREATE TABLE IF NOT EXISTS accounts_cache (
         account_id TEXT PRIMARY KEY,
         item_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        type TEXT NOT NULL,
-        subtype TEXT,
-        institution TEXT,
-        mask TEXT,
-        balance_current REAL NOT NULL,
-        balance_available REAL,
-        currency TEXT NOT NULL
+        ciphertext BLOB NOT NULL,
+        iv BLOB NOT NULL,
+        auth_tag BLOB NOT NULL
       )
     `)
     this.db.exec(`
@@ -212,22 +245,55 @@ export class SimpleFinCache {
         transaction_id TEXT PRIMARY KEY,
         item_id TEXT NOT NULL,
         account_id TEXT NOT NULL,
-        amount REAL NOT NULL,
-        date TEXT NOT NULL,
-        description TEXT NOT NULL,
-        merchant_name TEXT,
-        category TEXT,
-        pending INTEGER NOT NULL
+        ciphertext BLOB NOT NULL,
+        iv BLOB NOT NULL,
+        auth_tag BLOB NOT NULL
       )
     `)
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_transactions_cache_item
         ON transactions_cache (item_id)
     `)
+    // `date` now lives inside the encrypted blob, so it can no longer be an
+    // indexed column; the account_id index still routes `getTransactionsByAccount`.
     this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_transactions_cache_account_date
-        ON transactions_cache (account_id, date)
+      CREATE INDEX IF NOT EXISTS idx_transactions_cache_account
+        ON transactions_cache (account_id)
     `)
+
+    // Restrict the shared file to owner-only, derive/verify the AES-256 key,
+    // then re-apply the mode in case the first write only just created the file.
+    enforceFileMode(options.dbPath)
+    this.key = openDatabaseKey(this.db, options.passphrase)
+    enforceFileMode(options.dbPath)
+  }
+
+  /**
+   * Detects the pre-D5.1 plaintext schema (an `accounts_cache` with a `name`
+   * column but no `ciphertext` column) and, if found, drops the two
+   * financial-data cache tables so the new-format `CREATE TABLE`s recreate
+   * them empty, then `VACUUM`s to scrub the old plaintext from SQLite's free
+   * pages. `fetch_log`/`fetch_history` are deliberately NOT dropped — they hold
+   * the quota ledger (item id + timestamp, no financial data) that must survive
+   * migration. A no-op on a fresh DB or one already in the new format.
+   */
+  private migrateFromPlaintext(): void {
+    const columns = this.db.prepare('PRAGMA table_info(accounts_cache)').all() as Array<{
+      name: string
+    }>
+    if (columns.length === 0) return // no accounts_cache yet — fresh DB
+    const hasCiphertext = columns.some((c) => c.name === 'ciphertext')
+    const hasPlaintext = columns.some((c) => c.name === 'name')
+    if (hasCiphertext || !hasPlaintext) return // already new format
+
+    this.db.exec('DROP TABLE IF EXISTS accounts_cache')
+    this.db.exec('DROP TABLE IF EXISTS transactions_cache')
+    // Rewrites the file, scrubbing the dropped tables' plaintext from free pages.
+    this.db.exec('VACUUM')
+  }
+
+  private encryptJson(obj: unknown): EncryptedPayload {
+    return encrypt(this.key, JSON.stringify(obj))
   }
 
   // ---------------------------------------------------------------------
@@ -399,42 +465,46 @@ export class SimpleFinCache {
 
       const insertAccount = this.db.prepare(`
         INSERT INTO accounts_cache (
-          account_id, item_id, name, type, subtype, institution, mask,
-          balance_current, balance_available, currency
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          account_id, item_id, ciphertext, iv, auth_tag
+        ) VALUES (?, ?, ?, ?, ?)
       `)
       for (const account of accounts) {
-        insertAccount.run(
-          account.id,
-          itemId,
-          account.name,
-          account.type,
-          account.subtype ?? null,
-          account.institution ?? null,
-          account.mask ?? null,
-          account.balance_current,
-          account.balance_available ?? null,
-          account.currency
-        )
+        const blob: AccountBlob = {
+          name: account.name,
+          type: account.type,
+          subtype: account.subtype ?? null,
+          institution: account.institution ?? null,
+          mask: account.mask ?? null,
+          balance_current: account.balance_current,
+          balance_available: account.balance_available ?? null,
+          currency: account.currency,
+        }
+        const payload = this.encryptJson(blob)
+        insertAccount.run(account.id, itemId, payload.ciphertext, payload.iv, payload.authTag)
       }
 
       const insertTransaction = this.db.prepare(`
         INSERT INTO transactions_cache (
-          transaction_id, item_id, account_id, amount, date,
-          description, merchant_name, category, pending
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          transaction_id, item_id, account_id, ciphertext, iv, auth_tag
+        ) VALUES (?, ?, ?, ?, ?, ?)
       `)
       for (const txn of transactions) {
+        const blob: TransactionBlob = {
+          amount: txn.amount,
+          date: txn.date,
+          description: txn.description,
+          merchant_name: txn.merchant_name ?? null,
+          category: txn.category ?? null,
+          pending: txn.pending ?? false,
+        }
+        const payload = this.encryptJson(blob)
         insertTransaction.run(
           txn.id,
           itemId,
           txn.account_id,
-          txn.amount,
-          txn.date,
-          txn.description,
-          txn.merchant_name ?? null,
-          txn.category ? JSON.stringify(txn.category) : null,
-          txn.pending ? 1 : 0
+          payload.ciphertext,
+          payload.iv,
+          payload.authTag
         )
       }
 
@@ -456,14 +526,14 @@ export class SimpleFinCache {
       'SELECT * FROM accounts_cache WHERE item_id = ? ORDER BY account_id ASC'
     )
     const rows = stmt.all(itemId) as unknown as AccountRow[]
-    return rows.map((row) => rowToAccount(row, stale))
+    return rows.map((row) => this.rowToAccount(row, stale))
   }
 
   /** All cached accounts across every item, each marked `stale` per its own item's staleness. */
   getAllAccounts(): CachedAccount[] {
     const stmt = this.db.prepare('SELECT * FROM accounts_cache ORDER BY account_id ASC')
     const rows = stmt.all() as unknown as AccountRow[]
-    return rows.map((row) => rowToAccount(row, this.getStaleness(row.item_id).stale))
+    return rows.map((row) => this.rowToAccount(row, this.getStaleness(row.item_id).stale))
   }
 
   /** Looks up a single cached account by its (already-namespaced) id. */
@@ -471,7 +541,7 @@ export class SimpleFinCache {
     const stmt = this.db.prepare('SELECT * FROM accounts_cache WHERE account_id = ?')
     const row = stmt.get(accountId) as unknown as AccountRow | undefined
     if (!row) return undefined
-    return rowToAccount(row, this.getStaleness(row.item_id).stale)
+    return this.rowToAccount(row, this.getStaleness(row.item_id).stale)
   }
 
   /**
@@ -484,23 +554,22 @@ export class SimpleFinCache {
     accountId: string,
     opts?: TransactionQueryOpts
   ): CachedTransaction[] {
-    let query = 'SELECT * FROM transactions_cache WHERE account_id = ?'
-    const params: (string | number)[] = [accountId]
+    // `date` lives inside the encrypted blob, so filter/sort/limit in memory
+    // after decrypt; only `account_id` (plaintext) is filtered in SQL.
+    const stmt = this.db.prepare('SELECT * FROM transactions_cache WHERE account_id = ?')
+    const rows = stmt.all(accountId) as unknown as TransactionRow[]
+    let transactions = rows.map((row) =>
+      this.rowToTransaction(row, this.getStaleness(row.item_id).stale)
+    )
 
     if (opts?.start_date) {
-      query += ' AND date >= ?'
-      params.push(opts.start_date)
+      transactions = transactions.filter((t) => t.date >= opts.start_date!)
     }
     if (opts?.end_date) {
-      query += ' AND date <= ?'
-      params.push(opts.end_date)
+      transactions = transactions.filter((t) => t.date <= opts.end_date!)
     }
 
-    query += ' ORDER BY date DESC'
-
-    const stmt = this.db.prepare(query)
-    const rows = stmt.all(...params) as unknown as TransactionRow[]
-    let transactions = rows.map((row) => rowToTransaction(row, this.getStaleness(row.item_id).stale))
+    transactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
 
     if (opts?.count !== undefined) {
       transactions = transactions.slice(0, opts.count)
@@ -512,11 +581,11 @@ export class SimpleFinCache {
   /** All cached transactions for a single item, sorted by date descending. */
   getTransactionsByItem(itemId: string): CachedTransaction[] {
     const stale = this.getStaleness(itemId).stale
-    const stmt = this.db.prepare(
-      'SELECT * FROM transactions_cache WHERE item_id = ? ORDER BY date DESC'
-    )
+    const stmt = this.db.prepare('SELECT * FROM transactions_cache WHERE item_id = ?')
     const rows = stmt.all(itemId) as unknown as TransactionRow[]
-    return rows.map((row) => rowToTransaction(row, stale))
+    const transactions = rows.map((row) => this.rowToTransaction(row, stale))
+    transactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    return transactions
   }
 
   // ---------------------------------------------------------------------
@@ -568,35 +637,49 @@ export class SimpleFinCache {
       .get(itemId) as unknown as FetchLogRow | undefined
     return row?.fetched_at
   }
-}
 
-function rowToAccount(row: AccountRow, stale: boolean): CachedAccount {
-  return {
-    id: row.account_id,
-    itemId: row.item_id,
-    name: row.name,
-    type: row.type as Account['type'],
-    subtype: row.subtype ?? undefined,
-    institution: row.institution ?? undefined,
-    mask: row.mask ?? undefined,
-    balance_current: row.balance_current,
-    balance_available: row.balance_available ?? undefined,
-    currency: row.currency,
-    ...(stale ? { stale: true } : {}),
+  private rowToAccount(row: AccountRow, stale: boolean): CachedAccount {
+    const blob = JSON.parse(decrypt(this.key, toPayload(row))) as AccountBlob
+    return {
+      id: row.account_id,
+      itemId: row.item_id,
+      name: blob.name,
+      type: blob.type as Account['type'],
+      subtype: blob.subtype ?? undefined,
+      institution: blob.institution ?? undefined,
+      mask: blob.mask ?? undefined,
+      balance_current: blob.balance_current,
+      balance_available: blob.balance_available ?? undefined,
+      currency: blob.currency,
+      ...(stale ? { stale: true } : {}),
+    }
+  }
+
+  private rowToTransaction(row: TransactionRow, stale: boolean): CachedTransaction {
+    const blob = JSON.parse(decrypt(this.key, toPayload(row))) as TransactionBlob
+    return {
+      id: row.transaction_id,
+      itemId: row.item_id,
+      account_id: row.account_id,
+      amount: blob.amount,
+      date: blob.date,
+      description: blob.description,
+      merchant_name: blob.merchant_name ?? undefined,
+      category: blob.category ?? undefined,
+      pending: blob.pending,
+      ...(stale ? { stale: true } : {}),
+    }
   }
 }
 
-function rowToTransaction(row: TransactionRow, stale: boolean): CachedTransaction {
+function toPayload(row: {
+  ciphertext: Buffer
+  iv: Buffer
+  auth_tag: Buffer
+}): EncryptedPayload {
   return {
-    id: row.transaction_id,
-    itemId: row.item_id,
-    account_id: row.account_id,
-    amount: row.amount,
-    date: row.date,
-    description: row.description,
-    merchant_name: row.merchant_name ?? undefined,
-    category: row.category ? (JSON.parse(row.category) as string[]) : undefined,
-    pending: row.pending === 1,
-    ...(stale ? { stale: true } : {}),
+    ciphertext: Buffer.from(row.ciphertext),
+    iv: Buffer.from(row.iv),
+    authTag: Buffer.from(row.auth_tag),
   }
 }

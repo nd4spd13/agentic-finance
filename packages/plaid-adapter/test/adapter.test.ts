@@ -62,6 +62,8 @@ function makeFakeTokenStore(): TokenStore {
   }
 }
 
+const TEST_PASSPHRASE = 'cache-encryption-test-passphrase'
+
 describe('PlaidAdapter (skeleton)', () => {
   let dir: string
   let dbPath: string
@@ -79,7 +81,7 @@ describe('PlaidAdapter (skeleton)', () => {
     const adapter: FinancialDataProvider = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
     })
 
     expect(typeof adapter.getAccounts).toBe('function')
@@ -92,7 +94,7 @@ describe('PlaidAdapter (skeleton)', () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       userId: 'user123',
     })
     expect(adapter).toBeInstanceOf(PlaidAdapter)
@@ -102,7 +104,7 @@ describe('PlaidAdapter (skeleton)', () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
     })
     await expect(adapter.getAccounts('user123')).resolves.toEqual([])
   })
@@ -111,7 +113,7 @@ describe('PlaidAdapter (skeleton)', () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
     })
     await expect(adapter.getTransactions('user123', 'acc_1')).resolves.toEqual([])
   })
@@ -120,7 +122,7 @@ describe('PlaidAdapter (skeleton)', () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
     })
     await expect(adapter.getBalance('user123', 'acc_1')).rejects.toBeInstanceOf(ProviderUnavailableError)
   })
@@ -129,7 +131,7 @@ describe('PlaidAdapter (skeleton)', () => {
     const adapter = new PlaidAdapter({
       client: makeFakeClient(),
       tokenStore: makeFakeTokenStore(),
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
     })
     await expect(adapter.getRecurringCharges('user123', 'acc_1')).rejects.toBeInstanceOf(
       ProviderUnavailableError

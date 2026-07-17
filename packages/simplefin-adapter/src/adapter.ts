@@ -169,6 +169,12 @@ export interface SimpleFinAdapterOptions {
   /** Path to the SQLite cache DB. Safe to share with `tokenStore`'s DB file — distinct tables, no collisions (mirrors `PlaidAdapter`'s convention). */
   dbPath: string
   /**
+   * Passphrase that unlocks the encrypted cache (D5.1). The same passphrase
+   * already guards the `tokenStore`'s DB file — the cache shares that file, so
+   * one salt/key/passphrase covers both (see `SimpleFinCache`/`openDatabaseKey`).
+   */
+  passphrase: string
+  /**
    * Fetch implementation used for every `/accounts` call. Defaults to
    * `globalThis.fetch`. Unit tests must always supply a fake here — no test
    * in this package touches the network.
@@ -221,6 +227,7 @@ export class SimpleFinAdapter implements FinancialDataProvider {
     this.setupGraceIntervalMs = options.setupGraceIntervalMs ?? DEFAULT_SETUP_GRACE_INTERVAL_MS
     this.cache = new SimpleFinCache({
       dbPath: options.dbPath,
+      passphrase: options.passphrase,
       minRefreshIntervalMs: options.minRefreshIntervalMs,
       now: this.now,
     })

@@ -126,7 +126,7 @@ export async function createFinancialProvider(input: ProviderFactoryInput): Prom
       const { SqliteTokenStore } = await getCladCore()
       const { SimpleFinAdapter } = await getCladSimpleFinAdapter()
       const tokenStore = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: passphrase! })
-      const provider = new SimpleFinAdapter({ tokenStore, dbPath: config.simplefin_db })
+      const provider = new SimpleFinAdapter({ tokenStore, dbPath: config.simplefin_db, passphrase: passphrase! })
       return { ok: true, provider }
     } catch (err) {
       const { redactSecrets } = await getCladCore()
@@ -157,7 +157,7 @@ export async function createFinancialProvider(input: ProviderFactoryInput): Prom
     // resolves to a derived sibling file.
     const dbPath = effectivePlaidDbPath(config, config.plaid_env)
     const tokenStore = new SqliteTokenStore({ dbPath, passphrase: passphrase! })
-    const provider = new PlaidAdapter({ client, tokenStore, dbPath })
+    const provider = new PlaidAdapter({ client, tokenStore, dbPath, passphrase: passphrase! })
     return { ok: true, provider }
   } catch (err) {
     const { redactSecrets } = await getCladCore()

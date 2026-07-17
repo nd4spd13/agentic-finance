@@ -112,6 +112,8 @@ function makeFakeFetch(routes: Record<string, () => unknown>): { fetch: FetchLik
   return { fetch: fetchImpl, calls }
 }
 
+const TEST_PASSPHRASE = 'cache-encryption-test-passphrase'
+
 describe('SimpleFinAdapter (skeleton)', () => {
   let dir: string
   let dbPath: string
@@ -128,7 +130,7 @@ describe('SimpleFinAdapter (skeleton)', () => {
   it('satisfies the FinancialDataProvider contract via constructor injection', () => {
     const adapter: FinancialDataProvider = new SimpleFinAdapter({
       tokenStore: makeFakeTokenStore(),
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
     })
 
     expect(typeof adapter.getAccounts).toBe('function')
@@ -139,7 +141,7 @@ describe('SimpleFinAdapter (skeleton)', () => {
   it('accepts an optional userId in constructor options', () => {
     const adapter = new SimpleFinAdapter({
       tokenStore: makeFakeTokenStore(),
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       userId: 'user123',
     })
     expect(adapter).toBeInstanceOf(SimpleFinAdapter)
@@ -148,23 +150,23 @@ describe('SimpleFinAdapter (skeleton)', () => {
   it('does not implement getRecurringCharges (SimpleFIN protocol has no analog; optional on the interface)', () => {
     const adapter: FinancialDataProvider = new SimpleFinAdapter({
       tokenStore: makeFakeTokenStore(),
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
     })
     expect(adapter.getRecurringCharges).toBeUndefined()
   })
 
   it('getAccounts with no stored items and no cache returns an empty list', async () => {
-    const adapter = new SimpleFinAdapter({ tokenStore: makeFakeTokenStore(), dbPath })
+    const adapter = new SimpleFinAdapter({ tokenStore: makeFakeTokenStore(), dbPath, passphrase: TEST_PASSPHRASE })
     await expect(adapter.getAccounts('user123')).resolves.toEqual([])
   })
 
   it('getTransactions with no stored items and no cache returns an empty list', async () => {
-    const adapter = new SimpleFinAdapter({ tokenStore: makeFakeTokenStore(), dbPath })
+    const adapter = new SimpleFinAdapter({ tokenStore: makeFakeTokenStore(), dbPath, passphrase: TEST_PASSPHRASE })
     await expect(adapter.getTransactions('user123', 'simplefin:acc_1')).resolves.toEqual([])
   })
 
   it('getBalance throws ProviderUnavailableError for an unknown account with no cache', async () => {
-    const adapter = new SimpleFinAdapter({ tokenStore: makeFakeTokenStore(), dbPath })
+    const adapter = new SimpleFinAdapter({ tokenStore: makeFakeTokenStore(), dbPath, passphrase: TEST_PASSPHRASE })
     await expect(adapter.getBalance('user123', 'simplefin:acc_1')).rejects.toBeInstanceOf(
       ProviderUnavailableError
     )
@@ -193,7 +195,7 @@ describe('SimpleFinAdapter (data retrieval, real SF1 fixtures)', () => {
 
   it('fetches, maps, and caches accounts from /accounts on the first call', async () => {
     const { fetch } = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
-    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, fetch })
+    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: TEST_PASSPHRASE, fetch })
 
     const accounts = await adapter.getAccounts('user_1')
 
@@ -215,7 +217,7 @@ describe('SimpleFinAdapter (data retrieval, real SF1 fixtures)', () => {
 
   it('resolves a specific account balance, bootstrapping the cache on a cold start', async () => {
     const { fetch } = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
-    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, fetch })
+    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: TEST_PASSPHRASE, fetch })
 
     const balance = await adapter.getBalance('user_1', 'simplefin:fixture-acct-checking')
 
@@ -231,7 +233,7 @@ describe('SimpleFinAdapter (data retrieval, real SF1 fixtures)', () => {
 
   it('resolves transactions for a specific account, bootstrapping the cache on a cold start', async () => {
     const { fetch } = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
-    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, fetch })
+    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: TEST_PASSPHRASE, fetch })
 
     const transactions = await adapter.getTransactions('user_1', 'simplefin:fixture-acct-savings')
 
@@ -247,7 +249,7 @@ describe('SimpleFinAdapter (data retrieval, real SF1 fixtures)', () => {
 
   it('honors TransactionQueryOpts.count against the cache', async () => {
     const { fetch } = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
-    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, fetch })
+    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: TEST_PASSPHRASE, fetch })
 
     const transactions = await adapter.getTransactions('user_1', 'simplefin:fixture-acct-savings', {
       count: 2,
@@ -288,7 +290,7 @@ describe('SimpleFinAdapter (data retrieval, real SF1 fixtures)', () => {
         ],
       }),
     })
-    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, fetch })
+    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: TEST_PASSPHRASE, fetch })
 
     const accounts = await adapter.getAccounts('user_1')
     expect(accounts.map((a) => a.id).sort()).toEqual([
@@ -324,7 +326,7 @@ describe('SimpleFinAdapter (quota guardrail: shouldRefresh gates every live call
     const { fetch, calls } = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
     const adapter = new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch,
       now: clock.now,
       minRefreshIntervalMs: HOUR,
@@ -346,7 +348,7 @@ describe('SimpleFinAdapter (quota guardrail: shouldRefresh gates every live call
     const { fetch, calls } = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
     const adapter = new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch,
       now: clock.now,
       minRefreshIntervalMs: HOUR,
@@ -363,7 +365,7 @@ describe('SimpleFinAdapter (quota guardrail: shouldRefresh gates every live call
   it('requests the protocol-maximum window and pending=1 on every live fetch (full-replace eviction safety)', async () => {
     const clock = makeFakeClock('2026-04-01T00:00:00.000Z')
     const { fetch, calls } = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
-    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, fetch, now: clock.now })
+    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: TEST_PASSPHRASE, fetch, now: clock.now })
 
     await adapter.getAccounts('user_1')
 
@@ -399,7 +401,7 @@ describe('SimpleFinAdapter (degradation to cache)', () => {
     const warm = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
     const adapter1 = new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch: warm.fetch,
       now: clock.now,
       minRefreshIntervalMs: HOUR,
@@ -414,7 +416,7 @@ describe('SimpleFinAdapter (degradation to cache)', () => {
     })
     const adapter2 = new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch: flaky.fetch,
       now: clock.now,
       minRefreshIntervalMs: HOUR,
@@ -431,7 +433,7 @@ describe('SimpleFinAdapter (degradation to cache)', () => {
         throw new Error('ECONNREFUSED')
       },
     })
-    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, fetch: flaky.fetch })
+    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: TEST_PASSPHRASE, fetch: flaky.fetch })
     await expect(adapter.getAccounts('user_1')).rejects.toBeInstanceOf(ProviderUnavailableError)
   })
 
@@ -440,7 +442,7 @@ describe('SimpleFinAdapter (degradation to cache)', () => {
     const warm = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
     const adapter1 = new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch: warm.fetch,
       now: clock.now,
       minRefreshIntervalMs: HOUR,
@@ -453,7 +455,7 @@ describe('SimpleFinAdapter (degradation to cache)', () => {
     })
     const adapter2 = new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch: lapsed.fetch,
       now: clock.now,
       minRefreshIntervalMs: HOUR,
@@ -485,7 +487,7 @@ describe('SimpleFinAdapter (auth errors)', () => {
     const rejected = makeFakeFetch({
       item1: () => new Response('', { status: 403 }),
     })
-    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, fetch: rejected.fetch })
+    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: TEST_PASSPHRASE, fetch: rejected.fetch })
 
     const error = await adapter.getAccounts('user_1').then(
       () => {
@@ -502,7 +504,7 @@ describe('SimpleFinAdapter (auth errors)', () => {
     const warm = makeFakeFetch({ item1: () => JSON.parse(plainFixtureText) })
     const adapter1 = new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch: warm.fetch,
       now: clock.now,
       minRefreshIntervalMs: HOUR,
@@ -513,7 +515,7 @@ describe('SimpleFinAdapter (auth errors)', () => {
     const revoked = makeFakeFetch({ item1: () => new Response('', { status: 403 }) })
     const adapter2 = new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch: revoked.fetch,
       now: clock.now,
       minRefreshIntervalMs: HOUR,
@@ -524,7 +526,7 @@ describe('SimpleFinAdapter (auth errors)', () => {
 
   it('never leaks the access URL userinfo in a ProviderAuthError message', async () => {
     const rejected = makeFakeFetch({ item1: () => new Response('', { status: 403 }) })
-    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, fetch: rejected.fetch })
+    const adapter = new SimpleFinAdapter({ tokenStore, dbPath, passphrase: TEST_PASSPHRASE, fetch: rejected.fetch })
 
     const error = await adapter.getAccounts('user_1').catch((e: unknown) => e)
     expect((error as Error).message).not.toContain('sfin-user')
@@ -555,7 +557,7 @@ describe('SimpleFinAdapter: setup grace window', () => {
     })
     return new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch: fetchImpl,
       now: clock.now,
       minRefreshIntervalMs: 6 * HOUR,
@@ -623,7 +625,7 @@ describe('SimpleFinAdapter: setup grace window', () => {
     })
     const adapter = new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch: fake.fetch,
       now: clock.now,
       minRefreshIntervalMs: 6 * HOUR,
@@ -659,7 +661,7 @@ describe('SimpleFinAdapter: forceRefresh / getRefreshStatus', () => {
     })
     return new SimpleFinAdapter({
       tokenStore,
-      dbPath,
+      dbPath, passphrase: TEST_PASSPHRASE,
       fetch: fetchImpl,
       now: clock.now,
       minRefreshIntervalMs: 6 * HOUR,

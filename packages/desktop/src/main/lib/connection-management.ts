@@ -208,7 +208,10 @@ export async function removePlaidItem(
   // is already gone shouldn't flip the whole result to failure — the item IS
   // removed — so surface it as a warning instead.
   try {
-    const cache = new PlaidCache(effectivePlaidDbPath(config, config.plaid_env))
+    const cache = new PlaidCache({
+      dbPath: effectivePlaidDbPath(config, config.plaid_env),
+      passphrase,
+    })
     try {
       cache.removeItem(itemId)
     } finally {
@@ -345,7 +348,7 @@ export async function removeSimpleFinItem(
   let warning: string | undefined
   try {
     const { SimpleFinCache } = await getCladSimpleFinAdapter()
-    const cache = new SimpleFinCache({ dbPath: config.simplefin_db })
+    const cache = new SimpleFinCache({ dbPath: config.simplefin_db, passphrase })
     try {
       cache.removeItem(itemId)
     } finally {

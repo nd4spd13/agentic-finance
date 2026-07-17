@@ -65,7 +65,7 @@ function seedPlaidItem(config: CladConfig, itemId: string, institution: string):
   const store = new SqliteTokenStore({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
   store.saveItem({ itemId, institutionName: institution, accessToken: PLAID_ACCESS_TOKEN })
   store.close()
-  const cache = new PlaidCache(activePlaidDbPath(config))
+  const cache = new PlaidCache({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
   cache.upsertAccounts(itemId, [
     {
       id: `${itemId}-acc`,
@@ -93,7 +93,7 @@ function seedSimpleFinItem(config: CladConfig, itemId: string): void {
   const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
   store.saveItem({ itemId, institutionName: 'SimpleFIN Bridge', accessToken: SIMPLEFIN_ACCESS_URL })
   store.close()
-  const cache = new SimpleFinCache({ dbPath: config.simplefin_db })
+  const cache = new SimpleFinCache({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
   cache.recordFetch(
     itemId,
     [{ id: `${itemId}-acc`, name: 'Savings', type: 'savings', balance_current: 50, currency: 'USD' }],
@@ -181,7 +181,7 @@ describe('removePlaidItem', () => {
     expect(store.listItems()).toHaveLength(0)
     store.close()
     // Cache rows gone.
-    const cache = new PlaidCache(activePlaidDbPath(config))
+    const cache = new PlaidCache({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
     expect(cache.getAccountsByItem('item_1')).toHaveLength(0)
     expect(cache.getTransactionsByItem('item_1')).toHaveLength(0)
     expect(cache.getCursor('item_1')).toBeUndefined()
@@ -242,7 +242,7 @@ describe('removePlaidItem', () => {
 
     const items = await listPlaidItems({ loadConfig: () => config, getActivePassphrase: () => PASSPHRASE })
     expect(items.map((i) => i.itemId)).toEqual(['item_2'])
-    const cache = new PlaidCache(activePlaidDbPath(config))
+    const cache = new PlaidCache({ dbPath: activePlaidDbPath(config), passphrase: PASSPHRASE })
     expect(cache.getAccountsByItem('item_2')).toHaveLength(1)
     cache.close()
   })
@@ -487,7 +487,7 @@ describe('removeSimpleFinItem', () => {
     const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
     expect(store.listItems()).toHaveLength(0)
     store.close()
-    const cache = new SimpleFinCache({ dbPath: config.simplefin_db })
+    const cache = new SimpleFinCache({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
     expect(cache.getAccounts('sf_1')).toHaveLength(0)
     expect(cache.getStaleness('sf_1').lastFetchedAt).toBeUndefined()
     cache.close()

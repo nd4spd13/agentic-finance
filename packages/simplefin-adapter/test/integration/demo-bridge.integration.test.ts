@@ -133,6 +133,7 @@ describe.runIf(RUN_INTEGRATION)('SimpleFinAdapter (SimpleFIN demo Bridge integra
       const adapter = new SimpleFinAdapter({
         tokenStore,
         dbPath: cacheDbPath,
+        passphrase: TEST_PASSPHRASE,
         fetch: instrumentedFetch,
         now: fakeNow,
       })

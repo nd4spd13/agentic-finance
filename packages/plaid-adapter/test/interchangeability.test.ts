@@ -22,6 +22,8 @@ import { makePlaidTransaction } from './fixtures/transactions.js'
  * the two providers interchangeable at the mcp-server composition root
  * (architecture decision #3).
  */
+const TEST_PASSPHRASE = 'cache-encryption-test-passphrase'
+
 describe('DummyDataProvider <-> PlaidAdapter interchangeability', () => {
   let dir: string
   let dbPath: string
@@ -86,7 +88,7 @@ describe('DummyDataProvider <-> PlaidAdapter interchangeability', () => {
         )
       ),
     })
-    return new PlaidAdapter({ client, tokenStore, dbPath })
+    return new PlaidAdapter({ client, tokenStore, dbPath, passphrase: TEST_PASSPHRASE })
   }
 
   const providers: Array<[string, () => FinancialDataProvider]> = [
