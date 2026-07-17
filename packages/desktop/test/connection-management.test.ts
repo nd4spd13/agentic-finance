@@ -407,7 +407,7 @@ describe('listSimpleFinItems', () => {
     const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
     store.saveItem({ itemId: 'sf_1', institutionName: 'SimpleFIN Bridge', accessToken: SIMPLEFIN_ACCESS_URL })
     store.close()
-    const cache = new SimpleFinCache({ dbPath: config.simplefin_db })
+    const cache = new SimpleFinCache({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
     cache.recordFetch(
       'sf_1',
       [
@@ -435,7 +435,7 @@ describe('listSimpleFinItems', () => {
     const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
     store.saveItem({ itemId: 'sf_1', institutionName: 'SimpleFIN Bridge', accessToken: SIMPLEFIN_ACCESS_URL })
     store.close()
-    const cache = new SimpleFinCache({ dbPath: config.simplefin_db })
+    const cache = new SimpleFinCache({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
     cache.recordFetch(
       'sf_1',
       [{ id: 'simplefin:a1', name: 'Mystery', type: 'checking', balance_current: 0, currency: 'USD' }],
