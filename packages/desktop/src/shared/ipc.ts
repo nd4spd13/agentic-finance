@@ -464,29 +464,13 @@ export interface ConnectProvidersStatus {
 // ---- Connection management (list + remove linked items) -------------------
 
 /**
- * Display-safe summary of one cached account nested under a linked item.
- * Non-secret metadata only (a namespaced account id used as a React key, the
- * account name, its institution, type, and mask) — never a balance or access
- * URL. Standalone copy of `main/lib/connection-management.ts`'s
- * `LinkedAccountSummary` for the same renderer-can't-import-`src/main/**`
- * layering reason as `LinkedItem` below.
- */
-export interface LinkedAccountSummary {
-  accountId: string
-  institution?: string
-  name: string
-  type: string
-  mask?: string
-}
-
-/**
  * Display-safe view of one linked item shown under a provider card on the
  * Connect screen. Deliberately carries ONLY non-secret metadata — an item id,
- * the institution name, the created date, and (SimpleFIN only) the accounts it
- * spans. Never a Plaid access token or a SimpleFIN access URL (this repo
- * treats that as a hard security rule; see `main/lib/connection-management.ts`).
- * Structurally identical to that module's own `LinkedItem`, kept as a
- * standalone copy for the same layering reason as
+ * the institution name, the created date, and (SimpleFIN only) the distinct
+ * institutions it spans. Never a Plaid access token or a SimpleFIN access URL
+ * (this repo treats that as a hard security rule; see
+ * `main/lib/connection-management.ts`). Structurally identical to that module's
+ * own `LinkedItem`, kept as a standalone copy for the same layering reason as
  * `DashboardAccount`/`ApprovalListItem` above (this file must stay importable
  * from the renderer/preload build without reaching into `src/main/**`).
  */
@@ -496,12 +480,14 @@ export interface LinkedItem {
   /** ISO-8601 timestamp the item was first stored. */
   createdAt: string
   /**
-   * The accounts this item spans, from the provider cache — populated only for
-   * SimpleFIN (one access URL spans many institutions/accounts); `undefined`
-   * for Plaid (one item = one institution, already named by `institutionName`)
-   * and when no accounts are cached yet.
+   * The distinct institutions this item spans, from the provider cache —
+   * populated only for SimpleFIN (one access URL spans many institutions),
+   * sorted and de-duplicated; `undefined` for Plaid (one item = one
+   * institution, already named by `institutionName`) and when nothing is
+   * cached yet. Deliberately institution-level, not account-level: the Connect
+   * screen answers "which institutions are linked here", not "which accounts".
    */
-  accounts?: LinkedAccountSummary[]
+  institutions?: string[]
 }
 
 /**

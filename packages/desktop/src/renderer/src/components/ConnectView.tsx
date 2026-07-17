@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import type {
   ConnectProvidersStatus,
-  LinkedAccountSummary,
   LinkedItem,
   PlaidLinkFlowStatus,
   ProviderConnectionState,
@@ -22,30 +21,6 @@ const CONNECTION_COLOR: Record<ProviderConnectionState, string> = {
   connected: '#1e7a34',
   'not-connected': '#666',
   unavailable: '#8a6d00',
-}
-
-/**
- * Groups a linked item's accounts by institution for the nested Linked Items
- * display, sorted by institution name for a stable order (accounts within a
- * group keep the cache's account-id order). An account with no resolvable
- * institution falls under "Unknown institution" rather than being dropped.
- */
-function groupAccountsByInstitution(
-  accounts: LinkedAccountSummary[]
-): Array<[string, LinkedAccountSummary[]]> {
-  const groups = new Map<string, LinkedAccountSummary[]>()
-  for (const account of accounts) {
-    const label = account.institution ?? 'Unknown institution'
-    const existing = groups.get(label)
-    if (existing) existing.push(account)
-    else groups.set(label, [account])
-  }
-  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))
-}
-
-/** One account's display label: name plus a masked tail when the provider supplies one. */
-function accountLabel(account: LinkedAccountSummary): string {
-  return account.mask ? `${account.name} ····${account.mask}` : account.name
 }
 
 /** Coarse, human "about N hours/minutes" for the refresh countdown — this is orientation, not a precise timer. */
@@ -179,15 +154,12 @@ function LinkedItemsSection({
                 </button>
               )}
             </div>
-            {/* SimpleFIN items nest their real institutions/accounts here; Plaid items leave `accounts` undefined and render just the row above. */}
-            {item.accounts && item.accounts.length > 0 && (
+            {/* SimpleFIN items list the real institutions behind them here; Plaid items leave `institutions` undefined and render just the row above. */}
+            {item.institutions && item.institutions.length > 0 && (
               <ul style={{ margin: '0.35rem 0 0', padding: 0, listStyle: 'none' }}>
-                {groupAccountsByInstitution(item.accounts).map(([institution, accounts]) => (
-                  <li key={institution} style={{ marginTop: '0.35rem' }}>
-                    <div style={{ ...s.mutedText, margin: 0, fontWeight: 600 }}>{institution}</div>
-                    <div style={{ ...s.mutedText, margin: 0, paddingLeft: '0.75rem' }}>
-                      {accounts.map(accountLabel).join(', ')}
-                    </div>
+                {item.institutions.map((institution) => (
+                  <li key={institution} style={{ ...s.mutedText, margin: 0, fontWeight: 600 }}>
+                    {institution}
                   </li>
                 ))}
               </ul>

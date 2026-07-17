@@ -399,10 +399,11 @@ describe('listSimpleFinItems', () => {
     assertNoSecret(JSON.stringify(items))
   })
 
-  it('nests each item\'s cached accounts (institution + name + mask), never an access URL', async () => {
+  it('lists each item\'s distinct institutions (sorted, de-duplicated), never accounts or an access URL', async () => {
     const config = makeConfig()
     // One access URL spanning two institutions — the shape a single item can't
-    // express through institutionName alone.
+    // express through institutionName alone. Two accounts share Chime to prove
+    // de-duplication; the alphabetically-later Chime proves the sort.
     const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
     store.saveItem({ itemId: 'sf_1', institutionName: 'SimpleFIN Bridge', accessToken: SIMPLEFIN_ACCESS_URL })
     store.close()
@@ -411,7 +412,8 @@ describe('listSimpleFinItems', () => {
       'sf_1',
       [
         { id: 'simplefin:a1', name: 'Everyday Checking', type: 'checking', institution: 'Chime', mask: '1234', balance_current: 100, currency: 'USD' },
-        { id: 'simplefin:a2', name: 'Rewards Card', type: 'credit', institution: 'Amex', balance_current: -20, currency: 'USD' },
+        { id: 'simplefin:a2', name: 'Savings', type: 'depository', institution: 'Chime', balance_current: 50, currency: 'USD' },
+        { id: 'simplefin:a3', name: 'Rewards Card', type: 'credit', institution: 'Amex', balance_current: -20, currency: 'USD' },
       ],
       []
     )
@@ -419,18 +421,33 @@ describe('listSimpleFinItems', () => {
 
     const items = await listSimpleFinItems({ loadConfig: () => config, getActivePassphrase: () => PASSPHRASE })
     expect(items).toHaveLength(1)
-    const accounts = items[0]?.accounts
-    expect(accounts).toHaveLength(2)
-    expect(accounts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: 'Everyday Checking', institution: 'Chime', mask: '1234', type: 'checking' }),
-        expect.objectContaining({ name: 'Rewards Card', institution: 'Amex', type: 'credit' }),
-      ])
-    )
-    assertNoSecret(JSON.stringify(items))
+    // Sorted + de-duplicated: Amex before Chime, Chime once.
+    expect(items[0]?.institutions).toEqual(['Amex', 'Chime'])
+    // Account-level detail (names, masks) must never reach the renderer.
+    const serialized = JSON.stringify(items)
+    expect(serialized).not.toContain('Everyday Checking')
+    expect(serialized).not.toContain('1234')
+    assertNoSecret(serialized)
   })
 
-  it('leaves accounts undefined for an item with nothing cached yet', async () => {
+  it('labels an account with no resolvable institution as "Unknown institution"', async () => {
+    const config = makeConfig()
+    const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
+    store.saveItem({ itemId: 'sf_1', institutionName: 'SimpleFIN Bridge', accessToken: SIMPLEFIN_ACCESS_URL })
+    store.close()
+    const cache = new SimpleFinCache({ dbPath: config.simplefin_db })
+    cache.recordFetch(
+      'sf_1',
+      [{ id: 'simplefin:a1', name: 'Mystery', type: 'checking', balance_current: 0, currency: 'USD' }],
+      []
+    )
+    cache.close()
+
+    const items = await listSimpleFinItems({ loadConfig: () => config, getActivePassphrase: () => PASSPHRASE })
+    expect(items[0]?.institutions).toEqual(['Unknown institution'])
+  })
+
+  it('leaves institutions undefined for an item with nothing cached yet', async () => {
     const config = makeConfig()
     // Token stored, but no recordFetch — e.g. the initial summary fetch failed.
     const store = new SqliteTokenStore({ dbPath: config.simplefin_db, passphrase: PASSPHRASE })
@@ -439,7 +456,7 @@ describe('listSimpleFinItems', () => {
 
     const items = await listSimpleFinItems({ loadConfig: () => config, getActivePassphrase: () => PASSPHRASE })
     expect(items).toHaveLength(1)
-    expect(items[0]?.accounts).toBeUndefined()
+    expect(items[0]?.institutions).toBeUndefined()
   })
 })
 
