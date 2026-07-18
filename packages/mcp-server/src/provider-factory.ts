@@ -2,6 +2,17 @@ import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DummyDataProvider, SqliteTokenStore, type FinancialDataProvider } from '@clad/core'
+import { writeRedactedStderr } from './server-core.js'
+
+/** The transport mode a real-provider gate cares about (`provider-factory.ts` §5). */
+export type ProviderGateTransport = 'stdio' | 'http'
+
+export interface ProviderGate {
+  /** The transport this process is serving (`CLAD_MCP_TRANSPORT`). */
+  transport: ProviderGateTransport
+  /** True iff `CLAD_MCP_AUTH=oauth` (`ServerResources.authRequired`). */
+  authRequired: boolean
+}
 
 /**
  * Selects and constructs the `FinancialDataProvider` implementation for this
@@ -16,25 +27,71 @@ import { DummyDataProvider, SqliteTokenStore, type FinancialDataProvider } from 
  * "only pay for what you select" property true as that package grows).
  * `SqliteTokenStore` itself is imported statically from `@clad/core` (both
  * branches need it, and it carries no provider-specific SDK weight).
+ *
+ * `gate` defaults to `{ transport: 'stdio', authRequired: false }` — the
+ * pre-WS3 behaviour — so every existing call site/test that constructs a
+ * provider without passing a gate (this file's own test suite included) sees
+ * byte-identical behaviour to before this change.
+ *
+ * REAL-PROVIDER GATE (D5.3 WS3 §5) — STAGED, an orchestrator-sanctioned
+ * deviation from the design doc's literal always-enforce snippet:
+ *   - `authRequired === true` && a real provider (`plaid`/`simplefin`) &&
+ *     `transport !== 'http'` -> throws. A real provider may never be
+ *     constructed on stdio (or on a hypothetical non-http transport) once the
+ *     operator has opted into auth enforcement.
+ *   - `authRequired === false` && a real provider -> ALLOWED, with a one-line
+ *     redacted stderr warning. This is the deliberate interim posture: WS3's
+ *     own transition paragraph (§5) requires the beta's current behaviour to
+ *     stay unchanged while `CLAD_MCP_AUTH` is off, and the design doc's literal
+ *     "unauthenticated == always refuse a real provider" snippet would break
+ *     two shipping paths that have no way to set `CLAD_MCP_AUTH=oauth` yet:
+ *     the desktop app's supervised child (http transport + simplefin, no auth
+ *     — the shipped v0.5/v0.6 configuration, `mcp-server-env.ts`) and the CLI
+ *     `clad serve` (stdio transport + a real provider — `serve.ts` forwards
+ *     `CLAD_PROVIDER` but never sets `CLAD_MCP_TRANSPORT`, so it always runs
+ *     stdio). The full "real provider requires authenticated HTTP, full stop"
+ *     gate activates once Wave 6 flips `CLAD_MCP_AUTH=oauth` on by default.
+ *   - `authRequired === true` && real && `transport === 'http'` -> allowed,
+ *     no warning (this IS the target state).
+ *   - `dummy` is allowed everywhere and never warns.
  */
-export async function createProvider(): Promise<FinancialDataProvider> {
+export async function createProvider(
+  gate: ProviderGate = { transport: 'stdio', authRequired: false }
+): Promise<FinancialDataProvider> {
   const provider = process.env.CLAD_PROVIDER ?? 'dummy'
 
   if (provider === 'dummy') {
     return new DummyDataProvider()
   }
 
+  if (provider !== 'plaid' && provider !== 'simplefin') {
+    throw new Error(
+      `[clad server] Unknown CLAD_PROVIDER "${provider}". Expected "dummy", "plaid", or "simplefin".`
+    )
+  }
+
+  if (gate.authRequired && gate.transport !== 'http') {
+    throw new Error(
+      '[clad server] A real provider requires the authenticated HTTP transport ' +
+        '(CLAD_MCP_TRANSPORT=http, CLAD_MCP_AUTH=oauth).'
+    )
+  }
+
+  if (!gate.authRequired) {
+    // Interim posture (see doc comment above): no secret/env value here,
+    // just the provider name (already user-controlled, non-secret) and a
+    // static description of the risk.
+    writeRedactedStderr(
+      `[clad server] WARNING: CLAD_PROVIDER=${provider} is serving without CLAD_MCP_AUTH=oauth — ` +
+        `requests are not yet gated by a verified token principal (interim beta posture, D5.3 WS3 §5).\n`
+    )
+  }
+
   if (provider === 'plaid') {
     return createPlaidProvider()
   }
 
-  if (provider === 'simplefin') {
-    return createSimpleFinProvider()
-  }
-
-  throw new Error(
-    `[clad server] Unknown CLAD_PROVIDER "${provider}". Expected "dummy", "plaid", or "simplefin".`
-  )
+  return createSimpleFinProvider()
 }
 
 async function createPlaidProvider(): Promise<FinancialDataProvider> {

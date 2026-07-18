@@ -15,11 +15,12 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import type { CallToolRequest } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolRequest, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js'
 import {
   parsePolicy,
   AuditLogger,
@@ -90,6 +91,66 @@ export async function handleToolCall(
 }
 
 /**
+ * Thrown by {@link resolvePrincipal} when `resources.authRequired` is true but
+ * no verified `profileId` was found on the request (`extra.authInfo.extra`).
+ *
+ * This is defence-in-depth, not the primary gate: on the real (WS2) auth
+ * path, `requireBearerAuth` already 401s an unauthenticated request before it
+ * reaches a tool-call handler at all. This error exists for the case where
+ * that layer is misconfigured or bypassed.
+ *
+ * The message is a FIXED, secret-free constant — mirrors `TokenStoreKeyError`'s
+ * discipline (`@clad/core`'s `security/token-store-errors.ts`): never
+ * interpolate a token, header, or env value into this text.
+ */
+export class UnauthenticatedError extends Error {
+  readonly code = 'UNAUTHENTICATED' as const
+
+  constructor() {
+    super(
+      'Unauthenticated: this request carries no verified agent profile. ' +
+        'A valid access token is required.'
+    )
+    this.name = 'UnauthenticatedError'
+  }
+}
+
+/**
+ * The verified agent-profile principal for THIS request — see WS3 §3
+ * (`.claude/plans/d5.3/WS3-resource-enforcement.md`).
+ *
+ *  - HTTP + `CLAD_MCP_AUTH=oauth` (`resources.authRequired`): MUST come from
+ *    `extra.authInfo.extra.profileId` — a verified principal set by the
+ *    transport's auth layer (the dev-only static-bearer bridge in
+ *    `http-app.ts` today; WS2's real `requireBearerAuth` later, same shape).
+ *  - stdio / auth-off path: no (or no matching) `authInfo` — falls back to
+ *    `resources.agentId` (the env-asserted process constant). That fallback
+ *    is sound only because the real-provider gate (`provider-factory.ts`)
+ *    keeps that path to the dummy provider once `authRequired` is `true` for
+ *    the process's transport; while the flag is off program-wide (today's
+ *    default), the fallback is the SAME behaviour as before this change.
+ *  - NEVER reads a client-supplied id out of tool-call `arguments` — the only
+ *    input trusted here is the transport-verified `extra.authInfo`.
+ *
+ * `extra.authInfo.extra` is typed `Record<string, unknown>` by the SDK, so
+ * `profileId` is narrowed defensively: anything other than a non-empty
+ * string is treated as "no profile", never as a value to trust.
+ */
+export function resolvePrincipal(
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+  resources: ServerResources
+): string {
+  const rawProfileId = (extra.authInfo?.extra as { profileId?: unknown } | undefined)?.profileId
+  const profileId = typeof rawProfileId === 'string' && rawProfileId.length > 0 ? rawProfileId : undefined
+
+  if (resources.authRequired && !profileId) {
+    throw new UnauthenticatedError()
+  }
+
+  return profileId ?? resources.agentId
+}
+
+/**
  * The long-lived resources a running server instance needs. Loaded once per
  * process (both transports share a single set) — the provider, policy, audit
  * logger, and approval queue are stateless-enough to serve many concurrent
@@ -98,6 +159,9 @@ export async function handleToolCall(
  */
 export interface ServerResources {
   agentId: string
+  /** True iff `CLAD_MCP_AUTH=oauth` — see `resolvePrincipal` and the
+   *  real-provider gate in `provider-factory.ts`. */
+  authRequired: boolean
   policy: PolicyConfig
   provider: FinancialDataProvider
   auditLogger: AuditLogger
@@ -112,9 +176,12 @@ export interface ServerResources {
  * transport.
  *
  * D5.3 note: `agentId` is still a process-lifetime constant asserted via env
- * here (one process == one agent). Per-connection authenticated identity is
- * D5.3's job (WS3); this HTTP transport is WS1+WS6 minus OAuth, so it keeps
- * the env-asserted identity for now.
+ * here — it now serves only as the stdio/dummy fallback (`resolvePrincipal`).
+ * Per-connection authenticated identity is resolved per request from
+ * `extra.authInfo` (WS3); this function additionally resolves `authRequired`
+ * (`CLAD_MCP_AUTH=oauth`) and the transport mode so the real-provider gate in
+ * `provider-factory.ts` can refuse to construct a real provider outside the
+ * authenticated HTTP path.
  */
 export async function loadServerResources(): Promise<ServerResources> {
   const policyPath = process.env.CLAD_POLICY_PATH ?? './policy.yaml'
@@ -123,6 +190,14 @@ export async function loadServerResources(): Promise<ServerResources> {
   // Agent ID resolution: CLI arg (CLAD_AGENT_ID_ARG) > env var > default
   // CLAD_AGENT_ID_ARG is set by `clad serve --agent-id` before spawning this process
   const agentId = process.env.CLAD_AGENT_ID_ARG ?? process.env.CLAD_AGENT_ID ?? 'default-agent'
+  // True only when the operator has explicitly opted into the (currently
+  // skeleton) auth-enforced path. Unset/any-other-value == today's default
+  // behaviour, byte-identical to pre-WS3.
+  const authRequired = process.env.CLAD_MCP_AUTH === 'oauth'
+  // Same resolution `server.ts` uses for `CLAD_MCP_TRANSPORT`, read here too
+  // (independently) so the real-provider gate can see it — `loadServerResources`
+  // runs before `server.ts` inspects this env var itself.
+  const transport = process.env.CLAD_MCP_TRANSPORT === 'http' ? 'http' : 'stdio'
 
   // Ensure parent directories exist for database files
   for (const dbPath of [auditDbPath, approvalDbPath]) {
@@ -135,7 +210,7 @@ export async function loadServerResources(): Promise<ServerResources> {
   process.stderr.write(`[clad server] loading policy from ${policyPath}\n`)
   const policy = await parsePolicy(policyPath)
   process.stderr.write(`[clad server] policy loaded (${Object.keys(policy.agents ?? {}).length} agents)\n`)
-  const provider = await createProvider()
+  const provider = await createProvider({ transport, authRequired })
   const auditLogger = new AuditLogger(auditDbPath)
   const approvalQueue = new ApprovalQueue(approvalDbPath)
 
@@ -146,7 +221,7 @@ export async function loadServerResources(): Promise<ServerResources> {
     )
   }
 
-  return { agentId, policy, provider, auditLogger, approvalQueue }
+  return { agentId, authRequired, policy, provider, auditLogger, approvalQueue }
 }
 
 /**
@@ -172,10 +247,14 @@ export function createConfiguredServer(resources: ServerResources): Server {
     })),
   }))
 
-  server.setRequestHandler(CallToolRequestSchema, (request) =>
+  server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
     handleToolCall(request, {
       tools,
-      agentId: resources.agentId,
+      // Per-request principal (D5.3 WS3 S1) — resolved from the verified
+      // token on the authenticated path, falling back to the env-asserted
+      // `resources.agentId` on stdio / auth-off. `handleToolCall` itself is
+      // unchanged: it still just takes an `agentId: string`.
+      agentId: resolvePrincipal(extra, resources),
       context: {
         policy: resources.policy,
         provider: resources.provider,
