@@ -2,6 +2,10 @@
 
 Clad policies are written in YAML. This reference documents every field available in a Clad policy.
 
+::: tip Applying policy changes
+Edits saved in the desktop app's Policy Editor apply immediately — saving automatically restarts the supervised MCP server, and the editor shows a confirmation. If you edit the YAML by hand (or via `clad ui`), restart the running MCP server for changes to take effect.
+:::
+
 ## Policy Structure
 
 A Clad policy has two top-level sections:
@@ -50,7 +54,8 @@ interface AccountPermissions {
   visible: string[];
   balance?: boolean;
   account_number?: boolean;
-  routing_number?: boolean;
+  name?: boolean;
+  institution?: boolean;
 }
 
 interface TransactionPermissions {
@@ -143,7 +148,12 @@ The `permissions` object defines what an agent can and cannot do.
 Controls which accounts this agent can access and what data is visible.
 
 **`visible`** (required, string[])
-List of account IDs or types the agent can see. Accounts not listed here are hidden from the agent.
+List of account IDs or types the agent can see. Each entry can be:
+- A specific account ID (e.g., `checking-001`)
+- An account type (e.g., `checking`, `savings`)
+- An empty array `[]` means all accounts are visible
+
+Accounts not listed here are hidden from the agent. Visible-list enforcement applies to all account operations: balance queries, transaction lookups, and spending checks.
 
 ```yaml
 permissions:
@@ -156,10 +166,13 @@ permissions:
 Whether the agent can view account balances.
 
 **`account_number`** (boolean, default: false)
-Whether the agent can view full account numbers.
+Whether the agent can see the masked account number (last 4 digits) in responses.
 
-**`routing_number`** (boolean, default: false)
-Whether the agent can view routing numbers.
+**`name`** (boolean, default: true)
+Whether the agent can see the account name (e.g., "Business Checking").
+
+**`institution`** (boolean, default: true)
+Whether the agent can see the institution name (e.g., "Example Bank").
 
 ### TransactionPermissions
 
@@ -399,7 +412,6 @@ agents:
         visible: [bank-checking-001]
         balance: true
         account_number: false
-        routing_number: false
       transactions:
         read: true
         description_visibility: true
@@ -449,7 +461,6 @@ agents:
         visible: [account-001]
         balance: true
         account_number: true
-        routing_number: false
       transactions:
         read: true
         amount_visibility_cap: 50000
