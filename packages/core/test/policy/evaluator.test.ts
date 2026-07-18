@@ -110,6 +110,123 @@ describe('Policy Evaluator', () => {
     })
   })
 
+  describe('Account Visibility List Enforcement (CLAD-3)', () => {
+    it('balance resource + pure-type visible list + non-listed account_type denies', async () => {
+      const { evaluate } = await import('../../src/policy/evaluator.js')
+      const policy: PolicyConfig = {
+        agents: {
+          'checking-only': {
+            description: 'Checking only',
+            permissions: {
+              accounts: {
+                visible: ['checking'],
+                balance: true,
+              },
+            },
+          },
+        },
+      }
+      const result = await evaluate('checking-only', { type: 'data_request', resource: 'balance', account_type: 'savings' }, policy, {})
+      expect(result.decision).toBe('deny')
+      expect(result.policy_rule).toBe('agents.*.permissions.accounts.visible')
+    })
+
+    it('balance resource + mixed id/type visible list allows through evaluator (filterVisibleAccounts enforces)', async () => {
+      const { evaluate } = await import('../../src/policy/evaluator.js')
+      const policy: PolicyConfig = {
+        agents: {
+          'mixed-list': {
+            description: 'Mixed visible list',
+            permissions: {
+              accounts: {
+                visible: ['checking-001', 'credit'],
+                balance: true,
+              },
+            },
+          },
+        },
+      }
+      const result = await evaluate('mixed-list', { type: 'data_request', resource: 'balance', account_type: 'savings' }, policy, {})
+      expect(result.decision).toBe('allow')
+    })
+
+    it('accounts resource + mixed id/type visible list allows through evaluator', async () => {
+      const { evaluate } = await import('../../src/policy/evaluator.js')
+      const policy: PolicyConfig = {
+        agents: {
+          'mixed-list': {
+            description: 'Mixed visible list',
+            permissions: {
+              accounts: {
+                visible: ['checking-001', 'credit'],
+              },
+            },
+          },
+        },
+      }
+      const result = await evaluate('mixed-list', { type: 'data_request', resource: 'accounts', account_type: 'savings' }, policy, {})
+      expect(result.decision).toBe('allow')
+    })
+
+    it('accounts resource + pure-type visible list + non-listed account_type denies (matches balance behavior)', async () => {
+      const { evaluate } = await import('../../src/policy/evaluator.js')
+      const policy: PolicyConfig = {
+        agents: {
+          'checking-only': {
+            description: 'Checking only',
+            permissions: {
+              accounts: {
+                visible: ['checking'],
+              },
+            },
+          },
+        },
+      }
+      const result = await evaluate('checking-only', { type: 'data_request', resource: 'accounts', account_type: 'savings' }, policy, {})
+      expect(result.decision).toBe('deny')
+    })
+
+    it('no account_type provided never denies on visible list, even with a pure-type list', async () => {
+      const { evaluate } = await import('../../src/policy/evaluator.js')
+      const policy: PolicyConfig = {
+        agents: {
+          'checking-only': {
+            description: 'Checking only',
+            permissions: {
+              accounts: {
+                visible: ['checking'],
+                balance: true,
+              },
+            },
+          },
+        },
+      }
+      const accountsResult = await evaluate('checking-only', { type: 'data_request', resource: 'accounts' }, policy, {})
+      const balanceResult = await evaluate('checking-only', { type: 'data_request', resource: 'balance' }, policy, {})
+      expect(accountsResult.decision).toBe('allow')
+      expect(balanceResult.decision).toBe('allow')
+    })
+
+    it('empty visible list never denies on account_type', async () => {
+      const { evaluate } = await import('../../src/policy/evaluator.js')
+      const policy: PolicyConfig = {
+        agents: {
+          'all-visible': {
+            description: 'All accounts visible',
+            permissions: {
+              accounts: {
+                visible: [],
+                balance: true,
+              },
+            },
+          },
+        },
+      }
+      const result = await evaluate('all-visible', { type: 'data_request', resource: 'balance', account_type: 'savings' }, policy, {})
+      expect(result.decision).toBe('allow')
+    })
+  })
+
   describe('Spending Authorization Tests (AP2-derived)', () => {
     it('$99 with max_per_transaction:100 allows', async () => {
       const { evaluate } = await import('../../src/policy/evaluator.js')
