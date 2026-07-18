@@ -26,3 +26,5 @@ export type {
   StoredToken,
 } from './security/grant-store.js'
 export type { GrantMeta } from './security/grant-store.types.js'
+export type { AgentIdentityClaim, TrustAssessment, MintScopesRequest, TrustProvider } from './security/trust-provider.js'
+export { LocalConsentTrustProvider } from './security/trust-provider-local.js'
