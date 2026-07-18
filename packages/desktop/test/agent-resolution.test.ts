@@ -151,16 +151,32 @@ describe('resolveClaudeDesktopAgentId', () => {
  * needs so an all-deny configuration is never silent.
  */
 describe('resolveSupervisedAgentId', () => {
-  it('resolves a real policy agent — not default-agent — when nothing is configured yet (the exact repro policy)', async () => {
+  it('resolves a real policy agent — not default-agent — when nothing is configured yet (the exact repro policy), and warns that the choice was implicit', async () => {
     const policyPath = writePolicy(REPRO_POLICY)
 
     const result = await resolveSupervisedAgentId(policyPath, '')
 
+    // Still the deterministic sorted-first pick, unchanged — the zero-action
+    // upgrade path this preserves is the whole point (see agent-resolution.ts).
     expect(result.agentId).toBe('analyst')
     expect(result.agentId).not.toBe(FALLBACK_AGENT_ID)
     // Not a misconfiguration — this is the backward-compatible default, and
-    // it's a valid identity, so there is nothing to warn the user about.
+    // it's a valid identity — but with more than one agent to choose from,
+    // silently picking by string sort order (no relation to privilege level)
+    // must be visible rather than discovered later.
+    expect(result.warning).toContain('analyst')
+    expect(result.warning).toContain('finance-agent')
+    expect(result.warningIsInformational).toBe(true)
+  })
+
+  it('does NOT warn when nothing is configured and the policy defines exactly one agent — there is no choice to surface', async () => {
+    const policyPath = writePolicy(SINGLE_AGENT_POLICY)
+
+    const result = await resolveSupervisedAgentId(policyPath, '')
+
+    expect(result.agentId).toBe('finance-agent')
     expect(result.warning).toBeUndefined()
+    expect(result.warningIsInformational).toBeUndefined()
   })
 
   it('honors a configured agent id that exists in the policy, with no warning', async () => {
@@ -190,6 +206,9 @@ describe('resolveSupervisedAgentId', () => {
     expect(result.agentId).toBe('analyst')
     expect(result.warning).toContain('removed-agent')
     expect(result.warning).toContain('analyst')
+    // A genuine misconfiguration, not the healthy-default notice — must keep
+    // reading as a problem in the status UI.
+    expect(result.warningIsInformational).toBeUndefined()
   })
 
   it('warns that calls will be denied when the policy cannot supply any valid identity', async () => {
@@ -199,6 +218,7 @@ describe('resolveSupervisedAgentId', () => {
 
     expect(result.agentId).toBe(FALLBACK_AGENT_ID)
     expect(result.warning).toMatch(/denied/i)
+    expect(result.warningIsInformational).toBeUndefined()
   })
 
   it('warns rather than throwing when the policy file is missing entirely', async () => {

@@ -69,6 +69,11 @@ export default function ServerStatusPanel(): JSX.Element {
             {status.restartAttempt > 0 && ` · auto-restart attempts: ${status.restartAttempt}`}
           </p>
           {status.lastError && <p style={s.errorText}>{status.lastError}</p>}
+          {/* Deliberately `mutedText`, not `errorText`/`warnText` — this is the
+              "no agent configured, defaulted to one of several" notice, which
+              is a healthy server's normal choice, not a problem to flag. See
+              `McpServerStatus.agentNotice`'s doc in shared/ipc.ts. */}
+          {status.agentNotice && <p style={s.mutedText}>{status.agentNotice}</p>}
 
           <button
             type="button"

@@ -69,6 +69,17 @@ export interface McpProcessStatus {
   pid?: number
   tools: string[]
   lastError?: string
+  /**
+   * Non-alarming counterpart to `lastError` — currently only the "no MCP
+   * agent configured, picked one of several by default" notice (see
+   * `SupervisedAgentResolution.warningIsInformational` in
+   * `agent-resolution.ts`). Kept out of `lastError` deliberately: that field
+   * is what the status UI renders as a problem (red text next to the state
+   * dot), and this case is the opposite of a problem — a healthy server made
+   * a default choice, and there's nothing to fix. Folding it into
+   * `lastError` would misrepresent a normal running server as broken.
+   */
+  agentNotice?: string
   restartAttempt: number
 }
 
@@ -120,13 +131,20 @@ export class McpServerManager {
   /** `CLAD_AGENT_ID` the currently-spawned child was started with; null while stopped. See `getRunningAgentId`. */
   private runningAgentId: string | null = null
   /**
-   * Non-fatal agent-identity problem from the last spawn (see
+   * Non-fatal agent-identity message from the last spawn (see
    * `SupervisedAgentResolution.warning`). Kept separate from `lastError` so a
    * real failure always wins the single `lastError` slot — `getStatus` falls
    * back to this only when there's no actual error, which is precisely the
    * dangerous case: a child that looks healthy but denies every tool call.
    */
   private agentIdWarning: string | undefined
+  /**
+   * Whether `agentIdWarning` is the informational "no agent configured,
+   * defaulted to one of several" notice rather than an actual problem (see
+   * `SupervisedAgentResolution.warningIsInformational`). Decides which of
+   * `getStatus()`'s two output fields `agentIdWarning` surfaces through.
+   */
+  private agentIdWarningIsInformational = false
 
   constructor(private readonly deps: McpServerManagerDeps) {}
 
@@ -135,7 +153,8 @@ export class McpServerManager {
       state: this.state,
       pid: this.child?.pid ?? undefined,
       tools: this.tools,
-      lastError: this.lastError ?? this.agentIdWarning,
+      lastError: this.lastError ?? (this.agentIdWarningIsInformational ? undefined : this.agentIdWarning),
+      agentNotice: this.agentIdWarningIsInformational ? this.agentIdWarning : undefined,
       restartAttempt: this.restartAttempt,
     }
   }
@@ -198,6 +217,7 @@ export class McpServerManager {
     this.expectedStop = false
     this.lastError = undefined
     this.agentIdWarning = undefined
+    this.agentIdWarningIsInformational = false
     // Cleared up front so an early return below (missing credentials) can
     // never leave a previous run's identity looking current.
     this.runningAgentId = null
@@ -245,6 +265,7 @@ export class McpServerManager {
     // exposes — same treatment the stderr tail gets in `spawnWithEnv`.
     const { redactSecrets } = await getCladCore()
     this.agentIdWarning = identity.warning ? redactSecrets(identity.warning) : undefined
+    this.agentIdWarningIsInformational = identity.warningIsInformational ?? false
     this.runningAgentId = identity.agentId
 
     await this.spawnWithEnv({ ...config, agent_id: identity.agentId }, secrets, attemptId)

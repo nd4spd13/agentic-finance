@@ -116,6 +116,17 @@ export interface SupervisedAgentResolution {
    * the child's stderr. A resolution problem here has to be visible in the UI.
    */
   warning?: string
+  /**
+   * Set alongside `warning` only for the "no agent configured, more than one
+   * available" case below — a healthy server making a deterministic default
+   * choice, not a problem. `mcp-server-manager.ts` uses this to route the
+   * message to a separate, non-alarming status field (`agentNotice`) instead
+   * of `lastError`'s "something is wrong" slot, which cases 1 and 2 above
+   * (policy can't supply a valid identity / configured id no longer exists)
+   * still use — those genuinely mean tool calls will be denied or are running
+   * under a substituted identity, so they should keep reading as problems.
+   */
+  warningIsInformational?: boolean
 }
 
 /**
@@ -131,9 +142,18 @@ export interface SupervisedAgentResolution {
  *
  *   - configured id exists in the policy -> use it, no warning (normal case).
  *   - configured id is EMPTY (fresh config, or any config.json written before
- *     `agent_id` existed) -> deterministic sorted-first real agent, no
- *     warning: this isn't a misconfiguration, it's the backward-compatible
- *     default, and it's a valid identity.
+ *     `agent_id` existed) AND the policy defines exactly one agent -> use it,
+ *     no warning: there is no choice to surface, so a warning here would fire
+ *     on every fresh setup for no actionable reason.
+ *   - configured id is EMPTY and the policy defines MORE THAN ONE agent ->
+ *     still the same deterministic sorted-first real agent (this must stay a
+ *     zero-action upgrade path — see `resolveClaudeDesktopAgentId`'s doc), but
+ *     now WITH a warning: silently picking a role by string sort order, with
+ *     no relationship to privilege level, is exactly the kind of thing that
+ *     must be visible rather than discovered later. Unlike the two cases
+ *     below, this isn't a problem — it's a healthy server making a default
+ *     choice — so it's flagged `warningIsInformational` and the caller routes
+ *     it to a less alarming status field than the other two.
  *   - configured id is set but ABSENT from the policy (user renamed/removed
  *     the agent after selecting it) -> fall back to the sorted-first real
  *     agent and warn. Running as a real agent beats running as a name the
@@ -167,6 +187,29 @@ export async function resolveSupervisedAgentId(
         `(it defines: ${resolution.availableAgentIds.join(', ')}). Running as '${resolution.agentId}' instead — ` +
         `tool calls are evaluated against that agent's permissions. Pick an agent again in "Connect to Claude Desktop", ` +
         `or add '${requested}' back to the policy.`,
+    }
+  }
+
+  // No id was configured at all (`requested` undefined — empty/whitespace
+  // config.agent_id, exactly the state every pre-existing install upgrades
+  // into) AND the policy offers more than one agent to choose between: the
+  // sorted-first pick above is deterministic but arbitrary with respect to
+  // privilege — string sort order has no relationship to how permissive an
+  // agent is. Surface that an implicit choice was made, without changing
+  // which agent got picked (`resolution.agentId` is untouched below — the
+  // zero-action upgrade path this preserves is the whole point of that
+  // deterministic default). Gated on `> 1` deliberately: with exactly one
+  // agent defined there is no choice being hidden, and warning anyway would
+  // just be noise on every fresh single-agent setup.
+  if (!requested && resolution.availableAgentIds.length > 1) {
+    return {
+      agentId: resolution.agentId,
+      availableAgentIds: resolution.availableAgentIds,
+      warning:
+        `No MCP agent is configured, so tool calls run as '${resolution.agentId}' ` +
+        `(the first of: ${[...resolution.availableAgentIds].sort().join(', ')}). Pick an agent in ` +
+        `"Connect to Claude Desktop" to choose deliberately.`,
+      warningIsInformational: true,
     }
   }
 
