@@ -41,7 +41,8 @@ import { McpServerManager, type McpProcessStatus } from './lib/mcp-server-manage
 import { listApprovals, decideApproval, findNewPendingApprovals } from './lib/approvals.js'
 import { queryAuditLog } from './lib/audit-log.js'
 import { DashboardDataStore, type DashboardSnapshot } from './lib/dashboard-data.js'
-import { readPolicy, writePolicy, type PolicyGetResult, type PolicyWriteResult } from './lib/policy-data.js'
+import { readPolicy, type PolicyGetResult } from './lib/policy-data.js'
+import { savePolicyAndRestartServer } from './lib/policy-save.js'
 import {
   PlaidLinkFlowManager,
   getPlaidConnectionState,
@@ -104,6 +105,7 @@ import {
   type ConnectProvidersStatus,
   type StartPlaidLinkInput,
   type PlaidEnvName,
+  type PolicyWriteResult,
 } from '../shared/ipc.js'
 
 // `__dirname` (ambient via @types/node) is a CommonJS global — valid here
@@ -644,9 +646,15 @@ ipcMain.handle(
   IPC_CHANNELS.policyGet,
   (): Promise<PolicyGetResult> => readPolicy(loadConfig().policy_path)
 )
+// CLAD-5: a successful write alone never reaches the supervised child (it
+// parses policy once at spawn and holds it for its process lifetime), so the
+// save handler restarts it through `mcpManager` afterward — see
+// `policy-save.ts`'s module doc for why that goes through the manager's own
+// restart() rather than a hand-rolled spawn.
 ipcMain.handle(
   IPC_CHANNELS.policySet,
-  (_event, policy: unknown): Promise<PolicyWriteResult> => writePolicy(loadConfig().policy_path, policy)
+  (_event, policy: unknown): Promise<PolicyWriteResult> =>
+    savePolicyAndRestartServer(loadConfig().policy_path, policy, mcpManager)
 )
 
 // ---- IPC handlers (D1.4) ---------------------------------------------------

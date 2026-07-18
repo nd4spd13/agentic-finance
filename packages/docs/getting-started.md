@@ -62,7 +62,6 @@ agents:
         visible: [default-account]
         balance: true
         account_number: false
-        routing_number: false
 
       transactions:
         read: true
@@ -104,8 +103,10 @@ clad ui
 
 This starts a local web app at `http://localhost:3456` and opens your browser automatically. It reads your current `clad.yaml`, presents every setting as a form, and writes changes back to disk when you click **Save**. A live YAML preview updates in real-time as you edit.
 
+> **Note:** `clad ui` only writes the YAML file — restart any running MCP server afterward so the changes take effect. This is different from the **desktop app's Policy Editor**, which automatically restarts the supervised MCP server on save so changes apply immediately.
+
 The editor covers all policy fields:
-- **Accounts** — visible account types, balance/routing number visibility
+- **Accounts** — visible account types, balance visibility, account number/name/institution visibility
 - **Transactions** — read access, lookback window, amount visibility cap
 - **Spending** — per-transaction, daily, weekly, and monthly limits; merchant and category allow/block lists
 - **Escalation** — trigger conditions, channel (CLI/webhook), timeout, and fallback behavior
@@ -331,7 +332,7 @@ clad policy show
 
 ### Reload the Policy
 
-Edit `clad.yaml` — the MCP server re-reads the policy on every request, so changes take effect immediately without a restart.
+Saving in the **desktop app's Policy Editor** restarts the supervised MCP server automatically, so changes apply immediately. When editing the YAML by hand or via `clad ui`, restart the running MCP server before changes take effect (for the desktop-supervised server: quit and relaunch the app).
 
 ### Review and Action Escalations
 

@@ -8,6 +8,9 @@ import {
   EscalationTrigger,
 } from '../types/index.js'
 
+// Mirrors Account['type'] in data-provider.types.ts.
+const ACCOUNT_TYPES = ['checking', 'savings', 'credit', 'loan', 'investment'] as const
+
 export async function evaluate(
   agentId: string,
   request: Record<string, unknown>,
@@ -77,17 +80,31 @@ export async function evaluate(
     })
   }
 
-  // 4. Account visibility check
-  if (request.resource === 'accounts' && permissions.accounts?.visible) {
-    if (request.account_type !== undefined) {
-      if (!permissions.accounts.visible.includes(request.account_type as string)) {
-        return {
-          decision: 'deny',
-          reason: `account type "${request.account_type}" not in visible list`,
-          policy_rule: 'agents.*.permissions.accounts.visible',
-          checks_performed,
-          constraints_applied,
-        }
+  // 4. Account visibility check — applies to both 'accounts' and 'balance'
+  // resources, since balance lookups are scoped to an account_type too.
+  if (
+    (request.resource === 'accounts' || request.resource === 'balance') &&
+    permissions.accounts?.visible &&
+    permissions.accounts.visible.length > 0 &&
+    request.account_type !== undefined
+  ) {
+    const visible = permissions.accounts.visible
+    // The visible list mixes account IDs (e.g. "checking-001") with account
+    // types (e.g. "checking"). The evaluator only has the requested type to
+    // go on, so it can only safely deny when every entry in the list is a
+    // known account type — otherwise an ID-only or mixed list might still
+    // cover the requested type via an ID the evaluator can't resolve, and
+    // denying here would be a false positive. In that case we fall through
+    // and let filterVisibleAccounts() (which sees real accounts with both
+    // id and type) enforce visibility instead.
+    const isPureTypeList = visible.every((entry) => (ACCOUNT_TYPES as readonly string[]).includes(entry))
+    if (isPureTypeList && !visible.includes(request.account_type as string)) {
+      return {
+        decision: 'deny',
+        reason: `account type "${request.account_type}" not in visible list`,
+        policy_rule: 'agents.*.permissions.accounts.visible',
+        checks_performed,
+        constraints_applied,
       }
     }
   }

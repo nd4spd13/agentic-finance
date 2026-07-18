@@ -1,5 +1,6 @@
 import { evaluate } from '@clad/core'
 import type { ToolContext } from '../types.js'
+import { denyIfAccountNotVisible } from './account-visibility-guard.js'
 
 export const name = 'clad_safe_to_spend'
 export const description = 'Compute safe-to-spend amount using balance and recurring charges'
@@ -22,6 +23,11 @@ export async function handler(
 
   if (result.decision === 'deny') {
     return { content: [{ type: 'text', text: `Denied: ${result.reason}` }] }
+  }
+
+  const visibilityDenial = await denyIfAccountNotVisible(context, args.account_id)
+  if (visibilityDenial) {
+    return visibilityDenial
   }
 
   const balance = await context.provider.getBalance(context.agentId, args.account_id)

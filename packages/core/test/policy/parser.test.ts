@@ -47,5 +47,38 @@ describe('Policy Parser', () => {
         if (existsSync(tmpPath)) unlinkSync(tmpPath)
       }
     })
+
+    it('validates a policy using accounts.name: false and accounts.institution: true (CLAD-4)', async () => {
+      const { parsePolicy } = await import('../../src/policy/parser.js')
+      const tmpPath = '/tmp/name-institution-policy.yaml'
+      writeFileSync(
+        tmpPath,
+        [
+          'agents:',
+          '  test-agent:',
+          '    description: "Name/institution toggle agent"',
+          '    permissions:',
+          '      accounts:',
+          '        visible: [checking]',
+          '        name: false',
+          '        institution: true',
+          '',
+        ].join('\n')
+      )
+      try {
+        const result = await parsePolicy(tmpPath)
+        expect(result.agents['test-agent'].permissions.accounts?.name).toBe(false)
+        expect(result.agents['test-agent'].permissions.accounts?.institution).toBe(true)
+      } finally {
+        if (existsSync(tmpPath)) unlinkSync(tmpPath)
+      }
+    })
+
+    it('still validates the repo valid-full fixture which retains a legacy routing_number key (tolerated as an unknown property)', async () => {
+      const { parsePolicy } = await import('../../src/policy/parser.js')
+      const result = await parsePolicy(join(fixturesDir, 'valid-full.yaml'))
+      expect(result.agents).toBeDefined()
+      expect(Object.keys(result.agents).length).toBeGreaterThan(0)
+    })
   })
 })
