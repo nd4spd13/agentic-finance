@@ -233,8 +233,9 @@ agents:
       accounts:
         visible: []          # Account IDs the agent can see; empty = all accounts
         balance: true
-        account_number: false
-        routing_number: false
+        account_number: false # Masked last-4 account number; hidden unless explicitly true
+        name: true            # Account name; visible unless explicitly false
+        institution: true     # Financial institution; visible unless explicitly false
       transactions:
         read: true
         description_visibility: true

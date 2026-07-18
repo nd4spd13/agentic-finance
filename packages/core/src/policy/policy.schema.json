@@ -61,7 +61,7 @@
         "visible": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "List of account IDs or types the agent can see"
+          "description": "List of account IDs or account types the agent can see; empty = all accounts"
         },
         "balance": {
           "type": "boolean",
@@ -69,11 +69,15 @@
         },
         "account_number": {
           "type": "boolean",
-          "description": "Whether agent can see full account numbers"
+          "description": "Whether agent can see the masked account number (last-4 `mask` field). Default is false (hidden)."
         },
-        "routing_number": {
+        "name": {
           "type": "boolean",
-          "description": "Whether agent can see routing numbers"
+          "description": "Whether agent can see the account's name. Default is true (visible)."
+        },
+        "institution": {
+          "type": "boolean",
+          "description": "Whether agent can see the account's institution. Default is true (visible)."
         }
       }
     },
