@@ -22,21 +22,7 @@ import {
   formatConfigJson,
   type McpServerEntry,
 } from '../src/main/lib/claude-desktop-config.js'
-import type { CladConfig } from '../src/main/lib/config.js'
-
-function fakeConfig(overrides: Partial<CladConfig> = {}): CladConfig {
-  return {
-    policy_path: '/fake/.clad/policy.yaml',
-    audit_db: '/fake/.clad/audit.sqlite',
-    approval_db: '/fake/.clad/approvals.sqlite',
-    server_pid_file: '/fake/.clad/server.pid',
-    provider: 'dummy',
-    plaid_db: '/fake/.clad/plaid.sqlite',
-    plaid_env: 'sandbox',
-    close_to_tray: true,
-    ...overrides,
-  }
-}
+import { DEFAULT_MCP_HTTP_PORT } from '../src/main/lib/mcp-loopback.js'
 
 let dir: string | undefined
 
@@ -48,47 +34,39 @@ afterEach(() => {
 })
 
 describe('buildCladMcpServerEntry', () => {
-  it('builds command/args/env from config + execPath + agentId, with only path-shaped env vars plus CLAD_AGENT_ID', () => {
-    const entry = buildCladMcpServerEntry(fakeConfig(), '/fake/Clad.app/Contents/MacOS/Clad', 'finance-agent')
+  it('builds an mcp-remote invocation targeting the loopback HTTP URL, with only ELECTRON_RUN_AS_NODE in env', () => {
+    const entry = buildCladMcpServerEntry('/fake/Clad.app/Contents/MacOS/Clad', DEFAULT_MCP_HTTP_PORT)
 
     expect(entry.command).toBe('/fake/Clad.app/Contents/MacOS/Clad')
-    expect(entry.args).toHaveLength(1)
-    expect(entry.args[0]).toMatch(/server\.js$/)
-    expect(entry.env).toEqual({
-      ELECTRON_RUN_AS_NODE: '1',
-      CLAD_POLICY_PATH: '/fake/.clad/policy.yaml',
-      CLAD_AUDIT_DB: '/fake/.clad/audit.sqlite',
-      CLAD_APPROVAL_DB: '/fake/.clad/approvals.sqlite',
-      CLAD_AGENT_ID: 'finance-agent',
-    })
+    // args = [absolute mcp-remote proxy entry, loopback MCP URL]
+    expect(entry.args).toHaveLength(2)
+    expect(entry.args[0]).toMatch(/mcp-remote[/\\]dist[/\\]proxy\.js$/)
+    expect(entry.args[1]).toBe(`http://127.0.0.1:${DEFAULT_MCP_HTTP_PORT}/mcp`)
+    expect(entry.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
+  })
+
+  it('uses the given port in the loopback URL', () => {
+    const entry = buildCladMcpServerEntry('/fake/exec', 51234)
+
+    expect(entry.args[1]).toBe('http://127.0.0.1:51234/mcp')
   })
 
   /**
-   * Regression test for D1 manual QA finding 2: a prior version of this
-   * function wrote no CLAD_AGENT_ID at all, so the spawned server fell back
-   * to mcp-server/src/server.ts's hardcoded 'default-agent' — which fails
-   * every tool call ("unknown agent: default-agent") against any real-world
-   * policy that doesn't happen to define an agent by that exact name (the
-   * repro: a policy defining only 'analyst' and 'finance-agent').
+   * The entry must NEVER carry a secret or a provider selection — Claude
+   * Desktop's config is plaintext, and the loopback child (not this proxy)
+   * owns the passphrase/provider. This is the core of the "no secret in any
+   * config file" property of the fix.
    */
-  it('always includes CLAD_AGENT_ID set to the resolved agent id, never omitted', () => {
-    const entry = buildCladMcpServerEntry(fakeConfig(), '/fake/exec', 'analyst')
-
-    expect(entry.env.CLAD_AGENT_ID).toBe('analyst')
-  })
-
-  it('never includes Plaid secrets or CLAD_PROVIDER, even when provider is "plaid"', () => {
-    const entry = buildCladMcpServerEntry(fakeConfig({ provider: 'plaid' }), '/fake/exec', 'default-agent')
+  it('never includes any CLAD_* env var, secret, or CLAD_PROVIDER', () => {
+    const entry = buildCladMcpServerEntry('/fake/exec', DEFAULT_MCP_HTTP_PORT)
 
     const keys = Object.keys(entry.env)
+    expect(keys).toEqual(['ELECTRON_RUN_AS_NODE'])
     expect(keys).not.toContain('CLAD_PROVIDER')
+    expect(keys).not.toContain('CLAD_AGENT_ID')
     expect(keys).not.toContain('PLAID_CLIENT_ID')
     expect(keys).not.toContain('PLAID_SECRET')
-    expect(keys).not.toContain('PLAID_ENV')
     expect(keys).not.toContain('CLAD_TOKEN_PASSPHRASE')
-    expect(keys.sort()).toEqual(
-      ['CLAD_AGENT_ID', 'CLAD_APPROVAL_DB', 'CLAD_AUDIT_DB', 'CLAD_POLICY_PATH', 'ELECTRON_RUN_AS_NODE'].sort()
-    )
   })
 })
 
@@ -231,7 +209,7 @@ describe('writeConfig + full merge round trip', () => {
 
     expect(isClaudeDesktopInstalled(configPath)).toBe(true)
     const existing = readExistingConfig(configPath)
-    const cladEntry = buildCladMcpServerEntry(fakeConfig(), '/new/exec', 'default-agent')
+    const cladEntry = buildCladMcpServerEntry('/new/exec', DEFAULT_MCP_HTTP_PORT)
     expect(isAlreadyConnected(existing, cladEntry)).toBe(false)
 
     const merged = mergeCladEntry(existing, cladEntry)

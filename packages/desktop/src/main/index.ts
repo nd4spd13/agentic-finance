@@ -84,6 +84,7 @@ import {
   isAlreadyConnected,
   writeConfig as writeClaudeDesktopConfig,
 } from './lib/claude-desktop-config.js'
+import { resolveMcpHttpPort } from './lib/mcp-loopback.js'
 import {
   IPC_CHANNELS,
   type DisplayConfig,
@@ -671,8 +672,13 @@ async function computeClaudeDesktopMerge(selectedAgentId: string | undefined): P
   const configPath = getClaudeDesktopConfigPath()
   const existing = readExistingConfig(configPath)
   const config = loadConfig()
+  // Agent resolution is kept for the preview's informational fields
+  // (availableAgentIds / resolvedAgentId / fallbackReason the connect UI
+  // shows). It no longer flows into the entry: with the loopback-HTTP
+  // architecture the identity is the supervised child's single env-asserted
+  // id, and per-connection identity is D5.3 (see claude-desktop-config.ts).
   const resolution = await resolveClaudeDesktopAgentId(config.policy_path, selectedAgentId)
-  const cladEntry = buildCladMcpServerEntry(config, process.execPath, resolution.agentId)
+  const cladEntry = buildCladMcpServerEntry(process.execPath, resolveMcpHttpPort())
   const merged = mergeCladEntry(existing, cladEntry)
   return { configPath, existing, merged, cladEntry, resolution }
 }

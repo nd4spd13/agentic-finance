@@ -10,12 +10,32 @@
  * packaged-app QA step (see the D1 manual QA notes in desktop-app.md).
  */
 
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { McpServerManager } from '../src/main/lib/mcp-server-manager.js'
 import type { CladConfig } from '../src/main/lib/config.js'
+
+/**
+ * Grabs a free loopback port so these tests don't collide with the fixed
+ * `DEFAULT_MCP_HTTP_PORT` (8765) a developer might have in use, and so
+ * separate test files can run in parallel workers without fighting over one
+ * port. The manager reads `CLAD_MCP_HTTP_PORT` at spawn time (see
+ * `resolveMcpHttpPort`), so setting it in `beforeEach` is enough.
+ */
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer()
+    srv.once('error', reject)
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address() as AddressInfo
+      srv.close(() => resolve(port))
+    })
+  })
+}
 
 const POLICY_YAML = `
 agents:
@@ -74,6 +94,12 @@ async function waitFor(predicate: () => boolean, opts: { timeoutMs?: number; int
 
 let dir: string | undefined
 let manager: McpServerManager | undefined
+let prevHttpPort: string | undefined
+
+beforeEach(async () => {
+  prevHttpPort = process.env.CLAD_MCP_HTTP_PORT
+  process.env.CLAD_MCP_HTTP_PORT = String(await getFreePort())
+})
 
 afterEach(async () => {
   if (manager) {
@@ -84,6 +110,8 @@ afterEach(async () => {
     rmSync(dir, { recursive: true, force: true })
     dir = undefined
   }
+  if (prevHttpPort === undefined) delete process.env.CLAD_MCP_HTTP_PORT
+  else process.env.CLAD_MCP_HTTP_PORT = prevHttpPort
 })
 
 describe('McpServerManager', () => {

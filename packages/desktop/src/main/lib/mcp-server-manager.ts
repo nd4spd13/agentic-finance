@@ -3,16 +3,27 @@
  * removed) into a real start/stop/restart lifecycle with crash detection
  * and capped backoff, per D1.2.
  *
- * Keeps the spike's core technique — a persistent `@modelcontextprotocol/
- * sdk` `Client` over `StdioClientTransport`, not a bare `child_process.
- * spawn()` — because a `StdioServerTransport`-based server can only usefully
- * serve one client for its process lifetime (closing the verifying
- * client's transport terminates the child; see the spike's
- * `stopMcpHandshakeSpike`). So the manager holds the client connection open
- * for as long as the server is meant to be "running": it doubles as the
- * readiness gate (a real `tools/list` round trip, not just "the process
- * didn't immediately exit") and as the liveness signal that drives crash
- * detection via the transport's `onclose`/`onerror` hooks.
+ * D5.3 WS1 (interim "3 dummy accounts" fix): the supervised child now runs in
+ * loopback **HTTP** mode (`CLAD_MCP_TRANSPORT=http`), not stdio. The manager
+ * therefore spawns the child process itself (`child_process.spawn`) with the
+ * passphrase/provider env already injected (`buildServerEnv` with the
+ * `http` transport option), then connects a persistent `@modelcontextprotocol/
+ * sdk` `Client` over `StreamableHTTPClientTransport` to
+ * `http://127.0.0.1:<port>/mcp` as the readiness gate and liveness signal.
+ *
+ * Why HTTP: unlike a `StdioServerTransport` (which can only usefully serve one
+ * client for its process lifetime — closing the verifying client's transport
+ * terminates the child), an HTTP server serves many clients concurrently. So
+ * the manager's own readiness `Client` AND Claude Desktop's `mcp-remote`
+ * client can both be connected to the same already-unlocked child at once —
+ * which is the whole point of the fix (real provider data reaches Claude
+ * Desktop with zero secrets in any config file; see `claude-desktop-config.ts`
+ * and `@clad/mcp-server`'s `http-transport.ts`).
+ *
+ * Crash detection: driven off the child process's `exit`/`error` events
+ * (direct and reliable), with the HTTP transport's `onclose` as a secondary
+ * signal. Readiness: a real `tools/list` round trip over HTTP, retried until
+ * the child has bound its port or a timeout elapses.
  *
  * State machine: stopped -> starting -> running -> stopping -> stopped, with
  * an unexpected exit from 'starting' or 'running' going to 'crashed'
@@ -24,10 +35,12 @@
  * (standard crash-loop backoff shape, e.g. systemd/k8s).
  */
 
+import { spawn, type ChildProcess } from 'node:child_process'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { resolveMcpServerEntry } from './mcp-server-path.js'
 import { buildServerEnv, type McpSpawnSecrets } from './mcp-server-env.js'
+import { resolveMcpHttpPort, mcpLoopbackUrl } from './mcp-loopback.js'
 import { getCladCore } from './clad-core.js'
 import type { CladConfig } from './config.js'
 
@@ -50,6 +63,11 @@ export const MAX_AUTO_RESTART_ATTEMPTS = 5
 /** A server that stays up at least this long resets the backoff attempt counter on its next crash. */
 export const BACKOFF_RESET_AFTER_MS = 60_000
 
+/** How long to keep retrying the HTTP readiness connection while the freshly-spawned child binds its loopback port. */
+export const READINESS_TIMEOUT_MS = 10_000
+/** Delay between HTTP readiness connection attempts. */
+export const READINESS_POLL_INTERVAL_MS = 150
+
 /** Exponential backoff, capped: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ... */
 export function computeBackoffDelayMs(attempt: number): number {
   return Math.min(BACKOFF_BASE_MS * BACKOFF_FACTOR ** attempt, BACKOFF_CAP_MS)
@@ -65,10 +83,15 @@ export interface McpServerManagerDeps {
   onStatusChange: (status: McpProcessStatus) => void
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export class McpServerManager {
   private state: McpServerState = 'stopped'
   private client: Client | null = null
-  private transport: StdioClientTransport | null = null
+  private transport: StreamableHTTPClientTransport | null = null
+  private child: ChildProcess | null = null
   private tools: string[] = []
   private lastError: string | undefined
   private restartAttempt = 0
@@ -83,7 +106,7 @@ export class McpServerManager {
   getStatus(): McpProcessStatus {
     return {
       state: this.state,
-      pid: this.transport?.pid ?? undefined,
+      pid: this.child?.pid ?? undefined,
       tools: this.tools,
       lastError: this.lastError,
       restartAttempt: this.restartAttempt,
@@ -171,31 +194,31 @@ export class McpServerManager {
     attemptId: number
   ): Promise<void> {
     const serverEntry = resolveMcpServerEntry()
-    const env = buildServerEnv(config, secrets)
+    const port = resolveMcpHttpPort()
+    const env = buildServerEnv(config, secrets, { transport: 'http', httpPort: port })
 
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [serverEntry],
+    // Spawn the child ourselves (the HTTP client transport, unlike the old
+    // stdio transport, does NOT spawn the process). stdout is ignored — the
+    // MCP protocol runs over HTTP now, not stdio — and stderr is piped so we
+    // can surface a redacted tail on failure.
+    const child = spawn(process.execPath, [serverEntry], {
       env,
-      stderr: 'pipe',
+      stdio: ['ignore', 'ignore', 'pipe'],
     })
+    this.child = child
 
     let stderrBuf = ''
-    transport.stderr?.on('data', (chunk: Buffer) => {
+    child.stderr?.on('data', (chunk: Buffer) => {
       stderrBuf += chunk.toString()
       if (stderrBuf.length > 4000) stderrBuf = stderrBuf.slice(-4000)
     })
+    child.on('exit', () => this.handleUnexpectedClose(attemptId))
+    child.on('error', () => this.handleUnexpectedClose(attemptId))
 
-    // Must be set before client.connect() — Protocol.connect() chains
-    // whatever onclose/onerror were already present on the transport rather
-    // than clobbering them (verified against the installed SDK's
-    // shared/protocol.js), so this is the supported hook point.
-    transport.onclose = () => this.handleUnexpectedClose(attemptId)
-
-    const client = new Client({ name: 'clad-desktop', version: '0.1.0' }, { capabilities: {} })
+    const url = new URL(mcpLoopbackUrl(port))
 
     try {
-      await client.connect(transport)
+      const { client, transport } = await this.connectWithReadinessRetry(url, () => child.exitCode !== null)
       const { tools } = await client.listTools()
 
       if (attemptId !== this.currentAttemptId) {
@@ -204,8 +227,16 @@ export class McpServerManager {
         // whatever state the superseding call already established alone.
         await client.close().catch(() => undefined)
         await transport.close().catch(() => undefined)
+        child.kill()
         return
       }
+
+      // Secondary crash signal: if the HTTP session drops (e.g. the child dies
+      // and the SSE stream closes) treat it like an unexpected exit. The
+      // child 'exit' handler above is the primary signal; the attemptId +
+      // state guards in handleUnexpectedClose make a double-fire harmless.
+      transport.onclose = () => this.handleUnexpectedClose(attemptId)
+      transport.onerror = () => undefined // swallow transient SSE errors; crash detection is exit-driven
 
       this.client = client
       this.transport = transport
@@ -214,7 +245,7 @@ export class McpServerManager {
       this.setState('running')
     } catch (err) {
       if (attemptId !== this.currentAttemptId) return
-      if (this.state === 'crashed') return // already handled by a racing transport.onclose
+      if (this.state === 'crashed') return // already handled by a racing child 'exit'
 
       const { redactSecrets } = await getCladCore()
       this.lastError = redactSecrets(
@@ -222,9 +253,48 @@ export class McpServerManager {
       )
       this.client = null
       this.transport = null
+      try {
+        child.kill()
+      } catch {
+        // best-effort
+      }
+      this.child = null
       this.setState('crashed')
       this.scheduleAutoRestart()
     }
+  }
+
+  /**
+   * Retries the HTTP readiness connection while the freshly-spawned child is
+   * still binding its loopback port. A fresh `Client`/transport pair is used
+   * per attempt (a transport that failed to connect isn't reusable). Aborts
+   * early if the child exits before it ever listens.
+   */
+  private async connectWithReadinessRetry(
+    url: URL,
+    childHasExited: () => boolean
+  ): Promise<{ client: Client; transport: StreamableHTTPClientTransport }> {
+    const deadline = Date.now() + READINESS_TIMEOUT_MS
+    let lastErr: unknown
+    while (Date.now() < deadline) {
+      if (childHasExited()) throw new Error('MCP server process exited before it began listening.')
+
+      const transport = new StreamableHTTPClientTransport(url)
+      const client = new Client({ name: 'clad-desktop', version: '0.1.0' }, { capabilities: {} })
+      try {
+        await client.connect(transport)
+        return { client, transport }
+      } catch (err) {
+        lastErr = err
+        await client.close().catch(() => undefined)
+        await transport.close().catch(() => undefined)
+        await sleep(READINESS_POLL_INTERVAL_MS)
+      }
+    }
+    throw new Error(
+      `Timed out after ${READINESS_TIMEOUT_MS}ms waiting for the MCP server to accept a loopback HTTP connection` +
+        (lastErr ? ` (last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)})` : '')
+    )
   }
 
   private handleUnexpectedClose(attemptId: number): void {
@@ -234,6 +304,7 @@ export class McpServerManager {
 
     this.client = null
     this.transport = null
+    this.child = null
     this.lastError = this.lastError ?? 'The MCP server process exited unexpectedly.'
     this.setState('crashed')
     this.scheduleAutoRestart()
@@ -269,8 +340,14 @@ export class McpServerManager {
     } catch {
       // best-effort
     }
+    try {
+      this.child?.kill()
+    } catch {
+      // best-effort
+    }
     this.client = null
     this.transport = null
+    this.child = null
     this.tools = []
   }
 }

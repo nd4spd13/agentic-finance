@@ -98,6 +98,42 @@ describe('buildServerEnv', () => {
   })
 
   /**
+   * D5.3 WS1 — the desktop app's supervised child runs the loopback HTTP
+   * transport (`CLAD_MCP_TRANSPORT=http` + `CLAD_MCP_HTTP_PORT`). Default /
+   * stdio callers (every existing test above) must get NEITHER var, so the
+   * CLI/direct-spawn stdio path is unchanged.
+   */
+  describe('transport selection', () => {
+    it('sets no transport env vars by default (stdio path unchanged)', () => {
+      const env = buildServerEnv({ ...defaultConfig(), provider: 'dummy' as const })
+
+      expect(env.CLAD_MCP_TRANSPORT).toBeUndefined()
+      expect(env.CLAD_MCP_HTTP_PORT).toBeUndefined()
+    })
+
+    it('sets no transport env vars when transport is explicitly stdio', () => {
+      const env = buildServerEnv({ ...defaultConfig(), provider: 'dummy' as const }, undefined, {
+        transport: 'stdio',
+      })
+
+      expect(env.CLAD_MCP_TRANSPORT).toBeUndefined()
+      expect(env.CLAD_MCP_HTTP_PORT).toBeUndefined()
+    })
+
+    it('sets CLAD_MCP_TRANSPORT=http and CLAD_MCP_HTTP_PORT for the http transport', () => {
+      const env = buildServerEnv({ ...defaultConfig(), provider: 'simplefin' as const }, { simplefin: { passphrase: 'p' } }, {
+        transport: 'http',
+        httpPort: 51234,
+      })
+
+      expect(env.CLAD_MCP_TRANSPORT).toBe('http')
+      expect(env.CLAD_MCP_HTTP_PORT).toBe('51234')
+      // The secret path is unaffected by the transport option.
+      expect(env.CLAD_TOKEN_PASSPHRASE).toBe('p')
+    })
+  })
+
+  /**
    * D3.3 — the spawned MCP server child must open the SAME env-scoped SQLite
    * file the desktop app itself uses (`config` here is always expected to
    * already be the *effective* config — see `main/index.ts`'s

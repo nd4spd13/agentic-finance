@@ -60,7 +60,24 @@ export interface McpSpawnSecrets {
   simplefin?: SimpleFinSpawnSecrets
 }
 
-export function buildServerEnv(config: CladConfig, secrets?: McpSpawnSecrets): Record<string, string> {
+/**
+ * Transport selection for the spawned child (D5.3 WS1). The desktop app's own
+ * supervised child runs in `'http'` mode on a loopback port so Claude Desktop
+ * can reach real provider data through `mcp-remote` (see `mcp-server-manager.ts`
+ * and `claude-desktop-config.ts`). Omitted / `'stdio'` keeps the original
+ * single-client stdio behaviour (what every existing caller/test relies on).
+ */
+export interface McpTransportOptions {
+  transport?: 'stdio' | 'http'
+  /** Loopback port for `transport: 'http'`; ignored otherwise. */
+  httpPort?: number
+}
+
+export function buildServerEnv(
+  config: CladConfig,
+  secrets?: McpSpawnSecrets,
+  transportOpts?: McpTransportOptions
+): Record<string, string> {
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     CLAD_POLICY_PATH: config.policy_path,
@@ -72,6 +89,11 @@ export function buildServerEnv(config: CladConfig, secrets?: McpSpawnSecrets): R
     // The spawned child is always the Electron binary run as plain Node
     // (see mcp-server-path.ts's doc comment) — never a system `node`.
     ELECTRON_RUN_AS_NODE: '1',
+  }
+
+  if (transportOpts?.transport === 'http') {
+    env.CLAD_MCP_TRANSPORT = 'http'
+    env.CLAD_MCP_HTTP_PORT = String(transportOpts.httpPort ?? '')
   }
 
   if (config.provider === 'plaid' && secrets?.plaid) {
