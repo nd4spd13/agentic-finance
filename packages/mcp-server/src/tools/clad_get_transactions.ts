@@ -1,5 +1,6 @@
 import { evaluate, type TransactionQueryOpts } from '@clad/core'
 import type { ToolContext } from '../types.js'
+import { denyIfAccountNotVisible } from './account-visibility-guard.js'
 
 export const name = 'clad_get_transactions'
 export const description = 'Get transactions with policy-based redaction'
@@ -25,6 +26,11 @@ export async function handler(
 
   if (result.decision === 'deny') {
     return { content: [{ type: 'text', text: `Denied: ${result.reason}` }] }
+  }
+
+  const visibilityDenial = await denyIfAccountNotVisible(context, args.account_id)
+  if (visibilityDenial) {
+    return visibilityDenial
   }
 
   const opts: TransactionQueryOpts = {}
