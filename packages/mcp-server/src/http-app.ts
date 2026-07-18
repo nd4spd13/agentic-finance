@@ -5,9 +5,13 @@
  * `.claude/plans/d5.3/WS2-oauth-resource-server.md` §2.1/§3/§3.1) so a future
  * OAuth resource-server layer (`mcpAuthRouter`, `requireBearerAuth`) can be
  * mounted in front of the `/mcp` endpoint without touching the listen/close
- * lifecycle in `http-transport.ts`. This step is BEHAVIOUR-IDENTICAL to the
- * prior `node:http` implementation it replaces — no auth is added here, no
- * `mcpAuthRouter`, no OAuth. That is later work (WS2 S2+).
+ * lifecycle in `http-transport.ts`. The original extraction step was
+ * BEHAVIOUR-IDENTICAL to the prior `node:http` implementation — no auth, no
+ * `mcpAuthRouter`, no OAuth. D5.3 WS3 S1 (see
+ * `.claude/plans/d5.3/WS3-resource-enforcement.md` §4) has since added ONE
+ * dev-only placeholder — `staticBearerBridge`, active only behind
+ * `CLAD_MCP_STATIC_BEARER` and `NODE_ENV!=='production'` — standing in for
+ * `requireBearerAuth` until WS2 lands. Still no real `mcpAuthRouter`/OAuth.
  *
  * SECURITY (preserved unchanged from the prior `node:http` transport — see
  * `http-transport.ts`'s file header for the full threat model):
@@ -88,6 +92,71 @@ function loopbackHostGuard(req: Request, res: Response, next: NextFunction): voi
   if (!isLoopbackHost(req.headers.host)) {
     writeJsonRpcError(res, 403, 'Forbidden: non-loopback Host header')
     return
+  }
+  next()
+}
+
+/**
+ * The shape `resolvePrincipal` (`server-core.ts`) expects on `req.auth` —
+ * mirrors the SDK's `AuthInfo` (`server/auth/types.d.ts`) closely enough that
+ * swapping this bridge for the real `requireBearerAuth` middleware (WS2, M2)
+ * is a drop-in replacement with no change to `resolvePrincipal` itself.
+ */
+interface StaticBearerAuthInfo {
+  token: string
+  clientId: string
+  scopes: string[]
+  extra: { profileId: string }
+}
+
+/**
+ * Dev-only static-bearer bridge (D5.3 WS3 §4 — the M1 walking-skeleton
+ * placeholder for WS2's real OAuth resource-server middleware).
+ *
+ * Parses `CLAD_MCP_STATIC_BEARER=<token>:<profileId>` ONCE at app-build time.
+ * Active only when that env var is set AND `NODE_ENV !== 'production'` — this
+ * must never be reachable in a production build regardless of what an
+ * operator sets the env var to, because it lets anyone holding `<token>`
+ * assert `<profileId>` with no real verification. It exists purely to prove
+ * `resolvePrincipal`/`evaluator.ts` key off a per-request, transport-supplied
+ * principal before WS2's real token verification exists.
+ *
+ * Non-matching or absent `Authorization` header: passes through untouched.
+ * This bridge never itself 401s — `resolvePrincipal`'s `authRequired` check
+ * is what enforces "no profile -> reject" once `CLAD_MCP_AUTH=oauth` is set;
+ * this middleware's only job is to populate `req.auth` when the static bearer
+ * matches.
+ */
+function staticBearerBridge(req: Request, _res: Response, next: NextFunction): void {
+  const raw = process.env.CLAD_MCP_STATIC_BEARER
+  if (!raw || process.env.NODE_ENV === 'production') {
+    next()
+    return
+  }
+
+  const sep = raw.indexOf(':')
+  if (sep <= 0 || sep === raw.length - 1) {
+    // Malformed config (missing `:profileId`) — never treat as a valid bridge.
+    next()
+    return
+  }
+  const expectedToken = raw.slice(0, sep)
+  const profileId = raw.slice(sep + 1)
+
+  const header = req.headers.authorization
+  if (header === `Bearer ${expectedToken}`) {
+    const authInfo: StaticBearerAuthInfo = {
+      token: expectedToken,
+      clientId: 'static',
+      scopes: [],
+      extra: { profileId },
+    }
+    // `req.auth` isn't declared on Express's `Request` type until the SDK's
+    // `requireBearerAuth` module (which augments `express-serve-static-core`)
+    // is part of the compiled program; this bridge stands in for that
+    // middleware, so it sets the same field via a local cast instead of
+    // pulling in that module just for its ambient type augmentation.
+    ;(req as Request & { auth?: StaticBearerAuthInfo }).auth = authInfo
   }
   next()
 }
@@ -197,6 +266,12 @@ export function buildHttpApp(resources: ServerResources): HttpApp {
 
   // DNS-rebinding guard — must run before any route handling.
   app.use(loopbackHostGuard)
+
+  // Dev-only static-bearer bridge (D5.3 WS3 §4) — after the loopback guard,
+  // before the `/mcp` route, so `resolvePrincipal` sees `req.auth` for any
+  // request that reaches the transport. Populates nothing when
+  // `CLAD_MCP_STATIC_BEARER` is unset or `NODE_ENV==='production'`.
+  app.use(staticBearerBridge)
 
   const transports = new Map<string, StreamableHTTPServerTransport>()
 

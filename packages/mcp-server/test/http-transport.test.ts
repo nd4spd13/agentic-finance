@@ -33,6 +33,11 @@ const POLICY: PolicyConfig = {
 function makeResources(): ServerResources {
   return {
     agentId: 'test-agent',
+    // D5.3 WS3 S1: ServerResources gained a required `authRequired` field.
+    // These tests exercise the pre-WS3 unauthenticated-loopback path, so
+    // `false` is the byte-identical-to-before value (resolvePrincipal falls
+    // back to `agentId` above, exactly as this file always assumed).
+    authRequired: false,
     policy: POLICY,
     provider: new DummyDataProvider(),
     auditLogger: new AuditLogger(':memory:'),
