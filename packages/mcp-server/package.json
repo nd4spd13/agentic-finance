@@ -22,9 +22,11 @@
     "@clad/core": "workspace:*",
     "@clad/plaid-adapter": "workspace:*",
     "@clad/simplefin-adapter": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^5.2.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
     "vitest": "^3.2.6"
   }
