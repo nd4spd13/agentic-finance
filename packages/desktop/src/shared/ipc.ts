@@ -134,6 +134,14 @@ export interface McpServerStatus {
   tools: string[]
   /** Display-safe (redacted where derived from child stderr). Never secret material. */
   lastError?: string
+  /**
+   * Display-safe, non-alarming counterpart to `lastError` (see
+   * `McpProcessStatus.agentNotice` in `main/lib/mcp-server-manager.ts`) —
+   * currently only "no MCP agent configured, defaulted to one of several"
+   * (`agent-resolution.ts`'s `warningIsInformational` case). A healthy,
+   * running server can have this set; it does not mean anything is wrong.
+   */
+  agentNotice?: string
   restartAttempt: number
   pendingApprovals: number
 }

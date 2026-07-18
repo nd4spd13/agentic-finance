@@ -426,9 +426,37 @@ describe('McpServerManager', () => {
       // but the reason is visible in the status surface the UI renders.
       expect(status.state).toBe('running')
       expect(status.lastError).toContain('deleted-agent')
+      // A genuine misconfiguration keeps using the "problem" slot, not the
+      // informational one added for the implicit-default-choice case below.
+      expect(status.agentNotice).toBeUndefined()
       // ...and it fell back to a real agent rather than denying everything.
       expect(manager.getRunningAgentId()).toBe('analyst')
       expect(await callToolOverLoopback('clad_get_balances')).not.toMatch(/unknown agent/i)
+    }, 15_000)
+
+    it('surfaces the implicit-default choice via agentNotice, NOT lastError, when no agent is configured and the policy defines several', async () => {
+      dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+      // agent_id unset (from makeDummyConfig's default) + NO_DEFAULT_AGENT_POLICY_YAML
+      // defines two agents — the exact "gap" case: nothing is broken, but the
+      // running identity was picked by string sort order, not a user choice.
+      const config = makeDummyConfig(dir, NO_DEFAULT_AGENT_POLICY_YAML)
+      manager = new McpServerManager({
+        loadConfig: () => config,
+        loadPlaidCredentials: () => null,
+        getActivePassphrase: () => null,
+        onStatusChange: () => undefined,
+      })
+
+      const status = await manager.start()
+
+      expect(status.state).toBe('running')
+      // Healthy server, not a problem — must NOT land in the "something is
+      // wrong" slot the status panel renders as an error.
+      expect(status.lastError).toBeUndefined()
+      expect(status.agentNotice).toContain('analyst')
+      expect(status.agentNotice).toContain('finance-agent')
+      expect(manager.getRunningAgentId()).toBe('analyst')
+      expect(await callToolOverLoopback('clad_get_balances')).not.toMatch(/^Denied:/)
     }, 15_000)
 
     it('getRunningAgentId is null once stopped', async () => {
