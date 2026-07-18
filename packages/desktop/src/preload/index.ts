@@ -20,6 +20,7 @@ import {
   type AuditLogQueryInput,
   type StartPlaidLinkInput,
   type PlaidLinkFlowStatus,
+  type ConnectedClient,
 } from '../shared/ipc.js'
 
 const cladBridge: CladBridge = {
@@ -77,6 +78,14 @@ const cladBridge: CladBridge = {
     ipcRenderer.invoke(IPC_CHANNELS.connectRemoveSimpleFinItem, itemId),
   forceRefreshSimpleFin: () => ipcRenderer.invoke(IPC_CHANNELS.connectSimpleFinForceRefresh),
   getSimpleFinRefreshStatus: () => ipcRenderer.invoke(IPC_CHANNELS.connectSimpleFinRefreshStatus),
+  listConnectedClients: () => ipcRenderer.invoke(IPC_CHANNELS.connectedClientsList),
+  revokeConnectedClient: (grantId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.connectedClientsRevoke, grantId),
+  onConnectedClientsChanged: (callback: (clients: ConnectedClient[]) => void) => {
+    const listener = (_event: IpcRendererEvent, clients: ConnectedClient[]): void => callback(clients)
+    ipcRenderer.on(IPC_CHANNELS.connectedClientsChanged, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.connectedClientsChanged, listener)
+  },
 }
 
 contextBridge.exposeInMainWorld('clad', cladBridge)

@@ -587,6 +587,49 @@ export interface SimpleFinRefreshStatus {
   forceRefreshBudgetRemaining: number
 }
 
+// ---- Connected clients / OAuth grants (D5.3 WS4 S1-S2) ---------------------
+
+/**
+ * Display-safe view of one issued OAuth grant. Standalone copy of
+ * `@clad/core`'s `GrantMeta` (same layering rule as `LinkedItem`/
+ * `ApprovalListItem` above: this file must stay importable from the
+ * renderer/preload build without reaching into `src/main/**` or
+ * `@clad/core`), field-for-field except `clientId` — `profileId` is the
+ * trustworthy, server-chosen identity the Connected-clients section hangs
+ * its hierarchy on (`main/lib/connected-clients.ts`'s `ConnectedClient`,
+ * which this mirrors). NEVER a token, client secret, or authorization code.
+ */
+export interface ConnectedClient {
+  grantId: string
+  /**
+   * Self-reported by the client at DCR (RFC 7591) — UNTRUSTED display text;
+   * see `.claude/plans/d5.3/WS4-consent-revocation-ui.md` §7 "Client
+   * identity display". Escape it, label it as reported, never imply
+   * verification.
+   */
+  clientName?: string
+  /** The bound agent profile — server-chosen at consent, immutable. The trustworthy field. */
+  profileId: string
+  /** Minted server-side from policy at consent (WS2 §6); rendered as scope chips. */
+  scopes: string[]
+  /** Whether this grant's token is sender-constrained (DPoP-bound; M3). */
+  dpopBound: boolean
+  createdAt: string
+  /** Last time a request presented a token for this grant; `null` if never used. */
+  lastUsedAt: string | null
+  revoked: boolean
+  /** Trust assurance recorded at consent (WS7 seam) — D5.3 only ever produces `'local-consent'`. */
+  assuranceLevel: 'none' | 'local-consent' | 'attested'
+  /** Highest scope sensitivity this grant's client may hold, recorded at consent (WS7 seam). */
+  maxScopeSensitivity: 'low' | 'high'
+}
+
+export interface RevokeClientResult {
+  ok: boolean
+  /** Display-safe (redacted where derived from stored/thrown data). Never secret material. */
+  error?: string
+}
+
 // ---- Audit log viewer (D2.2) ------------------------------------------------
 
 /** Display-safe view of an `@clad/core` `AuditRecord` — camelCased field names, otherwise a 1:1 copy (every field here was already non-secret; the hash-chain fields are intentionally omitted as not useful for this read-only viewer). */
@@ -671,6 +714,11 @@ export const IPC_CHANNELS = {
   connectRemoveSimpleFinItem: 'connect:removeSimpleFinItem',
   connectSimpleFinForceRefresh: 'connect:simplefinForceRefresh',
   connectSimpleFinRefreshStatus: 'connect:simplefinRefreshStatus',
+  // Connected clients / OAuth grants (D5.3 WS4 S1-S2)
+  connectedClientsList: 'oauth:listClients',
+  connectedClientsRevoke: 'oauth:revokeClient',
+  /** Push-only, main -> renderer. See `onConnectedClientsChanged` below. */
+  connectedClientsChanged: 'oauth:clientsChanged',
 } as const
 
 /** The shape exposed on `window.clad` by the preload script. */
@@ -754,6 +802,22 @@ export interface CladBridge {
   forceRefreshSimpleFin(): Promise<SimpleFinForceRefreshResult>
   /** Pure cache read (never a fetch) for the SimpleFIN card's cooldown/budget display. */
   getSimpleFinRefreshStatus(): Promise<SimpleFinRefreshStatus>
+  /**
+   * Lists every OAuth grant issued to an MCP client (Claude Desktop, Claude
+   * Code, ...) through this app's supervised MCP child — display-safe
+   * metadata only, never a token/secret. Never rejects on a degraded grant
+   * store (unresolved passphrase, undecryptable file) — comes back `[]`
+   * instead; see `main/lib/connected-clients.ts`.
+   */
+  listConnectedClients(): Promise<ConnectedClient[]>
+  /**
+   * Revokes a single grant: the child's live token verification 401s the
+   * very next request — no restart needed. Never rejects — failures come
+   * back as `{ ok: false, error }`.
+   */
+  revokeConnectedClient(grantId: string): Promise<RevokeClientResult>
+  /** Subscribes to live connected-clients list pushes (e.g. after a revoke). Returns an unsubscribe function — same shape as `onMcpStatusChanged`. */
+  onConnectedClientsChanged(callback: (clients: ConnectedClient[]) => void): () => void
 }
 
 /** `start`/`stop`/`restartMcpServer` resolve once the *attempt* finishes, not necessarily to `'running'` (e.g. a crash pre-flight check fails synchronously) — callers read `.state`/`.lastError` same as any push update. */
