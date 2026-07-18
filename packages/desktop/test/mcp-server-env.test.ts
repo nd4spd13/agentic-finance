@@ -134,6 +134,73 @@ describe('buildServerEnv', () => {
   })
 
   /**
+   * v0.5.0 regression — the supervised child MUST assert a configured agent
+   * identity. Omitting `CLAD_AGENT_ID` made it fall back to `server-core.ts`'s
+   * hardcoded `'default-agent'`, which denied every tool call under any policy
+   * not defining that exact name (see `config.ts`'s `agent_id` doc comment).
+   * Harmless before PR #68 (the child only served `tools/list`), user-facing
+   * after it.
+   */
+  describe('agent identity', () => {
+    it('sets CLAD_AGENT_ID from config.agent_id', () => {
+      const config = { ...defaultConfig(), provider: 'dummy' as const, agent_id: 'finance-agent' }
+
+      const env = buildServerEnv(config)
+
+      expect(env.CLAD_AGENT_ID).toBe('finance-agent')
+    })
+
+    it('a configured agent_id wins over an inherited CLAD_AGENT_ID from process.env', () => {
+      // Config beats ambient env deliberately: the inherited value is
+      // invisible from inside the app, the configured one is an explicit
+      // in-app choice. See the precedence comment in mcp-server-env.ts.
+      const prev = process.env.CLAD_AGENT_ID
+      process.env.CLAD_AGENT_ID = 'inherited-agent'
+      try {
+        const config = { ...defaultConfig(), provider: 'dummy' as const, agent_id: 'configured-agent' }
+
+        const env = buildServerEnv(config)
+
+        expect(env.CLAD_AGENT_ID).toBe('configured-agent')
+      } finally {
+        if (prev === undefined) delete process.env.CLAD_AGENT_ID
+        else process.env.CLAD_AGENT_ID = prev
+      }
+    })
+
+    it('leaves an inherited CLAD_AGENT_ID intact when agent_id is unset (the pre-fix user workaround keeps working)', () => {
+      const prev = process.env.CLAD_AGENT_ID
+      process.env.CLAD_AGENT_ID = 'inherited-agent'
+      try {
+        const config = { ...defaultConfig(), provider: 'dummy' as const, agent_id: '' }
+
+        const env = buildServerEnv(config)
+
+        expect(env.CLAD_AGENT_ID).toBe('inherited-agent')
+      } finally {
+        if (prev === undefined) delete process.env.CLAD_AGENT_ID
+        else process.env.CLAD_AGENT_ID = prev
+      }
+    })
+
+    it('never sets CLAD_AGENT_ID_ARG — the CLI\'s --agent-id still outranks this (stdio/CLI path unchanged)', () => {
+      const config = { ...defaultConfig(), provider: 'dummy' as const, agent_id: 'finance-agent' }
+
+      const env = buildServerEnv(config)
+
+      expect(env.CLAD_AGENT_ID_ARG).toBeUndefined()
+    })
+
+    it('sets CLAD_AGENT_ID for the http transport too (the path Claude Desktop\'s calls actually take)', () => {
+      const config = { ...defaultConfig(), provider: 'simplefin' as const, agent_id: 'analyst' }
+
+      const env = buildServerEnv(config, { simplefin: { passphrase: 'p' } }, { transport: 'http', httpPort: 51234 })
+
+      expect(env.CLAD_AGENT_ID).toBe('analyst')
+    })
+  })
+
+  /**
    * D3.3 — the spawned MCP server child must open the SAME env-scoped SQLite
    * file the desktop app itself uses (`config` here is always expected to
    * already be the *effective* config — see `main/index.ts`'s

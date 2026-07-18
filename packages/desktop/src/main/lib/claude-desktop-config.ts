@@ -37,11 +37,23 @@
  *     the child is app-supervised. Claude Desktop tool calls fail cleanly if
  *     Clad isn't running.
  *   - The loopback port is UNAUTHENTICATED for now (accepted interim risk;
- *     closed by D5.3 OAuth). Agent identity is the supervised child's single
- *     env-asserted id — per-connection identity is D5.3 (WS3), so the entry no
- *     longer carries a `CLAD_AGENT_ID` (mcp-remote can't set the identity of
- *     an already-running child). The connect UI's agent selector is
- *     informational until then.
+ *     closed by D5.3 OAuth).
+ *   - Agent identity is the supervised child's single env-asserted id, so the
+ *     entry itself carries no `CLAD_AGENT_ID` (mcp-remote cannot set the
+ *     identity of an already-running child). The connect UI's agent selector
+ *     is NOT informational: it persists the pick to `config.agent_id` and
+ *     restarts that child so it re-asserts the new identity (see
+ *     `config.ts`'s `agent_id`, `mcp-server-env.ts`, and the
+ *     `claudeDesktopConnect` handler in `main/index.ts`). An earlier version
+ *     of this comment claimed the selector was informational — it was, for
+ *     one release, and that is exactly the v0.5.0 regression: the child ran
+ *     as the hardcoded `'default-agent'` and denied every call made against
+ *     any policy that didn't happen to define that name.
+ *   - Because that identity belongs to the PROCESS, every MCP client reaching
+ *     the loopback server shares it — Claude Desktop and Claude Code
+ *     connected simultaneously are one and the same agent to the policy
+ *     engine. Per-connection authenticated identity is D5.3 (WS3):
+ *     `.claude/plans/D5.3-authenticated-agent-identity-plan.md`.
  *
  * Every function here is a pure, DI'd operation over an explicit
  * `configPath` string (or plain objects) — no `electron` import, and no

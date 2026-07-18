@@ -672,12 +672,16 @@ async function computeClaudeDesktopMerge(selectedAgentId: string | undefined): P
   const configPath = getClaudeDesktopConfigPath()
   const existing = readExistingConfig(configPath)
   const config = loadConfig()
-  // Agent resolution is kept for the preview's informational fields
-  // (availableAgentIds / resolvedAgentId / fallbackReason the connect UI
-  // shows). It no longer flows into the entry: with the loopback-HTTP
-  // architecture the identity is the supervised child's single env-asserted
-  // id, and per-connection identity is D5.3 (see claude-desktop-config.ts).
-  const resolution = await resolveClaudeDesktopAgentId(config.policy_path, selectedAgentId)
+  // The resolved id does NOT go into the written entry — with the
+  // loopback-HTTP architecture that entry is a bare `mcp-remote` proxy (see
+  // claude-desktop-config.ts). It is instead persisted to `config.agent_id`
+  // by the connect handler below and injected into the supervised child's
+  // `CLAD_AGENT_ID`, which is what actually serves Claude Desktop's calls.
+  // Falling back to the CURRENTLY CONFIGURED id (not just the policy default)
+  // when the user hasn't picked one this session keeps the selector showing
+  // the identity that's really in force. `''` (the "not chosen yet" sentinel)
+  // is falsy, so it resolves to the policy default like an absent pick.
+  const resolution = await resolveClaudeDesktopAgentId(config.policy_path, selectedAgentId ?? config.agent_id)
   const cladEntry = buildCladMcpServerEntry(process.execPath, resolveMcpHttpPort())
   const merged = mergeCladEntry(existing, cladEntry)
   return { configPath, existing, merged, cladEntry, resolution }
@@ -714,8 +718,24 @@ ipcMain.handle(IPC_CHANNELS.claudeDesktopConnect, async (_event, agentId?: strin
           'Claude Desktop was not found on this machine (its application-support folder is missing). Install Claude Desktop, launch it at least once, then try again.',
       }
     }
-    const { merged } = await computeClaudeDesktopMerge(agentId)
+    const { merged, resolution } = await computeClaudeDesktopMerge(agentId)
     writeClaudeDesktopConfig(configPath, merged)
+
+    // Persist the picked identity and make it real. The written entry carries
+    // no `CLAD_AGENT_ID` (it's an `mcp-remote` proxy), so the ONLY thing that
+    // makes the selector functional is storing it here and restarting the
+    // supervised child — that child is what serves Claude Desktop's calls, and
+    // it asserts its agent id from env at spawn time. Skipping the restart
+    // would leave the old identity running until the next app launch while the
+    // UI claimed the new one, which is the exact silent-mismatch failure mode
+    // this change fixes.
+    const config = loadConfig()
+    if (config.agent_id !== resolution.agentId) {
+      saveConfig({ ...config, agent_id: resolution.agentId })
+    }
+    if (mcpManager.getRunningAgentId() !== null && mcpManager.getRunningAgentId() !== resolution.agentId) {
+      await mcpManager.restart()
+    }
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }

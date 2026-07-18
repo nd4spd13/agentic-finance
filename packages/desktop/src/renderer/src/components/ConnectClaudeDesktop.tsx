@@ -8,17 +8,25 @@ import * as s from '../styles.js'
  * own `claude_desktop_config.json` instead of Claude Code's. Loads a
  * current-vs-proposed JSON preview on mount and shows it for explicit
  * confirmation before anything is written — never writes on its own. See
- * `main/lib/claude-desktop-config.ts`'s module doc for why the written
- * `clad` entry never carries Plaid secrets (it always runs the demo/dummy
- * provider), and `main/lib/claude-desktop-path.ts` for the per-platform path
+ * `main/lib/claude-desktop-config.ts`'s module doc for why the written `clad`
+ * entry is a bare `mcp-remote` proxy carrying no secrets and no `CLAD_*` env
+ * at all, and `main/lib/claude-desktop-path.ts` for the per-platform path
  * lookup.
  *
- * D1 manual QA finding 2: the entry always needs a real `CLAD_AGENT_ID`
- * (see `agent-resolution.ts`'s module doc). When the policy defines more
- * than one agent, an inline selector lets the user pick which one Claude
- * Desktop's copy of the server should run as, before confirming — picking a
- * new one re-fetches the preview so `proposedConfigJson` always reflects the
- * currently-selected agent id.
+ * THE AGENT SELECTOR IS FUNCTIONAL (v0.5.0 regression fix). Confirming does
+ * two things: writes the proxy entry, and persists the picked agent to
+ * `config.agent_id`, which the desktop app's supervised MCP child then
+ * asserts as its `CLAD_AGENT_ID` (restarting if the identity changed). That
+ * child is what actually serves Claude Desktop's tool calls, so the pick is
+ * what the policy engine evaluates them against. For one release the pick was
+ * merely informational and the child ran as a hardcoded `'default-agent'` —
+ * denying every call under any policy lacking that exact name. Picking a new
+ * agent re-fetches the preview so the dialog always reflects the current
+ * selection.
+ *
+ * Known limitation until D5.3/WS3: this is a single PROCESS-level identity
+ * shared by every MCP client connected through the loopback server, not a
+ * per-client one — hence the note rendered next to the selector.
  */
 export default function ConnectClaudeDesktop(): JSX.Element {
   const [preview, setPreview] = useState<ClaudeDesktopConnectPreview | null>(null)
@@ -74,9 +82,10 @@ export default function ConnectClaudeDesktop(): JSX.Element {
       <p style={s.mutedText}>
         Adds a <code>clad</code> MCP server entry to Claude Desktop&apos;s config so it can list and call the
         same tools (<code>clad_get_balances</code>, <code>clad_safe_to_spend</code>, …) this app&apos;s own MCP
-        server exposes. Claude Desktop&apos;s copy always runs the demo data provider — Plaid credentials and the
-        token-store passphrase never leave this app&apos;s keychain-backed storage or get written to another
-        app&apos;s plaintext config file.
+        server exposes. The entry points Claude Desktop at this app&apos;s local MCP server, so it sees your real
+        connected accounts — and Plaid credentials and the token-store passphrase never leave this app&apos;s
+        keychain-backed storage or get written to another app&apos;s plaintext config file. Clad has to be running
+        for Claude Desktop&apos;s tool calls to work.
       </p>
 
       {loadError && <p style={s.errorText}>{loadError}</p>}
@@ -130,6 +139,14 @@ export default function ConnectClaudeDesktop(): JSX.Element {
           {preview.availableAgentIds.length === 1 && (
             <p style={s.mutedText}>
               Will run as the policy&apos;s only agent: <code>{preview.resolvedAgentId}</code>
+            </p>
+          )}
+
+          {preview.availableAgentIds.length > 0 && (
+            <p style={s.mutedText}>
+              Tool calls are evaluated against this agent&apos;s permissions in your policy. This identity applies to
+              Clad&apos;s local MCP server as a whole, so every connected client (including Claude Code) shares it —
+              per-client identities are coming in a later release.
             </p>
           )}
 

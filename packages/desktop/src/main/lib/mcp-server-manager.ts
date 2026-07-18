@@ -20,6 +20,22 @@
  * Desktop with zero secrets in any config file; see `claude-desktop-config.ts`
  * and `@clad/mcp-server`'s `http-transport.ts`).
  *
+ * AGENT IDENTITY (v0.5.0 regression fix): because Claude Desktop's calls are
+ * now served by THIS child rather than by a server Claude Desktop spawned
+ * itself, this child's single env-asserted `CLAD_AGENT_ID` is the identity
+ * every one of those calls is evaluated under. It is resolved fresh on every
+ * spawn from `config.agent_id` + the policy (`resolveSupervisedAgentId`), so
+ * a changed selection takes effect on the next start()/restart() — and
+ * `getRunningAgentId()` lets callers detect when a restart is actually
+ * needed. Leaving it unset (what shipped in v0.5.0) meant the child fell back
+ * to `'default-agent'` and denied everything; see `config.ts`'s `agent_id`.
+ *
+ * KNOWN LIMITATION (until D5.3/WS3): one child == one identity == one shared
+ * policy identity for EVERY MCP client that connects through the loopback
+ * server. Claude Desktop and Claude Code connected at the same time are
+ * indistinguishable to the policy engine. Per-connection authenticated
+ * identity is D5.3's WS3 (`.claude/plans/D5.3-authenticated-agent-identity-plan.md`).
+ *
  * Crash detection: driven off the child process's `exit`/`error` events
  * (direct and reliable), with the HTTP transport's `onclose` as a secondary
  * signal. Readiness: a real `tools/list` round trip over HTTP, retried until
@@ -41,6 +57,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { resolveMcpServerEntry } from './mcp-server-path.js'
 import { buildServerEnv, type McpSpawnSecrets } from './mcp-server-env.js'
 import { resolveMcpHttpPort, mcpLoopbackUrl } from './mcp-loopback.js'
+import { resolveSupervisedAgentId } from './agent-resolution.js'
 import { getCladCore } from './clad-core.js'
 import type { CladConfig } from './config.js'
 
@@ -100,6 +117,16 @@ export class McpServerManager {
   private upSince: number | null = null
   /** Bumped on every start()/stop(); lets a superseded in-flight spawn attempt detect it should discard its result instead of clobbering newer state. */
   private currentAttemptId = 0
+  /** `CLAD_AGENT_ID` the currently-spawned child was started with; null while stopped. See `getRunningAgentId`. */
+  private runningAgentId: string | null = null
+  /**
+   * Non-fatal agent-identity problem from the last spawn (see
+   * `SupervisedAgentResolution.warning`). Kept separate from `lastError` so a
+   * real failure always wins the single `lastError` slot — `getStatus` falls
+   * back to this only when there's no actual error, which is precisely the
+   * dangerous case: a child that looks healthy but denies every tool call.
+   */
+  private agentIdWarning: string | undefined
 
   constructor(private readonly deps: McpServerManagerDeps) {}
 
@@ -108,9 +135,22 @@ export class McpServerManager {
       state: this.state,
       pid: this.child?.pid ?? undefined,
       tools: this.tools,
-      lastError: this.lastError,
+      lastError: this.lastError ?? this.agentIdWarning,
       restartAttempt: this.restartAttempt,
     }
+  }
+
+  /**
+   * The agent id the running child is actually asserting, or null when
+   * nothing is running. Lets callers that change `config.agent_id` (the
+   * connect flow in `main/index.ts`) tell whether the live child is now stale
+   * and needs a restart — without that check, a changed selection would be
+   * silently ignored until the next app launch, which is the same
+   * "identity says one thing, process does another" failure this whole change
+   * is about.
+   */
+  getRunningAgentId(): string | null {
+    return this.runningAgentId
   }
 
   async start(): Promise<McpProcessStatus> {
@@ -157,6 +197,10 @@ export class McpServerManager {
   private async spawnAndConnect(): Promise<void> {
     this.expectedStop = false
     this.lastError = undefined
+    this.agentIdWarning = undefined
+    // Cleared up front so an early return below (missing credentials) can
+    // never leave a previous run's identity looking current.
+    this.runningAgentId = null
     this.currentAttemptId += 1
     const attemptId = this.currentAttemptId
     this.setState('starting')
@@ -185,7 +229,25 @@ export class McpServerManager {
       secrets = { simplefin: { passphrase } }
     }
 
-    await this.spawnWithEnv(config, secrets, attemptId)
+    // Resolve the identity against the policy as it is RIGHT NOW, every
+    // spawn — config and policy are both re-read here, so editing either one
+    // and hitting Restart is enough to change what the child asserts. An
+    // unresolvable identity is surfaced (`agentIdWarning`) rather than
+    // treated as a fatal pre-flight failure like the missing-credentials
+    // cases above: the child still starts and still serves `tools/list`, and
+    // a visible warning on a running server beats no server at all when the
+    // fix is a one-line policy edit away.
+    const identity = await resolveSupervisedAgentId(config.policy_path, config.agent_id)
+    // Standing security checklist: this warning crosses IPC to the renderer
+    // and is derived from stored data (the configured policy path, plus the
+    // underlying parse error when the policy is unreadable), so it goes
+    // through `redactSecrets` like every other error string this manager
+    // exposes — same treatment the stderr tail gets in `spawnWithEnv`.
+    const { redactSecrets } = await getCladCore()
+    this.agentIdWarning = identity.warning ? redactSecrets(identity.warning) : undefined
+    this.runningAgentId = identity.agentId
+
+    await this.spawnWithEnv({ ...config, agent_id: identity.agentId }, secrets, attemptId)
   }
 
   private async spawnWithEnv(
@@ -259,6 +321,7 @@ export class McpServerManager {
         // best-effort
       }
       this.child = null
+      this.runningAgentId = null
       this.setState('crashed')
       this.scheduleAutoRestart()
     }
@@ -305,6 +368,7 @@ export class McpServerManager {
     this.client = null
     this.transport = null
     this.child = null
+    this.runningAgentId = null
     this.lastError = this.lastError ?? 'The MCP server process exited unexpectedly.'
     this.setState('crashed')
     this.scheduleAutoRestart()
@@ -349,5 +413,6 @@ export class McpServerManager {
     this.transport = null
     this.child = null
     this.tools = []
+    this.runningAgentId = null
   }
 }

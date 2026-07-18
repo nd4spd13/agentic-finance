@@ -12,7 +12,11 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveClaudeDesktopAgentId, FALLBACK_AGENT_ID } from '../src/main/lib/agent-resolution.js'
+import {
+  resolveClaudeDesktopAgentId,
+  resolveSupervisedAgentId,
+  FALLBACK_AGENT_ID,
+} from '../src/main/lib/agent-resolution.js'
 
 const AGENT_PERMISSIONS_YAML = `    permissions:
       accounts:
@@ -137,5 +141,73 @@ describe('resolveClaudeDesktopAgentId', () => {
     expect(result.agentId).toBe(FALLBACK_AGENT_ID)
     expect(result.availableAgentIds).toEqual([])
     expect(result.fallbackReason).toBeTruthy()
+  })
+})
+
+/**
+ * v0.5.0 regression — the identity the SUPERVISED child asserts. Same
+ * resolution as above (deliberately, so the connect preview and the running
+ * child can never disagree), plus the `warning` classification the status UI
+ * needs so an all-deny configuration is never silent.
+ */
+describe('resolveSupervisedAgentId', () => {
+  it('resolves a real policy agent — not default-agent — when nothing is configured yet (the exact repro policy)', async () => {
+    const policyPath = writePolicy(REPRO_POLICY)
+
+    const result = await resolveSupervisedAgentId(policyPath, '')
+
+    expect(result.agentId).toBe('analyst')
+    expect(result.agentId).not.toBe(FALLBACK_AGENT_ID)
+    // Not a misconfiguration — this is the backward-compatible default, and
+    // it's a valid identity, so there is nothing to warn the user about.
+    expect(result.warning).toBeUndefined()
+  })
+
+  it('honors a configured agent id that exists in the policy, with no warning', async () => {
+    const policyPath = writePolicy(REPRO_POLICY)
+
+    const result = await resolveSupervisedAgentId(policyPath, 'finance-agent')
+
+    expect(result.agentId).toBe('finance-agent')
+    expect(result.warning).toBeUndefined()
+  })
+
+  it('treats a whitespace-only configured id as unset', async () => {
+    const policyPath = writePolicy(SINGLE_AGENT_POLICY)
+
+    const result = await resolveSupervisedAgentId(policyPath, '   ')
+
+    expect(result.agentId).toBe('finance-agent')
+    expect(result.warning).toBeUndefined()
+  })
+
+  it('warns (naming both the missing agent and the substitute) when the configured id is no longer in the policy', async () => {
+    const policyPath = writePolicy(REPRO_POLICY)
+
+    const result = await resolveSupervisedAgentId(policyPath, 'removed-agent')
+
+    // Runs as a real agent rather than a name the policy has never heard of.
+    expect(result.agentId).toBe('analyst')
+    expect(result.warning).toContain('removed-agent')
+    expect(result.warning).toContain('analyst')
+  })
+
+  it('warns that calls will be denied when the policy cannot supply any valid identity', async () => {
+    const policyPath = writePolicy('agents: {}\n')
+
+    const result = await resolveSupervisedAgentId(policyPath, 'analyst')
+
+    expect(result.agentId).toBe(FALLBACK_AGENT_ID)
+    expect(result.warning).toMatch(/denied/i)
+  })
+
+  it('warns rather than throwing when the policy file is missing entirely', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'clad-desktop-agent-resolution-test-'))
+    const policyPath = join(dir, 'does-not-exist.yaml')
+
+    const result = await resolveSupervisedAgentId(policyPath, 'analyst')
+
+    expect(result.agentId).toBe(FALLBACK_AGENT_ID)
+    expect(result.warning).toBeTruthy()
   })
 })
