@@ -111,6 +111,67 @@ describe('config', () => {
     expect(loaded.simplefin_db).toBe(customPath)
   })
 
+  /**
+   * v0.5.0 regression — `agent_id` is the supervised MCP child's policy
+   * identity (`CLAD_AGENT_ID`). The critical property is what an EXISTING
+   * config.json (which has no such key) loads as: `''`, the "resolve one from
+   * the policy at spawn time" sentinel — never `'default-agent'`, since
+   * hardcoding that name is precisely what denied every tool call under
+   * policies that don't define it. See the field's doc comment in config.ts.
+   */
+  describe('agent_id', () => {
+    it('defaultConfig leaves agent_id empty rather than hardcoding default-agent', () => {
+      expect(defaultConfig().agent_id).toBe('')
+    })
+
+    it('loadConfig defaults agent_id to the empty sentinel when absent from an existing config.json (pre-fix config)', () => {
+      ensureConfigDir()
+      const legacyConfig = defaultConfig() as Record<string, unknown>
+      delete legacyConfig.agent_id
+      writeFileSync(getConfigPath(), JSON.stringify(legacyConfig, null, 2) + '\n', 'utf-8')
+
+      const loaded = loadConfig()
+
+      expect(loaded.agent_id).toBe('')
+      expect(loaded.agent_id).not.toBe('default-agent')
+    })
+
+    it('saveConfig + loadConfig roundtrip preserves a chosen agent_id', () => {
+      const cfg = { ...defaultConfig(), agent_id: 'finance-agent' }
+      saveConfig(cfg)
+
+      expect(loadConfig().agent_id).toBe('finance-agent')
+    })
+
+    it('loadConfig trims a whitespace-padded agent_id and treats a blank one as unset', () => {
+      ensureConfigDir()
+      writeFileSync(
+        getConfigPath(),
+        JSON.stringify({ ...defaultConfig(), agent_id: '  analyst  ' }, null, 2) + '\n',
+        'utf-8'
+      )
+      expect(loadConfig().agent_id).toBe('analyst')
+
+      writeFileSync(
+        getConfigPath(),
+        JSON.stringify({ ...defaultConfig(), agent_id: '   ' }, null, 2) + '\n',
+        'utf-8'
+      )
+      expect(loadConfig().agent_id).toBe('')
+    })
+
+    it('loadConfig ignores a non-string agent_id, falling back to the default', () => {
+      ensureConfigDir()
+      writeFileSync(
+        getConfigPath(),
+        JSON.stringify({ ...defaultConfig(), agent_id: 42 }, null, 2) + '\n',
+        'utf-8'
+      )
+
+      expect(loadConfig().agent_id).toBe('')
+    })
+  })
+
   it('loadConfig rejects an invalid plaid_env value, falling back to the default', () => {
     ensureConfigDir()
     const badConfig = { ...defaultConfig(), plaid_env: 'development' }

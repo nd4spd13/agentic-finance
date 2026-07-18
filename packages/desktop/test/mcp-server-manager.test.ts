@@ -16,6 +16,8 @@ import { createServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { McpServerManager } from '../src/main/lib/mcp-server-manager.js'
 import type { CladConfig } from '../src/main/lib/config.js'
 
@@ -66,8 +68,49 @@ global:
   default_escalation_timeout: 300
 `
 
-function makeDummyConfig(dir: string): CladConfig {
-  writeFileSync(join(dir, 'policy.yaml'), POLICY_YAML, 'utf-8')
+/**
+ * The v0.5.0 repro shape: a realistic user-edited policy with NO
+ * `default-agent` in it at all. `analyst` may see balances, `finance-agent`
+ * may not — a per-agent difference that a tool call can observe, which is how
+ * the identity tests below prove the child really is running as the agent it
+ * claims rather than merely reporting one.
+ */
+const NO_DEFAULT_AGENT_POLICY_YAML = `
+agents:
+  analyst:
+    description: Repro policy — may read balances.
+    permissions:
+      accounts:
+        visible: []
+        balance: true
+        account_number: false
+        routing_number: false
+      transactions:
+        read: true
+        description_visibility: true
+        lookback_days: 30
+      audit:
+        log_all_queries: true
+        log_policy_evaluations: true
+  finance-agent:
+    description: Repro policy — may NOT read balances.
+    permissions:
+      accounts:
+        visible: []
+        balance: false
+        account_number: false
+        routing_number: false
+      transactions:
+        read: true
+        description_visibility: true
+        lookback_days: 30
+      audit:
+        log_all_queries: true
+        log_policy_evaluations: true
+`
+
+function makeDummyConfig(dir: string, policyYaml: string = POLICY_YAML): CladConfig {
+  writeFileSync(join(dir, 'policy.yaml'), policyYaml, 'utf-8')
   return {
     policy_path: join(dir, 'policy.yaml'),
     audit_db: join(dir, 'audit.sqlite'),
@@ -78,7 +121,44 @@ function makeDummyConfig(dir: string): CladConfig {
     plaid_env: 'sandbox',
     close_to_tray: true,
     simplefin_db: join(dir, 'simplefin.sqlite'),
+    agent_id: '',
   }
+}
+
+/**
+ * Clients opened by `callToolOverLoopback`, closed in `afterEach` BEFORE the
+ * manager stops its child — same single-`client.close()` teardown
+ * `packages/mcp-server/test/http-transport.test.ts` uses. Closing them after
+ * the child is gone aborts an in-flight SSE read against a dead socket, which
+ * surfaces as an unhandled `setTypeOfService EINVAL` from undici.
+ */
+const loopbackClients: Client[] = []
+
+/** Must be called before anything kills the child a client is attached to. */
+async function closeLoopbackClients(): Promise<void> {
+  for (const client of loopbackClients.splice(0)) {
+    await client.close().catch(() => undefined)
+  }
+}
+
+/**
+ * Calls a tool over the loopback HTTP server as an INDEPENDENT client —
+ * exactly the path Claude Desktop's `mcp-remote` proxy takes (the manager's
+ * own readiness client stays connected alongside it, which is the whole point
+ * of the HTTP transport). Deliberately not routed through the manager: the
+ * regression these tests guard is about what a third-party client's tool call
+ * gets back, and the manager never exposed a `callTool` for one to hide
+ * behind.
+ */
+async function callToolOverLoopback(toolName: string, args: Record<string, unknown> = {}): Promise<string> {
+  const url = new URL(`http://127.0.0.1:${process.env.CLAD_MCP_HTTP_PORT}/mcp`)
+  const client = new Client({ name: 'clad-desktop-test-client', version: '0.0.0' }, { capabilities: {} })
+  await client.connect(new StreamableHTTPClientTransport(url))
+  loopbackClients.push(client)
+  const result = (await client.callTool({ name: toolName, arguments: args })) as {
+    content?: Array<{ type: string; text?: string }>
+  }
+  return (result.content ?? []).map((part) => part.text ?? '').join('\n')
 }
 
 async function waitFor(predicate: () => boolean, opts: { timeoutMs?: number; intervalMs?: number } = {}): Promise<void> {
@@ -102,6 +182,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await closeLoopbackClients() // before manager.stop() — see `loopbackClients`
   if (manager) {
     await manager.stop()
     manager = undefined
@@ -241,4 +322,130 @@ describe('McpServerManager', () => {
     })
     expect(manager.getStatus().restartAttempt).toBeGreaterThanOrEqual(1)
   }, 15_000)
+
+  /**
+   * v0.5.0 REGRESSION SUITE. `buildServerEnv` set no `CLAD_AGENT_ID`, so the
+   * supervised child fell back to `server-core.ts`'s hardcoded
+   * `'default-agent'`. That was invisible while the child only ever served
+   * `tools/list` (which never consults policy), and became "every Claude
+   * Desktop tool call is denied" the moment PR #68 routed those calls here.
+   *
+   * The first test below is the one whose absence let the bug ship: every
+   * pre-existing manager test used a policy that happened to define
+   * `default-agent`, and none of them called a policy-consulting tool.
+   */
+  describe('agent identity', () => {
+    it('REGRESSION: a tool call against a policy with NO default-agent succeeds instead of being denied for an unknown agent', async () => {
+      dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+      // agent_id unset, exactly like every config.json written before the
+      // field existed — the child must still resolve a REAL policy agent.
+      const config = makeDummyConfig(dir, NO_DEFAULT_AGENT_POLICY_YAML)
+      manager = new McpServerManager({
+        loadConfig: () => config,
+        loadPlaidCredentials: () => null,
+        getActivePassphrase: () => null,
+        onStatusChange: () => undefined,
+      })
+      await manager.start()
+
+      const text = await callToolOverLoopback('clad_get_balances')
+
+      expect(text).not.toMatch(/unknown agent/i)
+      expect(text).not.toMatch(/^Denied:/)
+      // Deterministic sorted-first resolution, and a real agent in the policy.
+      expect(manager.getRunningAgentId()).toBe('analyst')
+    }, 15_000)
+
+    it('runs as the configured agent_id, and the policy evaluates its permissions (not another agent\'s)', async () => {
+      dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+      // 'finance-agent' is the one denied balance visibility — so a denial
+      // here proves the configured identity reached the policy engine, and a
+      // denial with THIS reason (not 'unknown agent') proves it's a real one.
+      const config: CladConfig = { ...makeDummyConfig(dir, NO_DEFAULT_AGENT_POLICY_YAML), agent_id: 'finance-agent' }
+      manager = new McpServerManager({
+        loadConfig: () => config,
+        loadPlaidCredentials: () => null,
+        getActivePassphrase: () => null,
+        onStatusChange: () => undefined,
+      })
+      await manager.start()
+
+      const text = await callToolOverLoopback('clad_get_balances')
+
+      expect(manager.getRunningAgentId()).toBe('finance-agent')
+      expect(text).toMatch(/balance visibility disabled/i)
+      expect(text).not.toMatch(/unknown agent/i)
+    }, 15_000)
+
+    it('a changed agent_id takes effect on restart (no stale identity served by an old child)', async () => {
+      dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+      const config: CladConfig = { ...makeDummyConfig(dir, NO_DEFAULT_AGENT_POLICY_YAML), agent_id: 'analyst' }
+      manager = new McpServerManager({
+        // Mutable, re-read on every spawn — models the real deps object,
+        // which calls loadConfig() fresh each time.
+        loadConfig: () => config,
+        loadPlaidCredentials: () => null,
+        getActivePassphrase: () => null,
+        onStatusChange: () => undefined,
+      })
+      await manager.start()
+      expect(manager.getRunningAgentId()).toBe('analyst')
+      expect(await callToolOverLoopback('clad_get_balances')).not.toMatch(/^Denied:/)
+
+      config.agent_id = 'finance-agent'
+      await closeLoopbackClients() // the restart below kills the child they're attached to
+      // Point the restarted child at a fresh port (the manager re-resolves it
+      // per spawn). Purely test isolation: `fetch`'s connection pool would
+      // otherwise reuse the keep-alive socket it opened to the OLD child,
+      // which the restart has since killed, and writing to that dead socket
+      // surfaces as an unhandled `setTypeOfService EINVAL` from undici. The
+      // real app keeps one fixed port across restarts — see
+      // `DEFAULT_MCP_HTTP_PORT` — and its clients reconnect rather than
+      // holding a pooled socket across a child's lifetime.
+      process.env.CLAD_MCP_HTTP_PORT = String(await getFreePort())
+      await manager.restart()
+
+      expect(manager.getRunningAgentId()).toBe('finance-agent')
+      // Observable proof the NEW identity is in force, not the old child's.
+      expect(await callToolOverLoopback('clad_get_balances')).toMatch(/balance visibility disabled/i)
+    }, 20_000)
+
+    it('surfaces a clear lastError (instead of silently denying everything) when the configured agent is not in the policy', async () => {
+      dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+      const config: CladConfig = { ...makeDummyConfig(dir, NO_DEFAULT_AGENT_POLICY_YAML), agent_id: 'deleted-agent' }
+      manager = new McpServerManager({
+        loadConfig: () => config,
+        loadPlaidCredentials: () => null,
+        getActivePassphrase: () => null,
+        onStatusChange: () => undefined,
+      })
+
+      const status = await manager.start()
+
+      // Still running (a policy typo shouldn't cost the user their server),
+      // but the reason is visible in the status surface the UI renders.
+      expect(status.state).toBe('running')
+      expect(status.lastError).toContain('deleted-agent')
+      // ...and it fell back to a real agent rather than denying everything.
+      expect(manager.getRunningAgentId()).toBe('analyst')
+      expect(await callToolOverLoopback('clad_get_balances')).not.toMatch(/unknown agent/i)
+    }, 15_000)
+
+    it('getRunningAgentId is null once stopped', async () => {
+      dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+      const config: CladConfig = { ...makeDummyConfig(dir, NO_DEFAULT_AGENT_POLICY_YAML), agent_id: 'analyst' }
+      manager = new McpServerManager({
+        loadConfig: () => config,
+        loadPlaidCredentials: () => null,
+        getActivePassphrase: () => null,
+        onStatusChange: () => undefined,
+      })
+      await manager.start()
+      expect(manager.getRunningAgentId()).toBe('analyst')
+
+      await manager.stop()
+
+      expect(manager.getRunningAgentId()).toBeNull()
+    }, 15_000)
+  })
 })

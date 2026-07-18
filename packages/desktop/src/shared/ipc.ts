@@ -157,7 +157,7 @@ export interface ClaudeDesktopConnectPreview {
   configPath: string
   /** Pretty-printed JSON of the config file as it exists today, or `null` if it doesn't exist yet (but Claude Desktop is installed). */
   currentConfigJson: string | null
-  /** Pretty-printed JSON of the config after non-destructively merging in the `clad` MCP server entry, using `resolvedAgentId` for `CLAD_AGENT_ID`. */
+  /** Pretty-printed JSON of the config after non-destructively merging in the `clad` MCP server entry. Does NOT vary with `resolvedAgentId` — the entry is a bare `mcp-remote` proxy and the agent identity lives on this app's supervised MCP child instead (see `main/lib/claude-desktop-config.ts`). */
   proposedConfigJson: string
   /** True when `mcpServers.clad` already matches the proposed entry exactly — connecting again would be a no-op. */
   alreadyConnected: boolean
@@ -169,7 +169,15 @@ export interface ClaudeDesktopConnectPreview {
    * finding 2).
    */
   availableAgentIds: string[]
-  /** The agent ID `proposedConfigJson`'s `CLAD_AGENT_ID` was built with — pass this (or a different pick from `availableAgentIds`) back to `getClaudeDesktopConnectPreview`/`connectClaudeDesktop` to keep the two in sync. */
+  /**
+   * The agent identity connecting would put into force: persisted to
+   * `config.agent_id` and asserted by this app's supervised MCP child, which
+   * is what serves Claude Desktop's tool calls. Defaults to the currently
+   * configured identity, falling back to the policy's deterministic first
+   * agent. Pass this (or a different pick from `availableAgentIds`) back to
+   * `getClaudeDesktopConnectPreview`/`connectClaudeDesktop` to keep the
+   * preview and the write in sync.
+   */
   resolvedAgentId: string
   /** Set (and shown to the user) only when `resolvedAgentId` fell back to `'default-agent'` because the policy couldn't supply a real one. */
   agentFallbackReason?: string
@@ -652,7 +660,7 @@ export interface CladBridge {
   onMcpStatusChanged(callback: (status: McpServerStatus) => void): () => void
   /** `agentId` re-resolves the preview against a specific (e.g. user-picked) agent id instead of the default; omit to get the default resolution. */
   getClaudeDesktopConnectPreview(agentId?: string): Promise<ClaudeDesktopConnectPreview>
-  /** `agentId` should be whatever the last preview resolved to (`resolvedAgentId`, or the user's picked one) — see `ClaudeDesktopConnectPreview`'s doc comment. */
+  /** Writes the entry AND puts `agentId` into force as the MCP server's identity (persists it, restarting the server if it changed). `agentId` should be whatever the last preview resolved to (`resolvedAgentId`, or the user's picked one) — see `ClaudeDesktopConnectPreview`'s doc comment. */
   connectClaudeDesktop(agentId?: string): Promise<OperationResult>
   /** Pure cache read — never triggers a fetch. See `DashboardSnapshot`'s doc comment. */
   getDashboardSnapshot(): Promise<DashboardSnapshot>

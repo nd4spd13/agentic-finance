@@ -67,6 +67,42 @@ export interface CladConfig {
    * `CLAD_PROVIDER=simplefin` (out-of-process) from it.
    */
   simplefin_db: string
+  /**
+   * Which policy agent the desktop app's SUPERVISED MCP child asserts as its
+   * identity (`CLAD_AGENT_ID` — see `mcp-server-env.ts`). Chosen by the user
+   * in the "Connect to Claude Desktop" screen's agent selector, which is what
+   * persists it here.
+   *
+   * REGRESSION THIS FIXES (v0.5.0): before PR #68, Claude Desktop spawned its
+   * OWN server process from an entry that carried `CLAD_AGENT_ID`, so the
+   * user's selection reached the server that served its calls. #68 replaced
+   * that entry with an `mcp-remote` proxy pointing at this app's loopback HTTP
+   * server, which moved every Claude Desktop tool call onto the SUPERVISED
+   * child instead — and `buildServerEnv` set no `CLAD_AGENT_ID` at all, so
+   * that child fell back to `server-core.ts`'s hardcoded `'default-agent'`.
+   * Any policy not defining an agent by that exact name (the normal case once
+   * a user edits the starter policy) then failed EVERY tool call with
+   * `Denied: unknown agent: default-agent` (`policy/evaluator.ts`). Latent
+   * before #68 only because the supervised child served nothing but
+   * `tools/list`, which never consults policy.
+   *
+   * `''` is the "not chosen yet" sentinel, and is what BOTH a fresh
+   * `defaultConfig()` and every pre-existing `config.json` on disk (which has
+   * no `agent_id` key at all) resolve to. It deliberately does NOT default to
+   * `'default-agent'` — hardcoding that name is the very bug above. Instead,
+   * `''` means "resolve one from the policy at spawn time", which
+   * `mcp-server-manager.ts` does via `agent-resolution.ts`'s
+   * `resolveSupervisedAgentId` (deterministic sorted-first real agent, so an
+   * `analyst`/`finance-agent` policy runs as `analyst` rather than as a name
+   * the policy has never heard of).
+   *
+   * KNOWN LIMITATION (until D5.3/WS3): this is ONE process-level identity for
+   * the whole loopback server, so EVERY MCP client connected through it —
+   * Claude Desktop, Claude Code, any other `mcp-remote` consumer — shares it.
+   * Per-connection authenticated identity is D5.3's WS3
+   * (`.claude/plans/D5.3-authenticated-agent-identity-plan.md`).
+   */
+  agent_id: string
 }
 
 export function getConfigDir(): string {
@@ -89,6 +125,9 @@ export function defaultConfig(): CladConfig {
     plaid_env: 'sandbox',
     close_to_tray: true,
     simplefin_db: join(dir, 'simplefin.sqlite'),
+    // '' = "resolve from the policy at spawn time" — see the field's doc
+    // comment for why this is not 'default-agent'.
+    agent_id: '',
   }
 }
 
@@ -124,6 +163,11 @@ export function loadConfig(): CladConfig {
     simplefin_db: parsed.simplefin_db
       ? resolve(parsed.simplefin_db.replace('~', homedir()))
       : defaults.simplefin_db,
+    // Backward compatibility: every config.json written before this field
+    // existed simply has no `agent_id` key, which falls through to the `''`
+    // sentinel — NOT to 'default-agent' (see the field's doc comment). A
+    // whitespace-only value is treated the same as absent.
+    agent_id: typeof parsed.agent_id === 'string' ? parsed.agent_id.trim() : defaults.agent_id,
   }
 }
 

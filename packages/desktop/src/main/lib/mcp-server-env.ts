@@ -36,6 +36,13 @@
  * sandbox path/env pair while the parent app is running production, or
  * vice versa.
  *
+ * v0.5.0 regression fix: also sets `CLAD_AGENT_ID` from `config.agent_id`.
+ * Omitting it was what made every Claude Desktop tool call fail with
+ * `Denied: unknown agent: default-agent` once PR #68 routed those calls
+ * through this child — see `config.ts`'s `agent_id` doc comment for the full
+ * mechanism, and the inline comment at the assignment for the
+ * config-beats-inherited-env precedence decision.
+ *
  * Pure object construction — no `electron` import, safe to unit-test.
  */
 
@@ -89,6 +96,34 @@ export function buildServerEnv(
     // The spawned child is always the Electron binary run as plain Node
     // (see mcp-server-path.ts's doc comment) — never a system `node`.
     ELECTRON_RUN_AS_NODE: '1',
+  }
+
+  // Agent identity. Set AFTER the `...process.env` spread above, so a
+  // configured `agent_id` deliberately WINS over an inherited
+  // `CLAD_AGENT_ID`.
+  //
+  // Precedence decision (config > inherited env): the inherited value is
+  // whatever happened to be in the environment that launched the Electron app
+  // — a shell export, a launchd plist, a leftover from a terminal session —
+  // and the user has no way to see or change it from inside the app. The
+  // configured value is an explicit, visible, in-app choice made in the
+  // connect screen's agent selector. Letting an invisible ambient value
+  // silently override the visible one would make the selector lie, which is
+  // exactly the class of bug this change exists to fix. Users who were
+  // exporting `CLAD_AGENT_ID` as a workaround for that bug should now pick
+  // the agent in the UI instead; the export keeps working only while
+  // `agent_id` is unset.
+  //
+  // Empty `agent_id` (fresh config, or a config.json predating the field)
+  // leaves any inherited `CLAD_AGENT_ID` untouched and otherwise lets
+  // `server-core.ts` apply its own fallback — but `mcp-server-manager.ts`
+  // resolves a real policy agent before calling this, so in practice the
+  // supervised child always gets an explicit, policy-valid identity.
+  //
+  // `CLAD_AGENT_ID_ARG` (the CLI's `clad serve --agent-id`) is NOT set here
+  // and still outranks this in `server-core.ts` — the CLI path is unchanged.
+  if (config.agent_id) {
+    env.CLAD_AGENT_ID = config.agent_id
   }
 
   if (transportOpts?.transport === 'http') {
