@@ -13,3 +13,14 @@ export type { EncryptedPayload } from './security/crypto.js'
 export { openDatabaseKey } from './security/key-meta.js'
 export { enforceFileMode } from './security/file-mode.js'
 export { TokenStoreKeyError } from './security/token-store-errors.js'
+export { SqliteGrantStore } from './security/grant-store.js'
+export type {
+  GrantStore,
+  GrantStoreOptions,
+  StoredClient,
+  RegisterClientInput,
+  StoredGrant,
+  StoredAuthCode,
+  StoredToken,
+} from './security/grant-store.js'
+export type { GrantMeta } from './security/grant-store.types.js'
