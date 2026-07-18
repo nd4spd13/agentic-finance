@@ -23,7 +23,6 @@ const AGENT_PERMISSIONS_YAML = `    permissions:
         visible: []
         balance: true
         account_number: false
-        routing_number: false
       transactions:
         read: true
         description_visibility: true

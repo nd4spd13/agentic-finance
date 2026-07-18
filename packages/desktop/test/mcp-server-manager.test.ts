@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { McpServerManager } from '../src/main/lib/mcp-server-manager.js'
+import { savePolicyAndRestartServer } from '../src/main/lib/policy-save.js'
 import type { CladConfig } from '../src/main/lib/config.js'
 
 /**
@@ -51,7 +52,6 @@ agents:
           - acc_credit_001
         balance: true
         account_number: false
-        routing_number: false
       transactions:
         read: true
         description_visibility: true
@@ -84,7 +84,6 @@ agents:
         visible: []
         balance: true
         account_number: false
-        routing_number: false
       transactions:
         read: true
         description_visibility: true
@@ -99,7 +98,6 @@ agents:
         visible: []
         balance: false
         account_number: false
-        routing_number: false
       transactions:
         read: true
         description_visibility: true
@@ -475,5 +473,90 @@ describe('McpServerManager', () => {
 
       expect(manager.getRunningAgentId()).toBeNull()
     }, 15_000)
+  })
+})
+
+/**
+ * CLAD-5 integration coverage: `policy-save.test.ts` proves the restart
+ * DECISION logic against a fake `McpRestartHandle`; this proves the real
+ * end-to-end fix — that a policy write followed by
+ * `savePolicyAndRestartServer`'s restart actually reaches a running
+ * supervised child (goes through `McpServerManager.restart()`, exactly like
+ * PR #71's manual/auto-restart paths — no hand-rolled spawn) instead of
+ * being silently held in the old child's memory until the next app relaunch.
+ */
+describe('savePolicyAndRestartServer (integration, real supervised child)', () => {
+  it('a saved policy change is served by the restarted child, not the old in-memory one', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+    const config: CladConfig = { ...makeDummyConfig(dir, NO_DEFAULT_AGENT_POLICY_YAML), agent_id: 'analyst' }
+    manager = new McpServerManager({
+      loadConfig: () => config,
+      loadPlaidCredentials: () => null,
+      getActivePassphrase: () => null,
+      onStatusChange: () => undefined,
+    })
+    await manager.start()
+    // Baseline: 'analyst' may currently read balances per NO_DEFAULT_AGENT_POLICY_YAML.
+    expect(await callToolOverLoopback('clad_get_balances')).not.toMatch(/balance visibility disabled/i)
+
+    const updatedPolicy = {
+      agents: {
+        analyst: {
+          description: 'Repro policy — may read balances.',
+          permissions: {
+            accounts: { visible: [], balance: false, account_number: false },
+            transactions: { read: true, description_visibility: true, lookback_days: 30 },
+            audit: { log_all_queries: true, log_policy_evaluations: true },
+          },
+        },
+        'finance-agent': {
+          description: 'Repro policy — may NOT read balances.',
+          permissions: {
+            accounts: { visible: [], balance: false, account_number: false },
+            transactions: { read: true, description_visibility: true, lookback_days: 30 },
+            audit: { log_all_queries: true, log_policy_evaluations: true },
+          },
+        },
+      },
+    }
+
+    await closeLoopbackClients() // the restart below kills the child they're attached to
+    // Fresh port for the same test-isolation reason as the "changed agent_id"
+    // test above — the real app keeps one fixed port across restarts.
+    process.env.CLAD_MCP_HTTP_PORT = String(await getFreePort())
+
+    const result = await savePolicyAndRestartServer(config.policy_path, updatedPolicy, manager)
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.server_restarted).toBe(true)
+      expect(result.restart_error).toBeUndefined()
+    }
+    expect(manager.getRunningAgentId()).toBe('analyst')
+    // Observable proof the RESTARTED child is serving the NEW policy content,
+    // not the old child's in-memory copy from before the save.
+    expect(await callToolOverLoopback('clad_get_balances')).toMatch(/balance visibility disabled/i)
+  }, 20_000)
+
+  it('does not restart (or touch) a deliberately-stopped server, and reports server_restarted: false', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'clad-desktop-mcp-manager-test-'))
+    const config = makeDummyConfig(dir)
+    manager = new McpServerManager({
+      loadConfig: () => config,
+      loadPlaidCredentials: () => null,
+      getActivePassphrase: () => null,
+      onStatusChange: () => undefined,
+    })
+    // Never started — models a user who has the server deliberately off.
+    expect(manager.getRunningAgentId()).toBeNull()
+
+    const result = await savePolicyAndRestartServer(
+      config.policy_path,
+      { agents: { 'default-agent': { description: 'x', permissions: {} } } },
+      manager
+    )
+
+    expect(result).toEqual({ ok: true, server_restarted: false })
+    expect(manager.getStatus().state).toBe('stopped')
   })
 })

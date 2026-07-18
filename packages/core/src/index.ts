@@ -1,6 +1,8 @@
 export * from './types/index.js'
 export { parsePolicy } from './policy/parser.js'
 export { evaluate } from './policy/evaluator.js'
+export { filterVisibleAccounts, redactAccount } from './policy/account-visibility.js'
+export type { RedactedAccount } from './policy/account-visibility.js'
 export { DummyDataProvider } from './providers/dummy.js'
 export { AuditLogger } from './audit/logger.js'
 export { ApprovalQueue } from './approval/queue.js'

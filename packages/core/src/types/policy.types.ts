@@ -26,7 +26,8 @@ export interface AccountPermissions {
   visible: string[]
   balance?: boolean
   account_number?: boolean
-  routing_number?: boolean
+  name?: boolean
+  institution?: boolean
 }
 
 export interface TransactionPermissions {

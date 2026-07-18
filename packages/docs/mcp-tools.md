@@ -45,36 +45,50 @@ interface GetBalancesRequest {
   "balances": [
     {
       "account_id": "checking-001",
-      "account_name": "Business Checking",
-      "balance": 45230.50,
+      "name": "Business Checking",
+      "type": "checking",
+      "institution": "Example Bank",
+      "mask": "3f21",
+      "current": 45230.50,
+      "available": 45000.00,
       "currency": "USD",
-      "last_updated": "2024-03-31T14:30:00Z"
+      "stale": false
     },
     {
       "account_id": "savings-001",
-      "account_name": "Emergency Fund",
-      "balance": 150000.00,
+      "name": "Emergency Fund",
+      "type": "savings",
+      "institution": "Example Bank",
+      "current": 150000.00,
       "currency": "USD",
-      "last_updated": "2024-03-31T14:30:00Z"
+      "stale": false
     }
   ],
   "decision": "allow",
-  "reason": "Agent has transaction.read permission"
+  "reason": "Agent has permission to view these accounts"
 }
 ```
 
 ### Behavior
 
-- ⏳ *(planned, D5.2 — not yet enforced)* Returns only accounts the agent has `visible: true` permission for — today returns all accounts, filtered only by the optional `account_type` argument
-- Returns only `balance` field if the agent has `balance: true`
-- ⏳ *(planned, D5.2 — not yet enforced)* All other account details are redacted
-- If agent lacks any permission, returns `decision: deny`
+- Returns only accounts the agent has `visible` permission for (matched by account ID or type; empty list means all visible)
+- Response includes enriched account metadata with policy-controlled fields:
+  - `account_id`, `type`, `subtype?`, `current`, `available?`, `currency`, `stale?` (always visible)
+  - `name` — visible by default; hidden if `name: false` in policy
+  - `institution` — visible by default; hidden if `institution: false` in policy
+  - `mask` (last 4 digits) — only visible if `account_number: true` in policy
+- If `balance: false`, the entire request is denied (`balance visibility disabled`) — no accounts are returned
+- If agent lacks visibility permission for an account, it is excluded from the response entirely
+- If agent lacks permission to access any accounts, returns `decision: deny`
 
 ### Policy Fields
 
 Controlled by:
-- `permissions.accounts[].visible`
-- `permissions.accounts[].balance`
+- `permissions.accounts.visible` (filters which accounts are returned)
+- `permissions.accounts.balance` (if `false`, the whole request is denied)
+- `permissions.accounts.account_number` (gates mask field)
+- `permissions.accounts.name` (default: true)
+- `permissions.accounts.institution` (default: true)
 
 ---
 
@@ -141,6 +155,7 @@ interface GetTransactionsRequest {
 
 ### Behavior
 
+- Denies request if account not in agent's `visible` list (matched by account ID or type)
 - Only returns transactions within `lookback_days` window
 - ⏳ *(planned, D5.2 — not yet enforced)* Applies `amount_visibility_cap` to amounts above the threshold
 - ⏳ *(planned, D5.2 — not yet enforced)* Redacts `description` if `description_visibility: false`
@@ -150,6 +165,7 @@ interface GetTransactionsRequest {
 ### Policy Fields
 
 Controlled by:
+- `permissions.accounts.visible` (account must be in this list)
 - `permissions.transactions.read`
 - `permissions.transactions.amount_visibility_cap`
 - `permissions.transactions.description_visibility`
@@ -208,6 +224,7 @@ interface SafeToSpendRequest {
 
 ### Behavior
 
+- Denies request if account not in agent's `visible` list (matched by account ID or type)
 - Calculates remaining budget for current day, week, and month
 - Subtracts committed amounts (recurring charges, pending escalations)
 - Returns the most restrictive limit as `safe_to_spend`
@@ -217,6 +234,7 @@ interface SafeToSpendRequest {
 ### Policy Fields
 
 Controlled by:
+- `permissions.accounts.visible` (account must be in this list)
 - `permissions.spending.max_per_transaction`
 - `permissions.spending.max_daily`
 - `permissions.spending.max_weekly`

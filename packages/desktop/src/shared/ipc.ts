@@ -268,8 +268,12 @@ export interface DashboardSnapshot {
 export interface PolicyAccountPermissions {
   visible: string[]
   balance?: boolean
+  /** Gates the masked last-4 account number (`mask`) in MCP responses. Default HIDDEN — shown only when explicitly `true`. */
   account_number?: boolean
-  routing_number?: boolean
+  /** Default VISIBLE — hidden only when explicitly `false`. */
+  name?: boolean
+  /** Default VISIBLE — hidden only when explicitly `false`. */
+  institution?: boolean
 }
 
 export interface PolicyTransactionPermissions {
@@ -367,6 +371,31 @@ export interface PolicyDoc {
  */
 export type PolicyGetResult =
   | { ok: true; policy: PolicyDoc; raw: string }
+  | { ok: false; error: string }
+
+/**
+ * `setPolicy()`'s result (CLAD-5). `ok: false` means the write itself never
+ * happened (invalid policy or a genuine fs error) — same as
+ * `main/lib/policy-data.ts`'s own `PolicyWriteResult`, which this wraps.
+ *
+ * `ok: true` additionally reports what happened to the supervised MCP child
+ * afterward: it parses policy once at spawn time and holds it in memory for
+ * its whole process lifetime, so writing `policy.yaml` alone never reaches a
+ * running child — the write needs to be followed by a restart for connected
+ * agents to actually see the new policy. `server_restarted: true` means that
+ * restart happened and the child is back up and running the new policy.
+ * `server_restarted: false` with no `restart_error` means there was no
+ * running child to restart in the first place (e.g. the user had stopped the
+ * server) — nothing to report, nothing went wrong. `server_restarted: false`
+ * WITH `restart_error` set means a child WAS running, the restart was
+ * attempted, and it failed — display-safe (redacted where derived from
+ * thrown/stored data). A failed restart never turns a successful save into
+ * `ok: false`: the file write already succeeded, so the editor should show
+ * the save as successful while surfacing the restart problem separately
+ * (e.g. "quit and relaunch to apply changes").
+ */
+export type PolicyWriteResult =
+  | { ok: true; server_restarted: boolean; restart_error?: string }
   | { ok: false; error: string }
 
 // ---- Approvals inbox (D2.1) -------------------------------------------------
@@ -676,8 +705,14 @@ export interface CladBridge {
   refreshDashboard(): Promise<DashboardSnapshot>
   /** Reads the policy file fresh from disk every call — no cache, no rate-limit concern (this is a local file, not a third-party API). */
   getPolicy(): Promise<PolicyGetResult>
-  /** Validates against `@clad/core`'s policy schema in the main process before writing; never trusts the renderer's shape. See `main/lib/policy-data.ts`. */
-  setPolicy(policy: PolicyDoc): Promise<OperationResult>
+  /**
+   * Validates against `@clad/core`'s policy schema in the main process before
+   * writing; never trusts the renderer's shape. See `main/lib/policy-data.ts`.
+   * On success, also restarts the supervised MCP child so it picks up the new
+   * policy (CLAD-5) — see `PolicyWriteResult`'s doc comment and
+   * `main/lib/policy-save.ts`.
+   */
+  setPolicy(policy: PolicyDoc): Promise<PolicyWriteResult>
   /** Omit `input` (or `status: 'pending'`) for pending-only; `status: 'all'` includes resolved/expired history. Rejects on a genuine read failure (surfaced by the inbox as an error state) — unlike the tray's best-effort count, this is a user-watched list. */
   listApprovals(input?: ApprovalsListInput): Promise<ApprovalListItem[]>
   /** Approves or denies a pending approval — writes through the real `@clad/core` `ApprovalQueue` and audit-logs the decision, same as the CLI's `clad approve`/`clad deny` (see `main/lib/approvals.ts`). Never throws; failures come back as `{ ok: false, error }`. */
