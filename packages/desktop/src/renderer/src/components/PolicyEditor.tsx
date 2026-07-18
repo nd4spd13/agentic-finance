@@ -426,11 +426,26 @@ function AgentEditor({
         <Field label="Balance visible">
           <CheckboxField checked={acc?.balance} onChange={(v) => updateAccounts({ balance: v })} label="" />
         </Field>
-        <Field label="Account number">
-          <CheckboxField checked={acc?.account_number} onChange={(v) => updateAccounts({ account_number: v })} label="" />
+        <Field label="Account name visible">
+          <CheckboxField
+            checked={acc?.name !== false}
+            onChange={(v) => updateAccounts({ name: v })}
+            label=""
+          />
         </Field>
-        <Field label="Routing number">
-          <CheckboxField checked={acc?.routing_number} onChange={(v) => updateAccounts({ routing_number: v })} label="" />
+        <Field label="Institution visible">
+          <CheckboxField
+            checked={acc?.institution !== false}
+            onChange={(v) => updateAccounts({ institution: v })}
+            label=""
+          />
+        </Field>
+        <Field label="Account number visible">
+          <CheckboxField checked={acc?.account_number} onChange={(v) => updateAccounts({ account_number: v })} label="" />
+          <p style={{ ...s.mutedText, marginTop: '0.25rem', marginBottom: 0 }}>
+            Reveals the masked last-4 account number (e.g. •••• 1234) in MCP responses. Hidden by default — unlike
+            account name and institution, this stays off unless explicitly enabled here.
+          </p>
         </Field>
       </div>
 
@@ -662,6 +677,14 @@ export default function PolicyEditor(): JSX.Element {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveOk, setSaveOk] = useState(false)
+  /**
+   * Set alongside `saveOk` after a successful save (CLAD-5) — reflects
+   * whether the supervised MCP server actually picked up the new policy.
+   * `warn: true` means the save itself succeeded but the restart didn't (see
+   * `PolicyWriteResult`'s doc comment in `shared/ipc.ts`), so this renders
+   * with `s.warnText` instead of `s.successText`.
+   */
+  const [saveNote, setSaveNote] = useState<{ text: string; warn: boolean } | null>(null)
 
   const load = useCallback(async () => {
     setState({ phase: 'loading' })
@@ -702,6 +725,7 @@ export default function PolicyEditor(): JSX.Element {
     setState({ phase: 'ready', doc: next })
     setSaveOk(false)
     setSaveError(null)
+    setSaveNote(null)
   }
 
   function updateAgent(id: string, agent: PolicyAgent): void {
@@ -729,10 +753,27 @@ export default function PolicyEditor(): JSX.Element {
     setSaving(true)
     setSaveError(null)
     setSaveOk(false)
+    setSaveNote(null)
     try {
       const result = await window.clad.setPolicy(doc)
       if (result.ok) {
         setSaveOk(true)
+        // CLAD-5: the write succeeded; report what happened to the
+        // supervised MCP server's restart separately so a restart problem
+        // never reads as a failed save.
+        if (result.server_restarted) {
+          setSaveNote({
+            text: 'Policy saved — MCP server restarted; connected agents now use the new policy.',
+            warn: false,
+          })
+        } else if (result.restart_error) {
+          setSaveNote({
+            text: 'Policy saved, but the MCP server could not be restarted — quit and relaunch Clad to apply changes.',
+            warn: true,
+          })
+        }
+        // else: nothing running to restart (server was already stopped) —
+        // no note needed beyond the plain "Saved." below.
       } else {
         setSaveError(result.error ?? 'Failed to save.')
       }
@@ -834,6 +875,7 @@ export default function PolicyEditor(): JSX.Element {
         </div>
         <pre style={s.yamlPreview}>{yamlText}</pre>
         {saveError && <p style={s.errorText}>{saveError}</p>}
+        {saveNote && <p style={saveNote.warn ? s.warnText : s.successText}>{saveNote.text}</p>}
         <div style={{ marginTop: '0.75rem' }}>
           <button type="button" style={s.button} disabled={saving} onClick={handleSave}>
             {saving ? 'Saving…' : 'Save to disk'}
