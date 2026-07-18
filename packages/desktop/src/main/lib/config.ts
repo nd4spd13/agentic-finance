@@ -68,6 +68,18 @@ export interface CladConfig {
    */
   simplefin_db: string
   /**
+   * D5.3 WS5/WS4: where the `SqliteGrantStore` (registered OAuth clients,
+   * consented grants, auth codes, tokens) lives — a sibling of `plaid_db`/
+   * `simplefin_db`, not co-located with either (grants are a distinct
+   * concern with a distinct lifecycle/UI — see
+   * `.claude/plans/d5.3/WS5-grant-store.md` §2). Unlike `plaid_db`, there is
+   * no per-env split: one grant store regardless of `plaid_env`. Opened with
+   * the SAME already-resolved token-store passphrase every other provider
+   * store in this app uses (`main/lib/connected-clients.ts`) — zero new key
+   * custody, per WS5 §3's "Desktop wiring (WS4)" note.
+   */
+  grant_db: string
+  /**
    * Which policy agent the desktop app's SUPERVISED MCP child asserts as its
    * identity (`CLAD_AGENT_ID` — see `mcp-server-env.ts`). Chosen by the user
    * in the "Connect to Claude Desktop" screen's agent selector, which is what
@@ -125,6 +137,7 @@ export function defaultConfig(): CladConfig {
     plaid_env: 'sandbox',
     close_to_tray: true,
     simplefin_db: join(dir, 'simplefin.sqlite'),
+    grant_db: join(dir, 'grants.sqlite'),
     // '' = "resolve from the policy at spawn time" — see the field's doc
     // comment for why this is not 'default-agent'.
     agent_id: '',
@@ -163,6 +176,11 @@ export function loadConfig(): CladConfig {
     simplefin_db: parsed.simplefin_db
       ? resolve(parsed.simplefin_db.replace('~', homedir()))
       : defaults.simplefin_db,
+    // Backward compatibility: every config.json written before this field
+    // existed simply has no `grant_db` key, which falls through to the
+    // default sibling path (`~/.clad/grants.sqlite`) — same pattern as
+    // `simplefin_db` above.
+    grant_db: parsed.grant_db ? resolve(parsed.grant_db.replace('~', homedir())) : defaults.grant_db,
     // Backward compatibility: every config.json written before this field
     // existed simply has no `agent_id` key, which falls through to the `''`
     // sentinel — NOT to 'default-agent' (see the field's doc comment). A

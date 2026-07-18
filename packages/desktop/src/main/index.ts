@@ -62,6 +62,12 @@ import {
   type RemoveLinkedItemResult,
 } from './lib/connection-management.js'
 import {
+  listConnectedClients,
+  revokeConnectedClient,
+  type ConnectedClient,
+  type RevokeClientResult,
+} from './lib/connected-clients.js'
+import {
   forceRefreshSimpleFin,
   getSimpleFinRefreshStatus,
   type SimpleFinForceRefreshResult,
@@ -891,6 +897,44 @@ ipcMain.handle(
 ipcMain.handle(
   IPC_CHANNELS.connectSimpleFinRefreshStatus,
   (): Promise<SimpleFinRefreshStatus> => getSimpleFinRefreshStatus(connectionManagementDeps)
+)
+
+// ---- IPC handlers (connected clients / OAuth grants, D5.3 WS4 S1-S2) -------
+
+// `ConnectedClientsDeps` is a structural subset of `connectionManagementDeps`
+// above (`loadConfig` + `getActivePassphrase` only) — the grant store shares
+// the SAME custody-resolved passphrase every other provider store in this app
+// uses (config.ts's `grant_db` doc comment), so no separate deps object is
+// constructed here; `loadPlaidCredentials` is simply unused by these calls.
+
+// Listing never throws — see `listConnectedClients`'s doc comment. Degrades
+// to `[]` when the passphrase isn't resolved yet or the store can't be
+// opened, same posture as the Plaid/SimpleFIN 'unavailable' connection state
+// the renderer already reads from `getConnectProvidersStatus` above.
+ipcMain.handle(
+  IPC_CHANNELS.connectedClientsList,
+  (): Promise<ConnectedClient[]> => listConnectedClients(connectionManagementDeps)
+)
+
+// Revoke never throws either (`{ ok, error? }` — see `revokeConnectedClient`'s
+// doc comment). On success, push the refreshed list to every open window so
+// the Connected-clients section updates live without a manual reload — same
+// "push after a state change" shape as `broadcastStatus`/`mcpStatusChanged`
+// above. The child's live `verifyAccessToken` lookup means the revoke is
+// already effective by the time this push lands; this is purely a UI
+// refresh, not part of the security boundary.
+ipcMain.handle(
+  IPC_CHANNELS.connectedClientsRevoke,
+  async (_event, grantId: string): Promise<RevokeClientResult> => {
+    const result = await revokeConnectedClient(grantId, connectionManagementDeps)
+    if (result.ok) {
+      mainWindow?.webContents.send(
+        IPC_CHANNELS.connectedClientsChanged,
+        await listConnectedClients(connectionManagementDeps)
+      )
+    }
+    return result
+  }
 )
 
 // ---- App lifecycle ----------------------------------------------------------

@@ -9,6 +9,7 @@ import type {
   SimpleFinForceRefreshResult,
   SimpleFinRefreshStatus,
 } from '../../../shared/ipc.js'
+import ConnectedClients from './ConnectedClients.js'
 import * as s from '../styles.js'
 
 const CONNECTION_LABEL: Record<ProviderConnectionState, string> = {
@@ -561,6 +562,13 @@ export default function ConnectView(): JSX.Element {
           </>
         )}
       </div>
+
+      {/* D5.3 WS4: the grant store shares the SAME custody-resolved passphrase
+          as Plaid/SimpleFIN above (config.ts's `grant_db` doc comment), so
+          `plaidConnection === 'unavailable'` (passphrase not yet resolved) is
+          exactly the signal that also means "the grant store isn't readable
+          yet" — reusing it here avoids inventing a parallel status field. */}
+      <ConnectedClients unavailable={status ? status.plaidConnection === 'unavailable' : false} />
     </>
   )
 }
