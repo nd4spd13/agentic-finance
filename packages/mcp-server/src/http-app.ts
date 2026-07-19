@@ -48,12 +48,15 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import express, { type Express, type NextFunction, type Request, type Response } from 'express'
+import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js'
+import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js'
 import { createConfiguredServer, writeRedactedStderr, type ServerResources } from './server-core.js'
 import { CLAD_SCOPES } from './oauth/scopes.js'
+import type { CladOAuthProvider } from './oauth/provider.js'
+import { dpopEnforcement } from './oauth/dpop.js'
 
 /** The single MCP endpoint this server serves. */
 export const MCP_HTTP_PATH = '/mcp'
@@ -308,13 +311,68 @@ function mergeMetadataFields(extra: Record<string, unknown>) {
 }
 
 /**
+ * Confidential-client secret verification guard for `/token` (D5.3 WS2 §10
+ * "landmine #1", `.claude/plans/d5.3/WS2-oauth-resource-server.md`).
+ *
+ * `SqliteGrantStore.getClient` deliberately never returns the client secret, so
+ * the SDK's own `authenticateClient` middleware (`server/auth/middleware/
+ * clientAuth.js`) sees `client.client_secret === undefined` and SKIPS the secret
+ * check entirely — a confidential client would otherwise be authenticated by
+ * `client_id` + PKCE alone. This guard is the real check: it runs BEFORE the
+ * SDK's `tokenHandler` and routes verification through
+ * `CladOAuthProvider.authenticateTokenRequestClient`, which does a constant-time
+ * compare inside the store (the plaintext secret never leaves that boundary).
+ *
+ *  - Public client (`token_endpoint_auth_method: 'none'`): `true` — PKCE alone
+ *    authenticates it; no secret required.
+ *  - Confidential client: requires a present, unexpired, matching secret.
+ *  - Unknown client / missing `client_id`: the latter is left to the SDK's own
+ *    `invalid_request` shaping; an unknown `client_id` fails closed here.
+ *
+ * The `express.urlencoded` mounted alongside this guard parses the form body so
+ * `req.body.client_id`/`client_secret` are readable; the SDK's own
+ * `express.urlencoded` inside `tokenHandler` then short-circuits on
+ * `on-finished`'s already-consumed check and reuses the same parsed `req.body`
+ * (verified against body-parser@2.2.2's `read.js`), so no double-parse occurs.
+ * Rejections are RFC 6749 §5.2-shaped and carry a FIXED, secret-free
+ * description — never the secret, token, or code.
+ */
+function confidentialClientSecretGuard(oauth: CladOAuthProvider): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const body = req.body as Record<string, unknown> | undefined
+    const clientId = typeof body?.client_id === 'string' ? body.client_id : undefined
+    const clientSecret = typeof body?.client_secret === 'string' ? body.client_secret : undefined
+
+    // No client_id at all: let the SDK's own request validation produce the
+    // canonical `invalid_request`/`invalid_client` response shape.
+    if (clientId === undefined) {
+      next()
+      return
+    }
+
+    if (!oauth.authenticateTokenRequestClient(clientId, clientSecret)) {
+      // RFC 6749 §5.2: failed client authentication -> 401 invalid_client.
+      res.status(401).json({
+        error: 'invalid_client',
+        error_description: 'Client authentication failed.',
+      })
+      return
+    }
+    next()
+  }
+}
+
+/**
  * Builds the Express app for the loopback HTTP MCP transport: loopback-Host
  * guard first, then (iff `resources.oauth` is set) the OAuth metadata +
- * Dynamic Client Registration router, then the dev-only static-bearer
- * bridge, then the `/mcp` session-map handler, then a catch-all 404. No
- * listening/binding happens here — that stays in `http-transport.ts`'s
- * `startHttpServer`, which resolves `opts.port` to the ACTUALLY-bound port
- * (needed for `issuerUrl`/`resourceServerUrl` below) before calling this.
+ * Dynamic Client Registration router (with the confidential-client `/token`
+ * secret guard in front of it), then the dev-only static-bearer bridge, then
+ * (iff `resources.oauth` is set) the real `requireBearerAuth` + `dpopEnforcement`
+ * chain in front of `/mcp`, then the `/mcp` session-map handler, then a
+ * catch-all 404. No listening/binding happens here — that stays in
+ * `http-transport.ts`'s `startHttpServer`, which resolves `opts.port` to the
+ * ACTUALLY-bound port (needed for `issuerUrl`/`resourceServerUrl` below) before
+ * calling this.
  */
 export function buildHttpApp(resources: ServerResources, opts: { port: number }): HttpApp {
   const app = express()
@@ -357,6 +415,13 @@ export function buildHttpApp(resources: ServerResources, opts: { port: number })
       mergeMetadataFields({ dpop_signing_alg_values_supported: ['ES256'] })
     )
 
+    // D5.3 WS2 S5 "landmine #1": verify a confidential client's secret BEFORE
+    // the SDK's `/token` handler runs (its own `authenticateClient` is a no-op
+    // for us because `getClient` returns no secret). Public clients pass
+    // through (PKCE authenticates them). Scoped to `/token` only — never a
+    // global body parser ahead of `/mcp`.
+    app.use('/token', express.urlencoded({ extended: false }), confidentialClientSecretGuard(resources.oauth))
+
     app.use(
       mcpAuthRouter({
         provider: resources.oauth,
@@ -389,6 +454,28 @@ export function buildHttpApp(resources: ServerResources, opts: { port: number })
   // transport. Populates nothing when `CLAD_MCP_STATIC_BEARER` is unset or
   // `NODE_ENV==='production'`.
   app.use(staticBearerBridge)
+
+  // D5.3 WS2 S5-S6 / WS3 S3: the REAL OAuth resource-server gate in front of
+  // `/mcp`. Mounted ONLY when `resources.oauth` is set (`CLAD_MCP_AUTH=oauth`),
+  // so the flag-off path stays byte-identical to before this change (no bearer
+  // enforcement, the dev-only static bridge above is the only auth seam).
+  //
+  //  - `requireBearerAuth` verifies the token via `CladOAuthProvider.
+  //    verifyAccessToken` (an opaque store lookup) and populates `req.auth`
+  //    (`AuthInfo`, with `extra.profileId`) — the seam `resolvePrincipal`
+  //    consumes. A missing/invalid/expired/revoked token 401s here, before any
+  //    tool handler runs, with a `WWW-Authenticate` header naming the PRM URL
+  //    so an MCP client (mcp-remote/Claude) knows to start the OAuth dance.
+  //  - `dpopEnforcement` is a documented pass-through in M2 (bearer baseline);
+  //    Wave 7 fills in the RFC 9449 proof checks. Its position in the chain
+  //    (after `requireBearerAuth`, which populates `req.auth`) is fixed now so
+  //    M3 is a drop-in body replacement.
+  if (resources.oauth) {
+    const resourceServerUrl = new URL(`http://127.0.0.1:${opts.port}${MCP_HTTP_PATH}`)
+    const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resourceServerUrl)
+    app.use(MCP_HTTP_PATH, requireBearerAuth({ verifier: resources.oauth, resourceMetadataUrl }))
+    app.use(MCP_HTTP_PATH, dpopEnforcement())
+  }
 
   const transports = new Map<string, StreamableHTTPServerTransport>()
 

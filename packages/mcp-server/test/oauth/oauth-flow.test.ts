@@ -1,27 +1,42 @@
 /**
- * D5.3 WS2 S2-S3 integration coverage: the OAuth metadata + DCR "front door"
- * exercised over the REAL Express app (`buildHttpApp`) and a REAL HTTP
- * client — no mock at the transport boundary, matching every other
- * `mcp-server` integration suite.
+ * D5.3 WS2 S4-S6 integration coverage: the full OAuth 2.1 authorization + token
+ * flow driven over the REAL Express app (`buildHttpApp` via `startHttpServer`)
+ * with a REAL HTTP client and a REAL, temp-file `SqliteGrantStore` — no mock at
+ * the transport boundary, matching every other `mcp-server` integration suite.
  *
- * Scope: everything reachable WITHOUT the (Wave-4, still-throwing) flow
- * methods actually succeeding —
- *  - `/register` (RFC 7591 DCR) round-trips against the real, temp-file
- *    `SqliteGrantStore` the running server itself opened.
- *  - `/authorize`, `/token`, `/revoke` are MOUNTED and REACHABLE, but every
- *    one of them dead-ends on `OAuthFlowNotImplementedError` — this asserts
- *    they fail *cleanly* (no crash, no secret leakage in the response body),
- *    not that they work.
+ * Covers (WS2 §9 / TEST-PLAN):
+ *  - `/register` (RFC 7591 DCR) round-trips (public + confidential).
+ *  - Full `register -> authorize (fake consent) -> token -> Bearer /mcp` happy
+ *    path over S256 PKCE, ending in a real `tools/call`.
+ *  - Wrong PKCE verifier rejected; authorization code single-use.
+ *  - Consent deny-by-default -> `access_denied` error redirect, no token.
+ *  - Confidential-client secret verification (correct -> issue; wrong/missing
+ *    -> `invalid_client`); public client authenticated by PKCE alone.
+ *  - `/mcp` 401 without a token, with a `WWW-Authenticate` header pointing at
+ *    the protected-resource-metadata URL.
+ *  - Revocation -> the next `/mcp` request 401s immediately.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createHash, randomBytes } from 'node:crypto'
 import http, { type IncomingHttpHeaders } from 'node:http'
-import { AuditLogger, ApprovalQueue, DummyDataProvider, SqliteGrantStore, type PolicyConfig } from '@clad/core'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import {
+  AuditLogger,
+  ApprovalQueue,
+  DummyDataProvider,
+  SqliteGrantStore,
+  LocalConsentTrustProvider,
+  type PolicyConfig,
+} from '@clad/core'
 import { startHttpServer, type HttpServerHandle } from '../../src/http-transport.js'
 import { CladOAuthProvider } from '../../src/oauth/provider.js'
+import { mintScopesForProfile, scopeSensitivity } from '../../src/oauth/scope-minter.js'
+import { denyingConsent, type ConsentFn } from '../../src/oauth/consent.js'
 import type { ServerResources } from '../../src/server-core.js'
 
 const POLICY: PolicyConfig = {
@@ -37,10 +52,12 @@ const POLICY: PolicyConfig = {
 }
 
 const SECRET_PASSPHRASE = 'oauth-flow-test-passphrase-do-not-leak'
+const REDIRECT = 'https://example.com/callback'
 
 let dir: string
 let store: SqliteGrantStore
 let handle: HttpServerHandle | undefined
+let clients: Client[] = []
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'clad-oauth-flow-'))
@@ -48,6 +65,8 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  for (const c of clients) await c.close().catch(() => undefined)
+  clients = []
   if (handle) {
     await handle.close()
     handle = undefined
@@ -56,7 +75,16 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-function oauthResources(): ServerResources {
+/** Auto-approve consent binding to the given profile (the WS4 seam, faked). */
+const approve = (profileId: string): ConsentFn => async () => ({ approved: true, profileId, dpopBound: false })
+
+function oauthResources(consent: ConsentFn = approve('test-agent')): ServerResources {
+  const oauth = new CladOAuthProvider({
+    store,
+    policy: POLICY,
+    trust: new LocalConsentTrustProvider(POLICY, mintScopesForProfile, scopeSensitivity),
+    requestConsent: consent,
+  })
   return {
     agentId: 'test-agent',
     authRequired: true,
@@ -64,26 +92,29 @@ function oauthResources(): ServerResources {
     provider: new DummyDataProvider(),
     auditLogger: new AuditLogger(':memory:'),
     approvalQueue: new ApprovalQueue(':memory:'),
-    oauth: new CladOAuthProvider({ store }),
+    oauth,
   }
+}
+
+function pkce(): { verifier: string; challenge: string } {
+  const verifier = randomBytes(32).toString('base64url')
+  const challenge = createHash('sha256').update(verifier).digest('base64url')
+  return { verifier, challenge }
 }
 
 async function registerClient(
   port: number,
-  body: Record<string, unknown> = { redirect_uris: ['https://example.com/callback'] }
-): Promise<{ status: number; json: Record<string, unknown> }> {
+  body: Record<string, unknown> = { redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' }
+): Promise<Record<string, unknown>> {
   const res = await fetch(`http://127.0.0.1:${port}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  const json = (await res.json()) as Record<string, unknown>
-  return { status: res.status, json }
+  return (await res.json()) as Record<string, unknown>
 }
 
-/** Raw `node:http` request — used where we need to inspect a 3xx redirect's
- *  Location header without `fetch`'s opaque-redirect restrictions kicking in
- *  for a cross-origin `redirect: 'manual'` target. */
+/** Raw `node:http` GET so we can read a cross-origin 302 Location without fetch's opaque-redirect handling. */
 function rawRequest(
   port: number,
   path: string,
@@ -106,139 +137,329 @@ function rawRequest(
   })
 }
 
-describe('POST /register (RFC 7591 DCR) — round-trips against the REAL grant store', () => {
-  it('registers a client and the SAME store the server opened can read it back', async () => {
-    handle = await startHttpServer(oauthResources(), { port: 0 })
+/** Drives GET /authorize and returns the `code` from the 302 redirect (throws on an error redirect). */
+async function authorizeForCode(
+  port: number,
+  clientId: string,
+  challenge: string,
+  state = 'state-xyz'
+): Promise<string> {
+  const query = new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: REDIRECT,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state,
+  }).toString()
+  const res = await rawRequest(port, `/authorize?${query}`)
+  expect(res.status).toBe(302)
+  const location = new URL(res.headers.location!)
+  const err = location.searchParams.get('error')
+  if (err) throw new Error(`authorize error redirect: ${err}`)
+  return location.searchParams.get('code')!
+}
 
-    const { status, json } = await registerClient(handle.port, {
-      redirect_uris: ['https://example.com/callback'],
+async function postToken(
+  port: number,
+  params: Record<string, string>
+): Promise<{ status: number; json: Record<string, unknown>; text: string }> {
+  const res = await fetch(`http://127.0.0.1:${port}/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params).toString(),
+  })
+  const text = await res.text()
+  let json: Record<string, unknown> = {}
+  try {
+    json = JSON.parse(text) as Record<string, unknown>
+  } catch {
+    /* non-JSON body left as text */
+  }
+  return { status: res.status, json, text }
+}
+
+async function connectMcp(port: number, bearer: string): Promise<Client> {
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${bearer}` } },
+  })
+  const c = new Client({ name: 'oauth-flow-test', version: '0.0.0' }, { capabilities: {} })
+  await c.connect(transport)
+  clients.push(c)
+  return c
+}
+
+describe('POST /register (RFC 7591 DCR)', () => {
+  it('registers a public client and the SAME store the server opened reads it back', async () => {
+    handle = await startHttpServer(oauthResources(), { port: 0 })
+    const json = await registerClient(handle.port, {
+      redirect_uris: [REDIRECT],
       client_name: 'Integration Test Client',
-      // Explicit 'none': the SDK's own registration handler only skips
-      // secret generation when this is LITERALLY 'none' — an omitted
-      // `token_endpoint_auth_method` still gets a secret generated
-      // (`register.js`'s `isPublicClient` check), which is exercised by the
-      // "confidential client" case below instead.
       token_endpoint_auth_method: 'none',
     })
 
-    expect(status).toBe(201)
     expect(json.client_id).toBeTruthy()
     expect(json.client_secret).toBeUndefined()
-
-    // Read through the EXACT store instance the running server constructed
-    // `resources.oauth` from — proves persistence isn't just an in-memory
-    // echo of the request.
     const persisted = store.getClient(json.client_id as string)
-    expect(persisted).toBeDefined()
     expect(persisted?.clientName).toBe('Integration Test Client')
-    expect(persisted?.redirectUris).toEqual(['https://example.com/callback'])
+    expect(persisted?.redirectUris).toEqual([REDIRECT])
   })
 
-  it('registers a confidential client, returns the secret once, and never leaks it back out of a later read', async () => {
+  it('registers a confidential client and returns the secret once, never on a later read', async () => {
     handle = await startHttpServer(oauthResources(), { port: 0 })
-
-    const { json } = await registerClient(handle.port, {
-      redirect_uris: ['https://example.com/callback'],
+    const json = await registerClient(handle.port, {
+      redirect_uris: [REDIRECT],
       token_endpoint_auth_method: 'client_secret_post',
     })
 
     expect(typeof json.client_secret).toBe('string')
-    expect((json.client_secret as string).length).toBeGreaterThan(0)
-
-    // getClient (used by the /token and /authorize flows) never surfaces it.
-    const read = await new CladOAuthProvider({ store }).clientsStore.getClient(json.client_id as string)
+    expect(store.getClient(json.client_id as string)).toBeDefined()
+    // getClient never surfaces the secret.
+    const read = await new CladOAuthProvider({
+      store,
+      policy: POLICY,
+      trust: new LocalConsentTrustProvider(POLICY, mintScopesForProfile, scopeSensitivity),
+      requestConsent: denyingConsent,
+    }).clientsStore.getClient(json.client_id as string)
     expect(read?.client_secret).toBeUndefined()
   })
 })
 
-describe('flow seams over HTTP — reachable, but fail cleanly (Wave 4 not yet implemented)', () => {
-  it('POST /token (authorization_code) fails with a generic 500 — no secret/passphrase leakage in the body', async () => {
+describe('full authorization-code + PKCE round trip over HTTP', () => {
+  it('register -> authorize -> token -> Bearer /mcp tools/call succeeds', async () => {
     handle = await startHttpServer(oauthResources(), { port: 0 })
-    const { json: client } = await registerClient(handle.port)
+    const client = await registerClient(handle.port)
+    const { verifier, challenge } = pkce()
 
-    const res = await fetch(`http://127.0.0.1:${handle.port}/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: client.client_id as string,
-        code: 'fabricated-auth-code',
-        code_verifier: 'fabricated-code-verifier',
-      }).toString(),
+    const code = await authorizeForCode(handle.port, client.client_id as string, challenge)
+    const { status, json } = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: client.client_id as string,
+      code,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
     })
-    const bodyText = await res.text()
 
-    expect(res.status).toBe(500)
-    const body = JSON.parse(bodyText) as { error: string; error_description: string }
-    expect(body.error).toBe('server_error')
-    expect(bodyText).not.toContain(SECRET_PASSPHRASE)
-    expect(bodyText).not.toContain('fabricated-auth-code')
-    expect(bodyText).not.toContain('fabricated-code-verifier')
+    expect(status).toBe(200)
+    expect(json.token_type).toBe('Bearer')
+    expect(json.access_token).toBeTruthy()
+    expect(json.refresh_token).toBeTruthy()
+    expect(json.scope).toBe('clad:accounts.read clad:transactions.read')
+
+    // The minted access token authenticates a real MCP session.
+    const mcp = await connectMcp(handle.port, json.access_token as string)
+    const result = await mcp.callTool({ name: 'clad_get_balances', arguments: {} })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('acc_checking_001')
+    expect(text).not.toContain('acc_savings_001') // test-agent: checking only
   })
 
-  it('POST /token (refresh_token) fails with a generic 500 — no secret leakage', async () => {
+  it('rejects a wrong PKCE code_verifier at /token (invalid_grant)', async () => {
     handle = await startHttpServer(oauthResources(), { port: 0 })
-    const { json: client } = await registerClient(handle.port)
+    const client = await registerClient(handle.port)
+    const { challenge } = pkce()
+    const code = await authorizeForCode(handle.port, client.client_id as string, challenge)
 
-    const res = await fetch(`http://127.0.0.1:${handle.port}/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        client_id: client.client_id as string,
-        refresh_token: 'fabricated-refresh-token',
-      }).toString(),
+    const { status, json } = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: client.client_id as string,
+      code,
+      code_verifier: 'the-wrong-verifier',
+      redirect_uri: REDIRECT,
     })
-    const bodyText = await res.text()
-
-    expect(res.status).toBe(500)
-    expect(bodyText).not.toContain(SECRET_PASSPHRASE)
-    expect(bodyText).not.toContain('fabricated-refresh-token')
+    expect(status).toBe(400)
+    expect(json.error).toBe('invalid_grant')
   })
 
-  it('POST /revoke fails with a generic 500 — no secret leakage', async () => {
+  it('is single-use: replaying a redeemed code fails with invalid_grant', async () => {
     handle = await startHttpServer(oauthResources(), { port: 0 })
-    const { json: client } = await registerClient(handle.port)
+    const client = await registerClient(handle.port)
+    const { verifier, challenge } = pkce()
+    const code = await authorizeForCode(handle.port, client.client_id as string, challenge)
 
-    const res = await fetch(`http://127.0.0.1:${handle.port}/revoke`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: client.client_id as string,
-        token: 'fabricated-token-to-revoke',
-      }).toString(),
+    const first = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: client.client_id as string,
+      code,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
     })
-    const bodyText = await res.text()
+    expect(first.status).toBe(200)
 
-    expect(res.status).toBe(500)
-    expect(bodyText).not.toContain(SECRET_PASSPHRASE)
-    expect(bodyText).not.toContain('fabricated-token-to-revoke')
+    const replay = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: client.client_id as string,
+      code,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
+    })
+    expect(replay.status).toBe(400)
+    expect(replay.json.error).toBe('invalid_grant')
   })
+})
 
-  it('GET /authorize redirects to redirect_uri with a generic error, never a raw 500/crash', async () => {
+describe('refresh rotation over HTTP', () => {
+  it('exchanges a refresh token for a new pair and invalidates the old refresh', async () => {
     handle = await startHttpServer(oauthResources(), { port: 0 })
-    const { json: client } = await registerClient(handle.port, {
-      redirect_uris: ['https://example.com/callback'],
+    const client = await registerClient(handle.port)
+    const { verifier, challenge } = pkce()
+    const code = await authorizeForCode(handle.port, client.client_id as string, challenge)
+    const first = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: client.client_id as string,
+      code,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
     })
+
+    const rotated = await postToken(handle.port, {
+      grant_type: 'refresh_token',
+      client_id: client.client_id as string,
+      refresh_token: first.json.refresh_token as string,
+    })
+    expect(rotated.status).toBe(200)
+    expect(rotated.json.refresh_token).not.toBe(first.json.refresh_token)
+
+    // The old refresh token is now dead.
+    const reused = await postToken(handle.port, {
+      grant_type: 'refresh_token',
+      client_id: client.client_id as string,
+      refresh_token: first.json.refresh_token as string,
+    })
+    expect(reused.status).toBe(400)
+    expect(reused.json.error).toBe('invalid_grant')
+  })
+})
+
+describe('consent deny-by-default', () => {
+  it('GET /authorize redirects with error=access_denied (never mints a code) and issues no token', async () => {
+    handle = await startHttpServer(oauthResources(denyingConsent), { port: 0 })
+    const client = await registerClient(handle.port)
+    const { challenge } = pkce()
 
     const query = new URLSearchParams({
       response_type: 'code',
       client_id: client.client_id as string,
-      redirect_uri: 'https://example.com/callback',
-      code_challenge: 'fabricated-s256-challenge',
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
       code_challenge_method: 'S256',
-      state: 'fabricated-state-xyz',
+      state: 'deny-state',
     }).toString()
-
     const res = await rawRequest(handle.port, `/authorize?${query}`)
 
     expect(res.status).toBe(302)
-    const location = res.headers.location
-    expect(location).toBeDefined()
-    expect(location!.startsWith('https://example.com/callback?')).toBe(true)
-    const redirectUrl = new URL(location!)
-    expect(redirectUrl.searchParams.get('error')).toBe('server_error')
-    expect(redirectUrl.searchParams.get('state')).toBe('fabricated-state-xyz')
+    const location = new URL(res.headers.location!)
+    expect(location.searchParams.get('error')).toBe('access_denied')
+    expect(location.searchParams.get('state')).toBe('deny-state')
+    expect(location.searchParams.get('code')).toBeNull()
     expect(res.body).not.toContain(SECRET_PASSPHRASE)
+  })
+})
+
+describe('confidential-client secret verification at /token (landmine #1)', () => {
+  it('issues tokens with the correct secret, rejects a wrong or missing one (invalid_client)', async () => {
+    handle = await startHttpServer(oauthResources(), { port: 0 })
+    const client = await registerClient(handle.port, {
+      redirect_uris: [REDIRECT],
+      token_endpoint_auth_method: 'client_secret_post',
+    })
+    const clientId = client.client_id as string
+    const clientSecret = client.client_secret as string
+
+    // Correct secret -> issued.
+    const { verifier, challenge } = pkce()
+    const code = await authorizeForCode(handle.port, clientId, challenge)
+    const ok = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
+    })
+    expect(ok.status).toBe(200)
+    expect(ok.json.access_token).toBeTruthy()
+
+    // Wrong secret -> 401 invalid_client, and the real secret must not leak.
+    const pk2 = pkce()
+    const code2 = await authorizeForCode(handle.port, clientId, pk2.challenge)
+    const bad = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      client_secret: 'not-the-secret',
+      code: code2,
+      code_verifier: pk2.verifier,
+      redirect_uri: REDIRECT,
+    })
+    expect(bad.status).toBe(401)
+    expect(bad.json.error).toBe('invalid_client')
+    expect(bad.text).not.toContain(clientSecret)
+
+    // Missing secret for a confidential client -> 401 invalid_client.
+    const pk3 = pkce()
+    const code3 = await authorizeForCode(handle.port, clientId, pk3.challenge)
+    const missing = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      code: code3,
+      code_verifier: pk3.verifier,
+      redirect_uri: REDIRECT,
+    })
+    expect(missing.status).toBe(401)
+    expect(missing.json.error).toBe('invalid_client')
+  })
+})
+
+describe('/mcp bearer enforcement', () => {
+  it('401s an /mcp request with no token, naming the protected-resource-metadata URL', async () => {
+    handle = await startHttpServer(oauthResources(), { port: 0 })
+    const res = await rawRequest(handle.port, '/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+    })
+
+    expect(res.status).toBe(401)
+    const wwwAuth = res.headers['www-authenticate']
+    expect(wwwAuth).toContain('Bearer')
+    expect(wwwAuth).toContain('/.well-known/oauth-protected-resource/mcp')
+  })
+
+  it('revocation is immediate: after /revoke, the next /mcp call 401s', async () => {
+    handle = await startHttpServer(oauthResources(), { port: 0 })
+    const client = await registerClient(handle.port)
+    const { verifier, challenge } = pkce()
+    const code = await authorizeForCode(handle.port, client.client_id as string, challenge)
+    const { json } = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: client.client_id as string,
+      code,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
+    })
+    const accessToken = json.access_token as string
+
+    // Works first.
+    const mcp = await connectMcp(handle.port, accessToken)
+    await mcp.callTool({ name: 'clad_get_balances', arguments: {} })
+
+    // Revoke, then a fresh /mcp initialize with the same token must 401.
+    const revoke = await fetch(`http://127.0.0.1:${handle.port}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: client.client_id as string, token: accessToken }).toString(),
+    })
+    expect(revoke.status).toBe(200)
+
+    const after = await rawRequest(handle.port, '/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+    })
+    expect(after.status).toBe(401)
   })
 })
