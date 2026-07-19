@@ -8,16 +8,28 @@
  * lifecycle in `http-transport.ts`. The original extraction step was
  * BEHAVIOUR-IDENTICAL to the prior `node:http` implementation — no auth, no
  * `mcpAuthRouter`, no OAuth. D5.3 WS3 S1 (see
- * `.claude/plans/d5.3/WS3-resource-enforcement.md` §4) has since added ONE
- * dev-only placeholder — `staticBearerBridge`, active only behind
+ * `.claude/plans/d5.3/WS3-resource-enforcement.md` §4) added ONE dev-only
+ * placeholder — `staticBearerBridge`, active only behind
  * `CLAD_MCP_STATIC_BEARER` and `NODE_ENV!=='production'` — standing in for
- * `requireBearerAuth` until WS2 lands. Still no real `mcpAuthRouter`/OAuth.
+ * `requireBearerAuth` until WS2 lands.
+ *
+ * D5.3 WS2 S2-S3 (this change) mounts the SDK's real `mcpAuthRouter` — RFC
+ * 8414 + RFC 9728 metadata and RFC 7591 Dynamic Client Registration — but
+ * ONLY when `resources.oauth` is set (`authRequired`, i.e.
+ * `CLAD_MCP_AUTH=oauth`, plus a successfully-constructed
+ * `CladOAuthProvider` — see `server-core.ts`'s `loadOAuthProvider`). When
+ * `resources.oauth` is undefined (today's default), NOTHING new is
+ * constructed or mounted — behaviour-identical to before this change. The
+ * mounted provider's `authorize`/`token`/`verify`/`revoke` flow methods all
+ * still throw a fixed not-implemented error (Wave 4); `requireBearerAuth` is
+ * NOT mounted in front of `/mcp` yet (also Wave 4) — the `staticBearerBridge`
+ * placeholder keeps doing that job for now.
  *
  * SECURITY (preserved unchanged from the prior `node:http` transport — see
  * `http-transport.ts`'s file header for the full threat model):
  *  - The loopback-`Host` DNS-rebinding guard (`isLoopbackHost`) is installed
- *    as the FIRST middleware on the app, ahead of every route, and returns
- *    403 on a non-loopback `Host` header.
+ *    as the FIRST middleware on the app, ahead of every route (including the
+ *    OAuth router), and returns 403 on a non-loopback `Host` header.
  *  - The `/mcp` handler keeps the exact manual "read the body once, then
  *    pass `body` through" handling that
  *    `StreamableHTTPServerTransport.handleRequest(req, res, body)` expects,
@@ -25,7 +37,12 @@
  *    `express.json()` (or any other body-parsing middleware) is installed
  *    ahead of `/mcp` — that would drain the request stream before the
  *    transport (or this handler) can read it, and would change the error
- *    shape for oversized/malformed bodies.
+ *    shape for oversized/malformed bodies. The SDK's own auth handlers scope
+ *    their OWN body parsers per-route (`express.json()` inside
+ *    `clientRegistrationHandler`, `express.urlencoded()` inside
+ *    `tokenHandler` — verified against `dist/esm/server/auth/handlers/*.js`
+ *    in the installed 1.29.0), so mounting `mcpAuthRouter` at the app root
+ *    adds no global body parser either.
  *  - Every error path is written to stderr through `writeRedactedStderr`.
  *  - `x-powered-by` is disabled on the app.
  */
@@ -34,7 +51,9 @@ import { randomUUID } from 'node:crypto'
 import express, { type Express, type NextFunction, type Request, type Response } from 'express'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
+import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js'
 import { createConfiguredServer, writeRedactedStderr, type ServerResources } from './server-core.js'
+import { CLAD_SCOPES } from './oauth/scopes.js'
 
 /** The single MCP endpoint this server serves. */
 export const MCP_HTTP_PATH = '/mcp'
@@ -255,22 +274,120 @@ export interface HttpApp {
 }
 
 /**
- * Builds the Express app for the loopback HTTP MCP transport:
- * loopback-Host guard first, then the `/mcp` session-map handler, then a
- * catch-all 404 for anything else. No listening/binding happens here — that
- * stays in `http-transport.ts`'s `startHttpServer`.
+ * Wraps `res.json` for one path so `extra` fields get merged into whatever
+ * JSON body a downstream handler ends up sending — used to advertise the
+ * DPoP-optional posture (WS2 §4.1/§4.2, §5) on the two `/.well-known/*`
+ * metadata documents.
+ *
+ * Needed because `mcpAuthRouter`'s `AuthRouterOptions` (verified against
+ * `dist/esm/server/auth/router.d.ts` in the installed SDK 1.29.0) has NO
+ * option to add fields to either document: `createOAuthMetadata` (AS
+ * metadata, RFC 8414) and the inline protected-resource-metadata object
+ * literal inside `mcpAuthMetadataRouter` (RFC 9728) are both a fixed field
+ * set with nothing DPoP-shaped at all — this is a verified deviation from
+ * `.claude/plans/d5.3/WS2-oauth-resource-server.md` §4.1/§4.2, which assumed
+ * these fields were reachable through the router's options. Hand-duplicating
+ * either function's metadata construction would silently drift on every SDK
+ * upgrade; wrapping `res.json` instead lets the SDK keep computing the base
+ * document and only adds keys on top. Mounted BEFORE `mcpAuthRouter` in the
+ * middleware chain (see `buildHttpApp`) so it wraps the same `res` the SDK's
+ * own metadata handler ultimately writes to, then calls `next()` so that
+ * handler (further down the chain) still runs.
  */
-export function buildHttpApp(resources: ServerResources): HttpApp {
+function mergeMetadataFields(extra: Record<string, unknown>) {
+  return (_req: Request, res: Response, next: NextFunction): void => {
+    const originalJson = res.json.bind(res)
+    res.json = ((body: unknown) => {
+      if (body && typeof body === 'object' && !Array.isArray(body)) {
+        return originalJson({ ...(body as Record<string, unknown>), ...extra })
+      }
+      return originalJson(body)
+    }) as typeof res.json
+    next()
+  }
+}
+
+/**
+ * Builds the Express app for the loopback HTTP MCP transport: loopback-Host
+ * guard first, then (iff `resources.oauth` is set) the OAuth metadata +
+ * Dynamic Client Registration router, then the dev-only static-bearer
+ * bridge, then the `/mcp` session-map handler, then a catch-all 404. No
+ * listening/binding happens here — that stays in `http-transport.ts`'s
+ * `startHttpServer`, which resolves `opts.port` to the ACTUALLY-bound port
+ * (needed for `issuerUrl`/`resourceServerUrl` below) before calling this.
+ */
+export function buildHttpApp(resources: ServerResources, opts: { port: number }): HttpApp {
   const app = express()
   app.disable('x-powered-by')
 
-  // DNS-rebinding guard — must run before any route handling.
+  // DNS-rebinding guard — must run before any route handling, including the
+  // OAuth router.
   app.use(loopbackHostGuard)
 
-  // Dev-only static-bearer bridge (D5.3 WS3 §4) — after the loopback guard,
-  // before the `/mcp` route, so `resolvePrincipal` sees `req.auth` for any
-  // request that reaches the transport. Populates nothing when
-  // `CLAD_MCP_STATIC_BEARER` is unset or `NODE_ENV==='production'`.
+  // D5.3 WS2 S2-S3: mount the SDK's real OAuth metadata + DCR router. Mount
+  // order (WS2 §3.1): loopback guard FIRST -> auth router -> static-bearer
+  // bridge -> /mcp. Nothing here runs, and nothing is constructed, unless
+  // `resources.oauth` is set (`authRequired` — see `server-core.ts`'s
+  // `loadOAuthProvider`), so the flag-off path below is byte-identical to
+  // before this change.
+  if (resources.oauth) {
+    const issuerUrl = new URL(`http://127.0.0.1:${opts.port}`)
+    const resourceServerUrl = new URL(`http://127.0.0.1:${opts.port}${MCP_HTTP_PATH}`)
+    // RFC 9728 serves protected-resource metadata at a PATH-SPECIFIC URL
+    // derived from `resourceServerUrl` (`mcpAuthMetadataRouter`, router.js:
+    // `/.well-known/oauth-protected-resource${rsPath}`) — for `resourceServerUrl
+    // = .../mcp` that's `/.well-known/oauth-protected-resource/mcp`, NOT the
+    // bare `/.well-known/oauth-protected-resource` WS2 §4.1 assumed. Computed
+    // via the SDK's own exported helper so this can't drift from what
+    // `mcpAuthRouter` actually serves.
+    const prmPath = new URL(getOAuthProtectedResourceMetadataUrl(resourceServerUrl)).pathname
+
+    app.use(
+      prmPath,
+      mergeMetadataFields({
+        bearer_methods_supported: ['header'],
+        dpop_signing_alg_values_supported: ['ES256'],
+        // Never true server-wide (WS2 §4.1, parent §10) — DPoP is
+        // advertise-optional, enforced per-token once M3 lands.
+        dpop_bound_access_tokens_required: false,
+      })
+    )
+    app.use(
+      '/.well-known/oauth-authorization-server',
+      mergeMetadataFields({ dpop_signing_alg_values_supported: ['ES256'] })
+    )
+
+    app.use(
+      mcpAuthRouter({
+        provider: resources.oauth,
+        issuerUrl,
+        resourceServerUrl,
+        resourceName: 'Clad',
+        scopesSupported: [...CLAD_SCOPES],
+        // WS2 §10: a loopback single-user AS has no need for
+        // `express-rate-limit`'s extra state/dependency weight — explicitly
+        // disabled on every handler that accepts the option, rather than
+        // keep the SDK's on-by-default rate limiting for a server that is,
+        // by construction, unreachable from anywhere but this one OS user's
+        // own loopback interface. (There is no single top-level `rateLimit`
+        // option on `AuthRouterOptions` — verified against
+        // `dist/esm/server/auth/router.d.ts`; it's per-handler via
+        // `authorizationOptions`/`tokenOptions`/`clientRegistrationOptions`/
+        // `revocationOptions`, each `Omit<...HandlerOptions, 'provider' |
+        // 'clientsStore'>`.)
+        authorizationOptions: { rateLimit: false },
+        tokenOptions: { rateLimit: false },
+        clientRegistrationOptions: { rateLimit: false },
+        revocationOptions: { rateLimit: false },
+      })
+    )
+  }
+
+  // Dev-only static-bearer bridge (D5.3 WS3 §4) — after the loopback guard
+  // (and the OAuth router, when mounted), before the `/mcp` route, so
+  // `resolvePrincipal` sees `req.auth` for any request that reaches the
+  // transport. Populates nothing when `CLAD_MCP_STATIC_BEARER` is unset or
+  // `NODE_ENV==='production'`.
   app.use(staticBearerBridge)
 
   const transports = new Map<string, StreamableHTTPServerTransport>()

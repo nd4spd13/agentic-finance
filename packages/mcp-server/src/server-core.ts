@@ -26,11 +26,13 @@ import {
   AuditLogger,
   ApprovalQueue,
   redactSecrets,
+  SqliteGrantStore,
   type PolicyConfig,
   type FinancialDataProvider,
 } from '@clad/core'
 import type { ToolContext, ToolDefinition } from './types.js'
 import { createProvider } from './provider-factory.js'
+import { CladOAuthProvider } from './oauth/provider.js'
 
 // Import all tool handlers
 import * as getBalances from './tools/clad_get_balances.js'
@@ -166,6 +168,62 @@ export interface ServerResources {
   provider: FinancialDataProvider
   auditLogger: AuditLogger
   approvalQueue: ApprovalQueue
+  /**
+   * The OAuth resource-server provider (D5.3 WS2 S2-S3) — defined iff
+   * `authRequired` is true, `undefined` otherwise. `http-app.ts` mounts
+   * `mcpAuthRouter` only when this is set, so the flag-off path constructs
+   * and mounts NOTHING new (behaviour-identical to pre-WS2).
+   */
+  oauth?: CladOAuthProvider
+}
+
+/**
+ * Constructs the OAuth resource-server provider (D5.3 WS2 S2-S3) when
+ * `authRequired` is true (`CLAD_MCP_AUTH=oauth`). Reads `CLAD_GRANT_DB` (the
+ * `SqliteGrantStore` file path) and `CLAD_TOKEN_PASSPHRASE` (the SAME
+ * passphrase env var every other store in this process uses — WS5 §3's "zero
+ * new key custody" decision) directly from `process.env`, mirroring
+ * `provider-factory.ts`'s `createPlaidProvider`/`createSimpleFinProvider`:
+ * name every missing var, never run with a partial/implicit config.
+ *
+ * Returns `undefined` when `authRequired` is false — NOTHING is constructed
+ * (`http-app.ts` mounts `mcpAuthRouter` only when `resources.oauth` is set),
+ * so the flag-off path stays behaviour-identical to before this change.
+ *
+ * WS5 §8 "never run keyless": when `authRequired` is true and either env var
+ * is missing, this throws a FIXED, secret-free message (never the
+ * passphrase, never anything beyond the env VAR NAMES) rather than silently
+ * falling back to an unkeyed or default store — an operator who opts into
+ * `CLAD_MCP_AUTH=oauth` without also providing a grant-store path and
+ * passphrase gets a boot failure, never a silently-keyless OAuth server.
+ */
+export function loadOAuthProvider(authRequired: boolean): CladOAuthProvider | undefined {
+  if (!authRequired) return undefined
+
+  const dbPath = process.env.CLAD_GRANT_DB
+  const passphrase = process.env.CLAD_TOKEN_PASSPHRASE
+
+  const missing: string[] = []
+  if (!dbPath) missing.push('CLAD_GRANT_DB')
+  if (!passphrase) missing.push('CLAD_TOKEN_PASSPHRASE')
+  if (missing.length > 0) {
+    throw new Error(
+      `[clad server] CLAD_MCP_AUTH=oauth requires the following environment ` +
+        `variable(s), which are not set: ${missing.join(', ')}. Refusing to start ` +
+        'an OAuth-enforced server without a grant store (D5.3 WS5 §8).'
+    )
+  }
+
+  const dir = dirname(dbPath as string)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+
+  // Throws a redacted error (SqliteGrantStore mirrors SqliteTokenStore's
+  // discipline) on a wrong passphrase — propagate so the server fails fast
+  // instead of serving with a broken store.
+  const store = new SqliteGrantStore({ dbPath: dbPath as string, passphrase: passphrase as string })
+  return new CladOAuthProvider({ store })
 }
 
 /**
@@ -213,6 +271,11 @@ export async function loadServerResources(): Promise<ServerResources> {
   const provider = await createProvider({ transport, authRequired })
   const auditLogger = new AuditLogger(auditDbPath)
   const approvalQueue = new ApprovalQueue(approvalDbPath)
+  // D5.3 WS2 S2-S3: constructs the OAuth resource-server provider iff
+  // authRequired — throws at boot (never runs keyless) if CLAD_GRANT_DB /
+  // CLAD_TOKEN_PASSPHRASE are missing. Undefined, and nothing constructed,
+  // when the flag is off (today's default).
+  const oauth = loadOAuthProvider(authRequired)
 
   // Validate agent ID exists in policy; warn to stderr (not stdout — MCP protocol)
   if (!(agentId in policy.agents)) {
@@ -221,7 +284,7 @@ export async function loadServerResources(): Promise<ServerResources> {
     )
   }
 
-  return { agentId, authRequired, policy, provider, auditLogger, approvalQueue }
+  return { agentId, authRequired, policy, provider, auditLogger, approvalQueue, oauth }
 }
 
 /**

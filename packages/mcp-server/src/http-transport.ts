@@ -45,6 +45,7 @@
 
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import type { Express } from 'express'
 import { buildHttpApp, isLoopbackHost, MCP_HTTP_PATH } from './http-app.js'
 import type { ServerResources } from './server-core.js'
 
@@ -90,10 +91,24 @@ export interface HttpServerHandle {
 /**
  * Starts the loopback HTTP MCP server. Resolves once it's listening.
  *
- * Builds the Express app via `buildHttpApp` (loopback guard + `/mcp` session
+ * Builds the Express app via `buildHttpApp` (loopback guard, the OAuth
+ * metadata/DCR router when `resources.oauth` is set, and `/mcp` session
  * handling) and wraps it in a plain `node:http` server so we keep explicit
  * control over bind host/port and graceful close — Express apps are just
- * request-listener functions, so `createServer(app)` composes cleanly.
+ * request-listener functions, so composing one with `createServer` is
+ * straightforward.
+ *
+ * D5.3 WS2 S2-S3: `buildHttpApp` needs the ACTUALLY-bound port up front —
+ * mounting `mcpAuthRouter` requires an `issuerUrl`/`resourceServerUrl` that
+ * embed it. `opts.port` may be `0` (an ephemeral port — the convention every
+ * test in this package uses to avoid collisions), which isn't known until
+ * AFTER `listen()` resolves. `createServer` normally takes its request
+ * listener up front, so this binds FIRST with a thin listener that forwards
+ * to a not-yet-built app, then builds the real app (now knowing the real
+ * port) and assigns it before returning. `buildHttpApp` is synchronous (no
+ * `await` between the port becoming known and the assignment below), so
+ * there is no window in which a request could arrive to find no listener
+ * assigned.
  */
 export async function startHttpServer(
   resources: ServerResources,
@@ -102,8 +117,31 @@ export async function startHttpServer(
   const requestedPort = opts.port ?? DEFAULT_MCP_HTTP_PORT
   const host = opts.host ?? LOOPBACK_HOST
 
-  const { app, transports } = buildHttpApp(resources)
-  const httpServer = createServer(app)
+  // `requestListener` is genuinely reassigned once, below
+  // (`requestListener = app`), AFTER the closure that reads it is already
+  // created and registered with `createServer`. `let` with no initializer is
+  // the only way to express "declare now (so the closure can close over a
+  // stable binding), assign later (once the actual port is known)" —
+  // `prefer-const`'s static write-count check treats that single deferred
+  // assignment as if it were the variable's initializer (since there's no
+  // literal initializer to compare it against) and recommends `const`, but
+  // `const requestListener: Express | undefined` with no value is not valid
+  // syntax, and inlining the assignment at declaration time is impossible
+  // here (the port isn't known yet).
+  // eslint-disable-next-line prefer-const
+  let requestListener: Express | undefined
+  const httpServer = createServer((req, res) => {
+    if (!requestListener) {
+      // Provably unreachable in practice (see doc comment above — the
+      // assignment below happens synchronously right after `listen()`
+      // resolves), but fails loudly rather than hanging the connection if
+      // that invariant is ever broken by a future change.
+      res.writeHead(503, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Server starting up' }, id: null }))
+      return
+    }
+    requestListener(req, res)
+  })
 
   await new Promise<void>((resolve, reject) => {
     const onError = (err: Error) => reject(err)
@@ -115,6 +153,9 @@ export async function startHttpServer(
   })
 
   const port = (httpServer.address() as AddressInfo).port
+  const { app, transports } = buildHttpApp(resources, { port })
+  requestListener = app
+
   process.stderr.write(`[clad server] HTTP transport listening on http://${host}:${port}${MCP_HTTP_PATH}\n`)
 
   return {
