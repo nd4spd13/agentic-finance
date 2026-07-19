@@ -1,2 +1,29 @@
 packages:
   - 'packages/*'
+
+# D5.3 WS2 S2-S3 (OAuth metadata + DCR): `@modelcontextprotocol/sdk`'s
+# `server/auth/*.d.ts` files import `Response`/`RequestHandler` etc. from
+# `'express'`, relying on a CONSUMER-supplied `@types/express` (the SDK lists
+# it only as its OWN devDependency, `^5.0.0`, never installed for consumers).
+# The SDK package has no direct dependency on `@types/express` at all, so
+# TypeScript's ambient resolution for those `.d.ts` files falls through to
+# pnpm's shared `.pnpm/node_modules/@types/express` hoist slot — which, in
+# this workspace, resolves to whichever version wins the hoist conflict
+# between `packages/mcp-server`'s `@types/express@^5.0.0` (matching its real
+# `express@5.2.1` dependency, added for WS2 S1's Express port) and
+# `packages/cli`'s `@types/express@^4.17.21` (matching ITS real, unrelated
+# `express@4.19.2` dependency in `commands/ui.ts` — genuinely v4, must NOT be
+# bumped). Without this extension, the hoist slot picks v4, and every
+# `OAuthServerProvider`/`mcpAuthRouter` call site in `@clad/mcp-server` fails
+# to type-check against a `Response`/`RequestHandler` that doesn't match the
+# v5 one `@clad/mcp-server` itself uses (cross-major-version `Response.cookie`
+# overload mismatch) — a real, `tsc`-blocking bug, not a style nit.
+#
+# This gives the SDK its OWN private, correctly-versioned `@types/express`
+# copy (installed inside its own `node_modules`, ahead of the shared hoist
+# slot in Node's resolution order) without touching `packages/cli`'s pinned
+# v4 types at all.
+packageExtensions:
+  '@modelcontextprotocol/sdk':
+    dependencies:
+      '@types/express': '^5.0.0'

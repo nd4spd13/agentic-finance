@@ -93,6 +93,13 @@ export function buildServerEnv(
     CLAD_PROVIDER: config.provider,
     CLAD_PLAID_DB: effectivePlaidDbPath(config, config.plaid_env),
     CLAD_SIMPLEFIN_DB: config.simplefin_db,
+    // D5.3 WS2 S2-S3 (#80): the SqliteGrantStore path the supervised child's
+    // server-core.ts opens when CLAD_MCP_AUTH=oauth (loadOAuthProvider).
+    // Forwarded unconditionally, mirroring CLAD_SIMPLEFIN_DB/CLAD_PLAID_DB
+    // above — CLAD_MCP_AUTH itself is NOT set here (that's the Wave-6 flip),
+    // so this is inert today, exactly like the other provider DB paths are
+    // for a provider that isn't active.
+    CLAD_GRANT_DB: config.grant_db,
     // The spawned child is always the Electron binary run as plain Node
     // (see mcp-server-path.ts's doc comment) — never a system `node`.
     ELECTRON_RUN_AS_NODE: '1',

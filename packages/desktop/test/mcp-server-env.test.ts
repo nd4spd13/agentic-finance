@@ -17,6 +17,7 @@ describe('buildServerEnv', () => {
     expect(env.CLAD_PROVIDER).toBe('dummy')
     expect(env.CLAD_PLAID_DB).toBe(effectivePlaidDbPath(config, config.plaid_env))
     expect(env.CLAD_SIMPLEFIN_DB).toBe(config.simplefin_db)
+    expect(env.CLAD_GRANT_DB).toBe(config.grant_db)
     expect(env.ELECTRON_RUN_AS_NODE).toBe('1')
   })
 
@@ -95,6 +96,22 @@ describe('buildServerEnv', () => {
     // sandbox) — see the 'env scoping' describe block below.
     expect(env.CLAD_PLAID_DB).toBe(effectivePlaidDbPath(config, config.plaid_env))
     expect(env.CLAD_SIMPLEFIN_DB).toBe(config.simplefin_db)
+  })
+
+  /**
+   * D5.3 WS2 S2-S3 (#80) — CLAD_GRANT_DB is forwarded unconditionally, the
+   * same way CLAD_SIMPLEFIN_DB/CLAD_PLAID_DB are: it's the path the
+   * supervised child's SqliteGrantStore would open IF CLAD_MCP_AUTH=oauth
+   * were also set, and that flag is deliberately NOT set by this function
+   * (the Wave-6 flip), so forwarding the path unconditionally is inert today
+   * and requires no provider gating.
+   */
+  it('always forwards CLAD_GRANT_DB from config.grant_db, regardless of provider', () => {
+    for (const provider of ['dummy', 'plaid', 'simplefin'] as const) {
+      const config = { ...defaultConfig(), provider }
+      const env = buildServerEnv(config)
+      expect(env.CLAD_GRANT_DB).toBe(config.grant_db)
+    }
   })
 
   /**
