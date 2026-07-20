@@ -65,8 +65,15 @@ export interface ConsentContext {
 
 /**
  * The consent outcome. On approval it carries the human-chosen `profileId`
- * (server-side authority — never a client claim) and whether the token should
- * be DPoP-bound (M2: always `false`; the seam exists for M3).
+ * (server-side authority — never a client claim).
+ *
+ * `dpopBound` is retained for back-compat but is NO LONGER the authoritative
+ * source of the grant's DPoP binding (M3, Wave 7): the human doesn't choose
+ * DPoP — the CLIENT either presents a DPoP key or not. Both consent paths
+ * (`provider.ts`'s fake-consent tail and `consent-http.ts`'s decision route)
+ * now derive the binding from `assessment.maxScopeSensitivity === 'high'` (the
+ * trust provider sets that iff the client declared a `dpop_jkt` at
+ * `/authorize`), so this field is advisory only.
  */
 export type ConsentDecision =
   | { approved: true; profileId: string; dpopBound: boolean }

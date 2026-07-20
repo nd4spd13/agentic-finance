@@ -34,9 +34,17 @@
  *  - `revokeToken` — deletes the presented token; the live `verifyAccessToken`
  *    lookup then rejects the very next request (acceptance #3 mechanism).
  *
- * DPoP posture (parent §10): bearer-baseline. Tokens are plain Bearer in M2;
- * the `jkt` seam (`StoredToken.jkt` → `AuthInfo.extra.jkt`) is carried but
- * always `undefined` here. DPoP is NEVER mandated (see `dpop.ts`).
+ * DPoP posture (parent §10, M3 — Wave 7): bearer-baseline, bound PER-TOKEN,
+ * NEVER mandated. A token is plain Bearer unless the client presented a DPoP
+ * proof at `/token`, in which case the proof's RFC 7638 thumbprint is bound into
+ * `StoredToken.jkt` (access + refresh) and surfaced on `AuthInfo.extra.jkt`,
+ * which `dpop.ts`'s `/mcp` gate then enforces on every request. High-sensitivity
+ * scopes are gated on DPoP at `/authorize` (a client that declares a `dpop_jkt`
+ * is assessed `maxScopeSensitivity: 'high'`); such a grant records
+ * `dpopBound: true`, and `exchangeAuthorizationCode`/`exchangeRefreshToken`
+ * REQUIRE a matching proof at `/token` so a high-scope grant can never downgrade
+ * to a bearer token. The DPoP proof reaches these methods (which get no request
+ * object) via `dpop.ts`'s `getBoundDpopProof()` async-context side channel.
  *
  * SECURITY (WS2 §10 checklist): opaque tokens are `randomBytes(32)` base64url,
  * stored ONLY as SHA-256 hashes (WS5); no token / code / secret / passphrase
@@ -69,6 +77,7 @@ import type {
   TrustProvider,
 } from '@clad/core'
 import type { ConsentFn, ConsentRequest } from './consent.js'
+import { getBoundDpopProof } from './dpop.js'
 
 /** Single-use PKCE authorization code lifetime (WS2 §10: 60s). */
 const AUTH_CODE_TTL_MS = 60_000
@@ -146,7 +155,11 @@ export async function finalizeApprovedAuthorization(
     clientId,
     profileId,
     scopes,
-    dpopBound, // M2: always false
+    // M3: true iff the client declared a DPoP key at `/authorize` (callers pass
+    // `assessment.maxScopeSensitivity === 'high'`, which the local trust
+    // provider sets iff `dpopJkt` was present). A `dpopBound` grant REQUIRES a
+    // matching proof at `/token` (see `exchangeAuthorizationCode`).
+    dpopBound,
     assuranceLevel: assessment.assuranceLevel,
     maxScopeSensitivity: assessment.maxScopeSensitivity,
   })
@@ -284,12 +297,23 @@ export class CladOAuthProvider implements OAuthServerProvider {
   }
 
   async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
-    // 1. Trust assessment (WS7) — BEFORE any consent screen. Bearer-only in M2
-    //    (no dpopJkt), so the assessment caps scope sensitivity at 'low'.
+    // 1. Trust assessment (WS7) — BEFORE any consent screen. A client declares
+    //    its DPoP intent via the RFC 9449 §10 `dpop_jkt` authorization request
+    //    parameter (the thumbprint of the key it will prove possession of at
+    //    `/token`). The SDK's `AuthorizationParams` doesn't surface it and
+    //    `authorize()` gets no request object, so we read it off the live
+    //    request via `res.req` (Express's public back-reference — the same
+    //    coupling `res.headersSent` below already relies on). A test's fake
+    //    `res` has no `req`, so `dpopJkt` is `undefined` there (bearer). When
+    //    present, the local trust provider assesses `maxScopeSensitivity: 'high'`,
+    //    so this client can be minted the action-bearing scope; absent, it is
+    //    capped at 'low'.
+    const dpopJkt = readDpopJktParam(res)
     const claim: AgentIdentityClaim = {
       clientId: client.client_id,
       clientName: client.client_name,
       redirectUris: client.redirect_uris,
+      ...(dpopJkt !== undefined ? { dpopJkt } : {}),
     }
     const assessment = await this.deps.trust.assessClient(claim)
     if (assessment.assuranceLevel === 'none' || assessment.eligibleProfiles.length === 0) {
@@ -347,7 +371,12 @@ export class CladOAuthProvider implements OAuthServerProvider {
       assessment,
       params,
       decision.profileId,
-      decision.dpopBound
+      // The grant is DPoP-bound iff the client declared a DPoP key at
+      // `/authorize` — which is exactly what drove `maxScopeSensitivity: 'high'`.
+      // Deriving it from the assessment (not `decision.dpopBound`) means the
+      // authoritative binding can never diverge from the scope ceiling, and is
+      // identical to the derivation `consent-http.ts` uses on its own path.
+      assessment.maxScopeSensitivity === 'high'
     )
     res.redirect(302, redirect.href)
   }
@@ -389,9 +418,21 @@ export class CladOAuthProvider implements OAuthServerProvider {
       throw new InvalidGrantError('redirect_uri does not match the authorization request.')
     }
 
+    // DPoP binding (M3). The proof presented at THIS `/token` request was
+    // validated by `dpop.ts`'s `dpopTokenBinding` middleware and reaches us via
+    // the async-context side channel (this method gets no request object).
+    //  - A `dpopBound` grant (declared a DPoP key at `/authorize`, hence its
+    //    high-sensitivity scope) MUST present a proof here, or the token would
+    //    silently downgrade to bearer while carrying an action-bearing scope.
+    //  - A bearer grant with a proof present still opts in to binding (DPoP is
+    //    per-token optional); a bearer grant with no proof stays plain Bearer.
+    const proof = getBoundDpopProof()
+    if (grant.dpopBound && proof === undefined) {
+      throw new InvalidGrantError('This authorization is DPoP-bound; a DPoP proof is required at the token endpoint.')
+    }
     // Scope was minted server-side at consent from the grant's profile — reuse
     // it; never read a client-supplied scope (WS2 §6 invariant).
-    return this.issueTokens(grant.grantId, grant.scopes, grant.dpopBound)
+    return this.issueTokens(grant.grantId, grant.scopes, proof?.jkt)
   }
 
   async exchangeRefreshToken(
@@ -412,6 +453,23 @@ export class CladOAuthProvider implements OAuthServerProvider {
       throw new InvalidGrantError('Refresh token was not issued to this client.')
     }
 
+    // DPoP binding is PRESERVED across rotation (M3). If the presented refresh
+    // token was DPoP-bound, the caller must prove possession of the SAME key
+    // again — a leaked refresh token is useless without the private key — and
+    // the rotated pair stays bound to that same thumbprint. A bearer refresh
+    // token stays bearer (any presented proof is ignored on that path, so the
+    // plain-Bearer flow is byte-identical to before M3).
+    const proof = getBoundDpopProof()
+    if (stored.jkt !== undefined) {
+      if (proof === undefined) {
+        throw new InvalidGrantError('This refresh token is DPoP-bound; a DPoP proof is required at the token endpoint.')
+      }
+      if (proof.jkt !== stored.jkt) {
+        throw new InvalidGrantError('DPoP proof key does not match the DPoP-bound refresh token.')
+      }
+    }
+    const jkt = stored.jkt
+
     // Re-mint against the grant's ORIGINAL stored scope/assessment (WS7 §4:
     // never silently re-assess mid-grant). Rotate the refresh token so a
     // leaked one is single-use.
@@ -424,7 +482,7 @@ export class CladOAuthProvider implements OAuthServerProvider {
       tokenHash: this.hash(accessToken),
       kind: 'access',
       grantId: grant.grantId,
-      jkt: undefined, // bearer baseline (M2)
+      jkt, // preserve the binding (undefined for a bearer refresh)
       expiresAt: now + ACCESS_TOKEN_TTL_MS,
       createdAt,
     })
@@ -432,13 +490,13 @@ export class CladOAuthProvider implements OAuthServerProvider {
       tokenHash: this.hash(newRefreshToken),
       kind: 'refresh',
       grantId: grant.grantId,
-      jkt: undefined,
+      jkt,
       expiresAt: now + REFRESH_TOKEN_TTL_MS,
       createdAt,
       rotatedFrom: stored.tokenHash,
     })
 
-    return this.tokensResponse(accessToken, newRefreshToken, grant.scopes, grant.dpopBound, now + ACCESS_TOKEN_TTL_MS, now)
+    return this.tokensResponse(accessToken, newRefreshToken, grant.scopes, jkt, now + ACCESS_TOKEN_TTL_MS, now)
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
@@ -484,8 +542,12 @@ export class CladOAuthProvider implements OAuthServerProvider {
     this.deps.store.deleteToken(request.token)
   }
 
-  /** Issues + persists an opaque access/refresh pair for a grant, returning the SDK `OAuthTokens`. */
-  private issueTokens(grantId: string, scopes: string[], dpopBound: boolean): OAuthTokens {
+  /**
+   * Issues + persists an opaque access/refresh pair for a grant, returning the
+   * SDK `OAuthTokens`. `jkt` is the DPoP thumbprint to bind both tokens to
+   * (`undefined` for a plain-Bearer issuance).
+   */
+  private issueTokens(grantId: string, scopes: string[], jkt: string | undefined): OAuthTokens {
     const now = this.now()
     const createdAt = new Date(now).toISOString()
     const accessToken = mintOpaqueToken()
@@ -496,7 +558,7 @@ export class CladOAuthProvider implements OAuthServerProvider {
       tokenHash: this.hash(accessToken),
       kind: 'access',
       grantId,
-      jkt: undefined,
+      jkt,
       expiresAt: accessExpiresAt,
       createdAt,
     })
@@ -504,30 +566,45 @@ export class CladOAuthProvider implements OAuthServerProvider {
       tokenHash: this.hash(refreshToken),
       kind: 'refresh',
       grantId,
-      jkt: undefined,
+      jkt,
       expiresAt: now + REFRESH_TOKEN_TTL_MS,
       createdAt,
     })
 
-    return this.tokensResponse(accessToken, refreshToken, scopes, dpopBound, accessExpiresAt, now)
+    return this.tokensResponse(accessToken, refreshToken, scopes, jkt, accessExpiresAt, now)
   }
 
   private tokensResponse(
     accessToken: string,
     refreshToken: string,
     scopes: string[],
-    dpopBound: boolean,
+    jkt: string | undefined,
     accessExpiresAt: number,
     now: number
   ): OAuthTokens {
     return {
       access_token: accessToken,
-      // Bearer baseline (M2). `dpopBound` is always false today; the branch is
-      // the M3 seam (parent §10 — never mandated server-wide).
-      token_type: dpopBound ? 'DPoP' : 'Bearer',
+      // `DPoP` iff the tokens are sender-constrained to a proof key; plain
+      // `Bearer` otherwise (parent §10 — DPoP is never mandated server-wide).
+      token_type: jkt !== undefined ? 'DPoP' : 'Bearer',
       expires_in: Math.floor((accessExpiresAt - now) / 1000),
       refresh_token: refreshToken,
       scope: scopes.join(' '),
     }
   }
+}
+
+/**
+ * Reads the RFC 9449 §10 `dpop_jkt` authorization request parameter off the
+ * live request behind `res` (`res.req`, Express's public request back-reference).
+ * Returns the thumbprint string, or `undefined` when absent, non-string
+ * (repeated query param → array), empty, or when `res` has no `req` (a unit
+ * test's fake `Response`). This never trusts it as identity — it is only a hint
+ * that the client intends to use DPoP, which the trust provider turns into a
+ * scope-sensitivity ceiling; possession is proven for real at `/token`.
+ */
+function readDpopJktParam(res: Response): string | undefined {
+  const req = (res as unknown as { req?: { query?: Record<string, unknown> } }).req
+  const raw = req?.query?.dpop_jkt
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined
 }
