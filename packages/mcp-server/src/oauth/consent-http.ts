@@ -294,7 +294,11 @@ export function createHttpConsent(deps: HttpConsentDeps): HttpConsent {
       record.assessment,
       record.params,
       profileId,
-      false // M2 bearer baseline — dpopBound is always false until M3.
+      // M3: DPoP-bound iff the client declared a DPoP key at `/authorize` —
+      // recorded in the assessment's scope ceiling. Same derivation
+      // `CladOAuthProvider.authorize()` uses on the fake-consent path, so the
+      // two consent routes can never disagree on the binding.
+      record.assessment.maxScopeSensitivity === 'high'
     )
       .then((redirect) => res.redirect(302, redirect.href))
       .catch(() => {

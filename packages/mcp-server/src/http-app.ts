@@ -59,7 +59,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import { createConfiguredServer, writeRedactedStderr, type ServerResources } from './server-core.js'
 import { CLAD_SCOPES } from './oauth/scopes.js'
 import type { CladOAuthProvider } from './oauth/provider.js'
-import { dpopEnforcement } from './oauth/dpop.js'
+import { dpopEnforcement, dpopTokenBinding } from './oauth/dpop.js'
 
 /** The single MCP endpoint this server serves. */
 export const MCP_HTTP_PATH = '/mcp'
@@ -423,7 +423,20 @@ export function buildHttpApp(resources: ServerResources, opts: { port: number })
     // for us because `getClient` returns no secret). Public clients pass
     // through (PKCE authenticates them). Scoped to `/token` only — never a
     // global body parser ahead of `/mcp`.
-    app.use('/token', express.urlencoded({ extended: false }), confidentialClientSecretGuard(resources.oauth))
+    //
+    // D5.3 M3 (Wave 7): `dpopTokenBinding` runs next, still `/token`-scoped. If
+    // the request carries a `DPoP` header it validates the proof (RFC 9449 §4.3,
+    // no `ath` — no access token exists yet) and runs the SDK's downstream token
+    // handler inside an async context the provider's `exchange*` methods read to
+    // bind the proof's thumbprint into the issued tokens. A bad proof 400s here,
+    // before any token is minted; no header at all passes straight through
+    // (plain-Bearer issuance, unchanged).
+    app.use(
+      '/token',
+      express.urlencoded({ extended: false }),
+      confidentialClientSecretGuard(resources.oauth),
+      dpopTokenBinding()
+    )
 
     app.use(
       mcpAuthRouter({
@@ -485,10 +498,12 @@ export function buildHttpApp(resources: ServerResources, opts: { port: number })
   //    consumes. A missing/invalid/expired/revoked token 401s here, before any
   //    tool handler runs, with a `WWW-Authenticate` header naming the PRM URL
   //    so an MCP client (mcp-remote/Claude) knows to start the OAuth dance.
-  //  - `dpopEnforcement` is a documented pass-through in M2 (bearer baseline);
-  //    Wave 7 fills in the RFC 9449 proof checks. Its position in the chain
-  //    (after `requireBearerAuth`, which populates `req.auth`) is fixed now so
-  //    M3 is a drop-in body replacement.
+  //  - `dpopEnforcement` (D5.3 M3, Wave 7) runs AFTER `requireBearerAuth` has
+  //    populated `req.auth`: a token WITHOUT a bound `jkt` (plain Bearer) passes
+  //    through untouched (bearer baseline); a token WITH a bound `jkt` requires
+  //    a valid RFC 9449 DPoP proof whose thumbprint matches, else 401. This is
+  //    the downgrade-safe rule — a sender-constrained token can never be
+  //    replayed as plain Bearer.
   if (resources.oauth) {
     const resourceServerUrl = new URL(`http://127.0.0.1:${opts.port}${MCP_HTTP_PATH}`)
     const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resourceServerUrl)
