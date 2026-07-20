@@ -31,11 +31,12 @@ import {
   type PolicyConfig,
   type FinancialDataProvider,
 } from '@clad/core'
+import type { Router } from 'express'
 import type { ToolContext, ToolDefinition } from './types.js'
 import { createProvider } from './provider-factory.js'
 import { CladOAuthProvider } from './oauth/provider.js'
 import { mintScopesForProfile, scopeSensitivity } from './oauth/scope-minter.js'
-import { denyingConsent } from './oauth/consent.js'
+import { createHttpConsent } from './oauth/consent-http.js'
 
 // Import all tool handlers
 import * as getBalances from './tools/clad_get_balances.js'
@@ -178,20 +179,32 @@ export interface ServerResources {
    * and mounts NOTHING new (behaviour-identical to pre-WS2).
    */
   oauth?: CladOAuthProvider
+  /**
+   * `POST /authorize/decision` (D5.3 WS4 S3 —
+   * `.claude/plans/d5.3/WS4-consent-revocation-ui.md`) — the real consent
+   * screen's decision route, paired 1:1 with `oauth`'s injected `ConsentFn`
+   * (`loadOAuthProvider`). `undefined` whenever `oauth` is (flag off, or a
+   * test that constructs `ServerResources` with a programmatic consent seam
+   * and no real HTTP consent page to complete). `http-app.ts` mounts this
+   * only when it's set.
+   */
+  oauthConsentRouter?: Router
 }
 
 /**
- * Constructs the OAuth resource-server provider (D5.3 WS2 S2-S3) when
- * `authRequired` is true (`CLAD_MCP_AUTH=oauth`). Reads `CLAD_GRANT_DB` (the
- * `SqliteGrantStore` file path) and `CLAD_TOKEN_PASSPHRASE` (the SAME
- * passphrase env var every other store in this process uses — WS5 §3's "zero
- * new key custody" decision) directly from `process.env`, mirroring
- * `provider-factory.ts`'s `createPlaidProvider`/`createSimpleFinProvider`:
- * name every missing var, never run with a partial/implicit config.
+ * Constructs the OAuth resource-server provider AND its paired real consent
+ * decision router (D5.3 WS2 S2-S3 + WS4 S3) when `authRequired` is true
+ * (`CLAD_MCP_AUTH=oauth`). Reads `CLAD_GRANT_DB` (the `SqliteGrantStore` file
+ * path) and `CLAD_TOKEN_PASSPHRASE` (the SAME passphrase env var every other
+ * store in this process uses — WS5 §3's "zero new key custody" decision)
+ * directly from `process.env`, mirroring `provider-factory.ts`'s
+ * `createPlaidProvider`/`createSimpleFinProvider`: name every missing var,
+ * never run with a partial/implicit config.
  *
- * Returns `undefined` when `authRequired` is false — NOTHING is constructed
- * (`http-app.ts` mounts `mcpAuthRouter` only when `resources.oauth` is set),
- * so the flag-off path stays behaviour-identical to before this change.
+ * Returns `{}` when `authRequired` is false — NOTHING is constructed
+ * (`http-app.ts` mounts `mcpAuthRouter`/the decision route only when
+ * `resources.oauth`/`resources.oauthConsentRouter` are set), so the flag-off
+ * path stays behaviour-identical to before this change.
  *
  * WS5 §8 "never run keyless": when `authRequired` is true and either env var
  * is missing, this throws a FIXED, secret-free message (never the
@@ -200,16 +213,20 @@ export interface ServerResources {
  * `CLAD_MCP_AUTH=oauth` without also providing a grant-store path and
  * passphrase gets a boot failure, never a silently-keyless OAuth server.
  *
- * D5.3 Wave 4 (WS2 S4-S6 / WS7): the provider is now wired with the REAL
- * scope-minting `TrustProvider` (`LocalConsentTrustProvider` injected with
- * `mintScopesForProfile`/`scopeSensitivity`) and a `PolicyConfig`. The consent
- * step defaults to `denyingConsent` — the mcp-server child has no way to render
- * the WS4 desktop consent window (Wave 5), so `/authorize` safely dead-ends in
- * an `access_denied` redirect until that screen exists, rather than minting a
- * grant with no human in the loop.
+ * D5.3 Wave 5 (WS4 S3): the provider is wired with the REAL scope-minting
+ * `TrustProvider` (`LocalConsentTrustProvider` injected with
+ * `mintScopesForProfile`/`scopeSensitivity`), a `PolicyConfig`, and the REAL
+ * `consent-http.ts` implementation — a loopback-served HTML consent page,
+ * `POST /authorize/decision` completing or denying the pending authorization.
+ * `store`/`trust` are constructed ONCE here and shared between the provider
+ * and the consent router (both need the same `finalizeApprovedAuthorization`
+ * deps — see `consent-http.ts`'s header doc), never duplicated.
  */
-export function loadOAuthProvider(authRequired: boolean, policy: PolicyConfig): CladOAuthProvider | undefined {
-  if (!authRequired) return undefined
+function loadOAuthResources(
+  authRequired: boolean,
+  policy: PolicyConfig
+): { oauth?: CladOAuthProvider; oauthConsentRouter?: Router } {
+  if (!authRequired) return {}
 
   const dbPath = process.env.CLAD_GRANT_DB
   const passphrase = process.env.CLAD_TOKEN_PASSPHRASE
@@ -235,7 +252,26 @@ export function loadOAuthProvider(authRequired: boolean, policy: PolicyConfig): 
   // instead of serving with a broken store.
   const store = new SqliteGrantStore({ dbPath: dbPath as string, passphrase: passphrase as string })
   const trust = new LocalConsentTrustProvider(policy, mintScopesForProfile, scopeSensitivity)
-  return new CladOAuthProvider({ store, policy, trust, requestConsent: denyingConsent })
+  const { consentFn, decisionRouter } = createHttpConsent({ store, trust, policy })
+  const oauth = new CladOAuthProvider({ store, policy, trust, requestConsent: consentFn })
+  return { oauth, oauthConsentRouter: decisionRouter }
+}
+
+/**
+ * Public accessor for just the provider half of {@link loadOAuthResources} —
+ * kept as its OWN function (rather than inlining `loadOAuthResources(...).oauth`
+ * at every call site) because it is this module's stable, directly-tested
+ * surface (`test/oauth/boot.test.ts`): same signature, same throw behaviour,
+ * same `CladOAuthProvider | undefined` return shape as before this change.
+ * `loadServerResources` below calls `loadOAuthResources` directly instead, so
+ * the (env-validated, potentially throwing) construction work only happens
+ * once per process even though it needs both halves.
+ */
+export function loadOAuthProvider(
+  authRequired: boolean,
+  policy: PolicyConfig = { agents: {} }
+): CladOAuthProvider | undefined {
+  return loadOAuthResources(authRequired, policy).oauth
 }
 
 /**
@@ -283,12 +319,13 @@ export async function loadServerResources(): Promise<ServerResources> {
   const provider = await createProvider({ transport, authRequired })
   const auditLogger = new AuditLogger(auditDbPath)
   const approvalQueue = new ApprovalQueue(approvalDbPath)
-  // D5.3 WS2 S2-S6: constructs the OAuth resource-server provider iff
-  // authRequired — throws at boot (never runs keyless) if CLAD_GRANT_DB /
-  // CLAD_TOKEN_PASSPHRASE are missing. Undefined, and nothing constructed,
-  // when the flag is off (today's default). Wave 4 passes `policy` so the
-  // provider's trust/scope-minting is real.
-  const oauth = loadOAuthProvider(authRequired, policy)
+  // D5.3 WS2 S2-S6 / WS4 S3: constructs the OAuth resource-server provider +
+  // its paired real consent decision router iff authRequired — throws at boot
+  // (never runs keyless) if CLAD_GRANT_DB / CLAD_TOKEN_PASSPHRASE are missing.
+  // Both undefined, and nothing constructed, when the flag is off (today's
+  // default). `policy` makes the provider's trust/scope-minting AND the
+  // consent page's scope preview real.
+  const { oauth, oauthConsentRouter } = loadOAuthResources(authRequired, policy)
 
   // Validate agent ID exists in policy; warn to stderr (not stdout — MCP protocol)
   if (!(agentId in policy.agents)) {
@@ -297,7 +334,7 @@ export async function loadServerResources(): Promise<ServerResources> {
     )
   }
 
-  return { agentId, authRequired, policy, provider, auditLogger, approvalQueue, oauth }
+  return { agentId, authRequired, policy, provider, auditLogger, approvalQueue, oauth, oauthConsentRouter }
 }
 
 /**

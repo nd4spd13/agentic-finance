@@ -13,17 +13,20 @@
  * `CLAD_MCP_STATIC_BEARER` and `NODE_ENV!=='production'` — standing in for
  * `requireBearerAuth` until WS2 lands.
  *
- * D5.3 WS2 S2-S3 (this change) mounts the SDK's real `mcpAuthRouter` — RFC
- * 8414 + RFC 9728 metadata and RFC 7591 Dynamic Client Registration — but
- * ONLY when `resources.oauth` is set (`authRequired`, i.e.
- * `CLAD_MCP_AUTH=oauth`, plus a successfully-constructed
- * `CladOAuthProvider` — see `server-core.ts`'s `loadOAuthProvider`). When
- * `resources.oauth` is undefined (today's default), NOTHING new is
- * constructed or mounted — behaviour-identical to before this change. The
- * mounted provider's `authorize`/`token`/`verify`/`revoke` flow methods all
- * still throw a fixed not-implemented error (Wave 4); `requireBearerAuth` is
- * NOT mounted in front of `/mcp` yet (also Wave 4) — the `staticBearerBridge`
- * placeholder keeps doing that job for now.
+ * D5.3 WS2 S2-S3 mounted the SDK's real `mcpAuthRouter` — RFC 8414 + RFC 9728
+ * metadata and RFC 7591 Dynamic Client Registration — but ONLY when
+ * `resources.oauth` is set (`authRequired`, i.e. `CLAD_MCP_AUTH=oauth`, plus a
+ * successfully-constructed `CladOAuthProvider` — see `server-core.ts`'s
+ * `loadOAuthProvider`). When `resources.oauth` is undefined (today's
+ * default), NOTHING new is constructed or mounted — behaviour-identical to
+ * before that change. WS2 S4-S6 (Wave 4) implemented `authorize`/`token`/
+ * `verify`/`revoke` for real and mounted `requireBearerAuth` in front of
+ * `/mcp`; the `staticBearerBridge` placeholder below now only matters when
+ * `resources.oauth` is unset. WS4 S3 (Wave 5, this change) mounts
+ * `resources.oauthConsentRouter` (`POST /authorize/decision` —
+ * `consent-http.ts`) right after `mcpAuthRouter`, giving `authorize()`'s real
+ * consent implementation somewhere to redirect the human's approve/deny
+ * back to.
  *
  * SECURITY (preserved unchanged from the prior `node:http` transport — see
  * `http-transport.ts`'s file header for the full threat model):
@@ -446,6 +449,22 @@ export function buildHttpApp(resources: ServerResources, opts: { port: number })
         revocationOptions: { rateLimit: false },
       })
     )
+
+    // D5.3 WS4 S3: the real consent screen's decision route
+    // (`POST /authorize/decision`, `consent-http.ts`). `/authorize/decision`
+    // does NOT collide with `mcpAuthRouter`'s own `/authorize` mount — the
+    // SDK's `authorizationHandler` is itself mounted as a sub-router matching
+    // ONLY the exact path `/authorize` (`router.all('/', ...)` inside a
+    // `router.use('/authorize', ...)` mount), so a request to
+    // `/authorize/decision` falls through it untouched and reaches this
+    // router. Present only when `loadOAuthProvider` successfully built the
+    // real consent implementation (always, when `resources.oauth` is set —
+    // see `server-core.ts`'s `loadOAuthResources`); absent in any test that
+    // constructs `ServerResources` with a programmatic `ConsentFn` and no
+    // paired router.
+    if (resources.oauthConsentRouter) {
+      app.use(resources.oauthConsentRouter)
+    }
   }
 
   // Dev-only static-bearer bridge (D5.3 WS3 §4) — after the loopback guard

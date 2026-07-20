@@ -3,13 +3,24 @@
  * WS2, `.claude/plans/d5.3/WS2-oauth-resource-server.md`).
  *
  * Waves S2-S3 landed the REAL DCR `clientsStore` over `SqliteGrantStore`.
- * Wave 4 (S4-S6, THIS change) implements the six flow methods for real:
+ * Wave 4 (S4-S6) implemented the six flow methods for real. Wave 5 (WS4 S3,
+ * `.claude/plans/d5.3/WS4-consent-revocation-ui.md`) replaced the
+ * deny-by-default `ConsentFn` with a real loopback-served consent page
+ * (`consent-http.ts`) and extracted `authorize()`'s post-consent logic into
+ * the standalone {@link finalizeApprovedAuthorization} below it (see that
+ * function's doc comment for why):
  *  - `authorize` — authorization-code flow with S256 PKCE. The human consent
- *    step routes through an injectable {@link ConsentFn} seam (WS4/Wave 5
- *    supplies the real Electron screen; a safe deny-by-default is used when
- *    none is injected). Client eligibility + scope ceiling route through the
- *    `TrustProvider` (WS7). A pending grant + single-use auth code are
- *    persisted; on approval we redirect with `code`+`state`.
+ *    step routes through an injectable {@link ConsentFn} seam (`consent-http.ts`
+ *    supplies the real HTML consent screen; a safe deny-by-default is used
+ *    when none is injected). Client eligibility + scope ceiling route through
+ *    the `TrustProvider` (WS7). For the real interactive `ConsentFn`, which
+ *    renders directly onto `res` and answers the decision LATER from a
+ *    separate `POST /authorize/decision` request, `authorize()` detects
+ *    `res.headersSent` and stops — `finalizeApprovedAuthorization` (called
+ *    from `consent-http.ts` on approval) does the rest. For a fake/test
+ *    `ConsentFn` that resolves inline, `authorize()`'s own tail calls the
+ *    SAME function and persists the grant + single-use auth code, redirecting
+ *    with `code`+`state`.
  *  - `challengeForAuthorizationCode` — returns the stored S256 challenge (a
  *    non-consuming peek) so the SDK's token handler can verify `code_verifier`.
  *  - `exchangeAuthorizationCode` — single-use code redemption (replay + expiry
@@ -54,6 +65,7 @@ import type {
   GrantStore,
   PolicyConfig,
   StoredClient,
+  TrustAssessment,
   TrustProvider,
 } from '@clad/core'
 import type { ConsentFn, ConsentRequest } from './consent.js'
@@ -64,6 +76,100 @@ const AUTH_CODE_TTL_MS = 60_000
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000
 /** Refresh-token lifetime — rotated on every use (WS5 §8). */
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
+/** Opaque token/code generator shared by every mint site in this module. */
+function mintOpaqueToken(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+/**
+ * Dependencies {@link finalizeApprovedAuthorization} needs — a subset of
+ * {@link CladOAuthProviderDeps} (no `requestConsent`: this function only ever
+ * runs AFTER a decision is already approved).
+ */
+export interface FinalizeAuthorizationDeps {
+  store: GrantStore
+  trust: TrustProvider
+  policy: PolicyConfig
+  now?: () => number
+}
+
+/**
+ * Turns an APPROVED consent decision into a persisted grant + single-use auth
+ * code + success redirect URL (steps that used to live inline at the tail of
+ * `authorize()`, extracted in WS4 S3 —
+ * `.claude/plans/d5.3/WS4-consent-revocation-ui.md`).
+ *
+ * Shared by two callers, which is the entire reason this is a standalone
+ * function rather than a private method:
+ *  - `CladOAuthProvider.authorize()`'s tail, for a fake/test `ConsentFn` that
+ *    resolves inline within the SAME `GET /authorize` response (unchanged
+ *    behaviour from Wave 4 — this is a pure extraction for that path).
+ *  - `consent-http.ts`'s `POST /authorize/decision` route, for the REAL
+ *    interactive consent flow, where the decision arrives from a SEPARATE
+ *    HTTP request (a different `res`) potentially minutes after `authorize()`
+ *    already returned. One implementation means acceptance #1's set-once
+ *    binding and WS2 §6's server-only scope minting can never drift between
+ *    the two paths.
+ *
+ * Re-checks profile eligibility and the set-once client→profile binding
+ * itself (defence-in-depth against a caller that skips those checks) and
+ * throws `AccessDeniedError` — never the store's raw error — on either
+ * failure. Never called for a deny.
+ */
+export async function finalizeApprovedAuthorization(
+  deps: FinalizeAuthorizationDeps,
+  clientId: string,
+  assessment: TrustAssessment,
+  params: { redirectUri: string; codeChallenge: string; state?: string },
+  profileId: string,
+  dpopBound: boolean
+): Promise<URL> {
+  // Defence-in-depth: consent can never select a profile the trust layer
+  // didn't deem eligible (parent §1 — the binding is a server decision).
+  if (!assessment.eligibleProfiles.includes(profileId)) {
+    throw new AccessDeniedError('Selected profile is not eligible for this client.')
+  }
+  // Enforce the set-once client→profile binding (acceptance #1) with a clean
+  // access_denied rather than the store's raw throw.
+  const existingBinding = deps.store.getClient(clientId)?.boundProfileId
+  if (existingBinding !== undefined && existingBinding !== profileId) {
+    throw new AccessDeniedError('Client is already bound to a different profile.')
+  }
+
+  // Mint the granted scope for the bound profile (never client-supplied).
+  const scopes = await deps.trust.mintScopes({ profileId, policy: deps.policy, assessment })
+
+  // Persist the binding + the consented grant + a single-use auth code.
+  deps.store.bindClientProfile(clientId, profileId)
+  const grant = deps.store.createGrant({
+    clientId,
+    profileId,
+    scopes,
+    dpopBound, // M2: always false
+    assuranceLevel: assessment.assuranceLevel,
+    maxScopeSensitivity: assessment.maxScopeSensitivity,
+  })
+  const code = mintOpaqueToken()
+  const now = deps.now?.() ?? Date.now()
+  deps.store.putAuthCode({
+    code,
+    grantId: grant.grantId,
+    codeChallenge: params.codeChallenge, // S256; the SDK verified the method upstream
+    redirectUri: params.redirectUri,
+    expiresAt: now + AUTH_CODE_TTL_MS,
+  })
+
+  // Build the success redirect (code + state if present). The caller decides
+  // whether/how to send it — `authorize()`'s tail and the decision route each
+  // own a different `res`.
+  const redirect = new URL(params.redirectUri)
+  redirect.searchParams.set('code', code)
+  if (params.state !== undefined) {
+    redirect.searchParams.set('state', params.state)
+  }
+  return redirect
+}
 
 export interface CladOAuthProviderDeps {
   /** WS5's grant store — registered clients, consented grants, auth codes, tokens. */
@@ -121,10 +227,6 @@ export class CladOAuthProvider implements OAuthServerProvider {
   /** SHA-256 hex of an opaque token — matches `SqliteGrantStore`'s hashing so lookups align. */
   private hash(raw: string): string {
     return createHash('sha256').update(raw, 'utf8').digest('hex')
-  }
-
-  private mintOpaqueToken(): string {
-    return randomBytes(32).toString('base64url')
   }
 
   get clientsStore(): OAuthRegisteredClientsStore {
@@ -215,53 +317,38 @@ export class CladOAuthProvider implements OAuthServerProvider {
       scopePreviewByProfile,
     }
 
-    // 3. Human consent (WS4 seam; deny-by-default when unimplemented).
-    const decision = await this.deps.requestConsent(consentReq)
+    // 3. Human consent (WS4 seam).
+    //
+    //    The REAL (interactive, WS4 S3) `ConsentFn` renders the consent HTML
+    //    directly onto `res` (ending THIS `GET /authorize` response) and
+    //    returns without an inline decision — the human decides LATER, via a
+    //    separate `POST /authorize/decision` request that `consent-http.ts`
+    //    handles on ITS OWN `res` (calling `finalizeApprovedAuthorization`
+    //    below directly). `res.headersSent` is how we detect that case: if
+    //    the consent implementation already fully answered this response,
+    //    there is nothing left for `authorize()` to do. A fake/test
+    //    `ConsentFn` never touches `res`, so `res.headersSent` stays `false`
+    //    and the tail below runs exactly as it did before this change.
+    const decision = await this.deps.requestConsent(consentReq, { res, client, params, assessment })
+    if (res.headersSent) {
+      return
+    }
     if (!decision.approved) {
       throw new AccessDeniedError('Consent was not granted.')
     }
-    const profileId = decision.profileId
-    // Defence-in-depth: consent can never select a profile the trust layer
-    // didn't deem eligible (parent §1 — the binding is a server decision).
-    if (!assessment.eligibleProfiles.includes(profileId)) {
-      throw new AccessDeniedError('Selected profile is not eligible for this client.')
-    }
 
-    // 4. Enforce the set-once client→profile binding (acceptance #1) with a
-    //    clean access_denied rather than the store's raw throw.
-    const existingBinding = this.deps.store.getClient(client.client_id)?.boundProfileId
-    if (existingBinding !== undefined && existingBinding !== profileId) {
-      throw new AccessDeniedError('Client is already bound to a different profile.')
-    }
-
-    // 5. Mint the granted scope for the bound profile (never client-supplied).
-    const scopes = await this.deps.trust.mintScopes({ profileId, policy: this.deps.policy, assessment })
-
-    // 6. Persist the binding + the consented grant + a single-use auth code.
-    this.deps.store.bindClientProfile(client.client_id, profileId)
-    const grant = this.deps.store.createGrant({
-      clientId: client.client_id,
-      profileId,
-      scopes,
-      dpopBound: decision.dpopBound, // M2: always false
-      assuranceLevel: assessment.assuranceLevel,
-      maxScopeSensitivity: assessment.maxScopeSensitivity,
-    })
-    const code = this.mintOpaqueToken()
-    this.deps.store.putAuthCode({
-      code,
-      grantId: grant.grantId,
-      codeChallenge: params.codeChallenge, // S256; the SDK verified the method upstream
-      redirectUri: params.redirectUri,
-      expiresAt: this.now() + AUTH_CODE_TTL_MS,
-    })
-
-    // 7. Redirect back with the code (+ state if present).
-    const redirect = new URL(params.redirectUri)
-    redirect.searchParams.set('code', code)
-    if (params.state !== undefined) {
-      redirect.searchParams.set('state', params.state)
-    }
+    // 4-7: eligibility re-check, set-once bind, scope mint, persist grant +
+    // auth code, build the redirect — extracted to `finalizeApprovedAuthorization`
+    // so the real interactive flow's decision route can share the exact same
+    // logic (see that function's doc comment).
+    const redirect = await finalizeApprovedAuthorization(
+      { store: this.deps.store, trust: this.deps.trust, policy: this.deps.policy, now: this.deps.now },
+      client.client_id,
+      assessment,
+      params,
+      decision.profileId,
+      decision.dpopBound
+    )
     res.redirect(302, redirect.href)
   }
 
@@ -330,8 +417,8 @@ export class CladOAuthProvider implements OAuthServerProvider {
     // leaked one is single-use.
     const now = this.now()
     const createdAt = new Date(now).toISOString()
-    const accessToken = this.mintOpaqueToken()
-    const newRefreshToken = this.mintOpaqueToken()
+    const accessToken = mintOpaqueToken()
+    const newRefreshToken = mintOpaqueToken()
 
     this.deps.store.putToken({
       tokenHash: this.hash(accessToken),
@@ -401,8 +488,8 @@ export class CladOAuthProvider implements OAuthServerProvider {
   private issueTokens(grantId: string, scopes: string[], dpopBound: boolean): OAuthTokens {
     const now = this.now()
     const createdAt = new Date(now).toISOString()
-    const accessToken = this.mintOpaqueToken()
-    const refreshToken = this.mintOpaqueToken()
+    const accessToken = mintOpaqueToken()
+    const refreshToken = mintOpaqueToken()
     const accessExpiresAt = now + ACCESS_TOKEN_TTL_MS
 
     this.deps.store.putToken({

@@ -15,6 +15,14 @@
  *  - `/mcp` 401 without a token, with a `WWW-Authenticate` header pointing at
  *    the protected-resource-metadata URL.
  *  - Revocation -> the next `/mcp` request 401s immediately.
+ *
+ * D5.3 WS4 S3 addition: the REAL interactive consent screen
+ * (`../../src/oauth/consent-http.ts`) driven over this SAME real-app stack —
+ * `GET /authorize` renders HTML (not a redirect) and `POST /authorize/decision`
+ * completes the flow, proving `CladOAuthProvider.authorize()`'s
+ * `res.headersSent` short-circuit (`provider.ts`) and `consent-http.ts`'s
+ * `finalizeApprovedAuthorization` reuse work end-to-end through the real
+ * Express app, not just against a fake `ConsentFn`.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -37,6 +45,7 @@ import { startHttpServer, type HttpServerHandle } from '../../src/http-transport
 import { CladOAuthProvider } from '../../src/oauth/provider.js'
 import { mintScopesForProfile, scopeSensitivity } from '../../src/oauth/scope-minter.js'
 import { denyingConsent, type ConsentFn } from '../../src/oauth/consent.js'
+import { createHttpConsent } from '../../src/oauth/consent-http.js'
 import type { ServerResources } from '../../src/server-core.js'
 
 const POLICY: PolicyConfig = {
@@ -94,6 +103,31 @@ function oauthResources(consent: ConsentFn = approve('test-agent')): ServerResou
     approvalQueue: new ApprovalQueue(':memory:'),
     oauth,
   }
+}
+
+/** Builds `ServerResources` wired with the REAL WS4 S3 consent implementation (`consent-http.ts`) instead of a fake `ConsentFn`. */
+function realConsentResources(): ServerResources {
+  const trust = new LocalConsentTrustProvider(POLICY, mintScopesForProfile, scopeSensitivity)
+  const { consentFn, decisionRouter } = createHttpConsent({ store, trust, policy: POLICY })
+  const oauth = new CladOAuthProvider({ store, policy: POLICY, trust, requestConsent: consentFn })
+  return {
+    agentId: 'test-agent',
+    authRequired: true,
+    policy: POLICY,
+    provider: new DummyDataProvider(),
+    auditLogger: new AuditLogger(':memory:'),
+    approvalQueue: new ApprovalQueue(':memory:'),
+    oauth,
+    oauthConsentRouter: decisionRouter,
+  }
+}
+
+/** Parses the `request_id` and `csrf_token` hidden fields out of a rendered consent page. */
+function parseConsentPage(html: string): { requestId: string; csrfToken: string } {
+  const requestId = /name="request_id" value="([^"]+)"/.exec(html)?.[1]
+  const csrfToken = /name="csrf_token" value="([^"]+)"/.exec(html)?.[1]
+  if (!requestId || !csrfToken) throw new Error('consent page did not render the expected hidden fields')
+  return { requestId, csrfToken }
 }
 
 function pkce(): { verifier: string; challenge: string } {
@@ -461,5 +495,195 @@ describe('/mcp bearer enforcement', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
     })
     expect(after.status).toBe(401)
+  })
+})
+
+describe('real interactive consent screen (D5.3 WS4 S3)', () => {
+  it('GET /authorize renders HTML (not a redirect), listing the client and its profiles, no secrets', async () => {
+    handle = await startHttpServer(realConsentResources(), { port: 0 })
+    const client = await registerClient(handle.port, {
+      redirect_uris: [REDIRECT],
+      client_name: 'Interactive Test Client',
+      token_endpoint_auth_method: 'none',
+    })
+    const { challenge } = pkce()
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: client.client_id as string,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: 'render-state',
+    }).toString()
+
+    const res = await rawRequest(handle.port, `/authorize?${query}`)
+    expect(res.status).toBe(200)
+    expect(res.headers['content-type']).toContain('html')
+    expect(res.body).toContain('Interactive Test Client')
+    expect(res.body).toContain('test-agent')
+    expect(res.body).not.toContain(SECRET_PASSPHRASE)
+    const { requestId, csrfToken } = parseConsentPage(res.body)
+    expect(requestId).toBeTruthy()
+    expect(csrfToken).toBeTruthy()
+  })
+
+  it('register -> authorize (render) -> decide (approve) -> token -> Bearer /mcp tools/call succeeds', async () => {
+    handle = await startHttpServer(realConsentResources(), { port: 0 })
+    const client = await registerClient(handle.port)
+    const { verifier, challenge } = pkce()
+
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: client.client_id as string,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: 'approve-state',
+    }).toString()
+    const rendered = await rawRequest(handle.port, `/authorize?${query}`)
+    expect(rendered.status).toBe(200)
+    const { requestId, csrfToken } = parseConsentPage(rendered.body)
+
+    const decision = await rawRequest(handle.port, '/authorize/decision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        request_id: requestId,
+        csrf_token: csrfToken,
+        state: 'approve-state',
+        decision: 'approve',
+        profile_id: 'test-agent',
+      }).toString(),
+    })
+    expect(decision.status).toBe(302)
+    const location = new URL(decision.headers.location!)
+    expect(location.searchParams.get('state')).toBe('approve-state')
+    const code = location.searchParams.get('code')
+    expect(code).toBeTruthy()
+
+    const { status, json } = await postToken(handle.port, {
+      grant_type: 'authorization_code',
+      client_id: client.client_id as string,
+      code: code!,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
+    })
+    expect(status).toBe(200)
+    expect(json.token_type).toBe('Bearer')
+    expect(json.access_token).toBeTruthy()
+
+    const mcp = await connectMcp(handle.port, json.access_token as string)
+    const result = await mcp.callTool({ name: 'clad_get_balances', arguments: {} })
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text
+    expect(text).toContain('acc_checking_001')
+  })
+
+  it('deny -> redirects with error=access_denied, no code, no token', async () => {
+    handle = await startHttpServer(realConsentResources(), { port: 0 })
+    const client = await registerClient(handle.port)
+    const { challenge } = pkce()
+
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: client.client_id as string,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: 'deny-state',
+    }).toString()
+    const rendered = await rawRequest(handle.port, `/authorize?${query}`)
+    const { requestId, csrfToken } = parseConsentPage(rendered.body)
+
+    const decision = await rawRequest(handle.port, '/authorize/decision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        request_id: requestId,
+        csrf_token: csrfToken,
+        state: 'deny-state',
+        decision: 'deny',
+      }).toString(),
+    })
+    expect(decision.status).toBe(302)
+    const location = new URL(decision.headers.location!)
+    expect(location.searchParams.get('error')).toBe('access_denied')
+    expect(location.searchParams.get('code')).toBeNull()
+  })
+
+  it('rejects a decision with a missing/invalid CSRF token (403), never mints a code', async () => {
+    handle = await startHttpServer(realConsentResources(), { port: 0 })
+    const client = await registerClient(handle.port)
+    const { challenge } = pkce()
+
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: client.client_id as string,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: 'csrf-state',
+    }).toString()
+    const rendered = await rawRequest(handle.port, `/authorize?${query}`)
+    const { requestId } = parseConsentPage(rendered.body)
+
+    const decision = await rawRequest(handle.port, '/authorize/decision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        request_id: requestId,
+        csrf_token: 'forged-token',
+        state: 'csrf-state',
+        decision: 'approve',
+        profile_id: 'test-agent',
+      }).toString(),
+    })
+    expect(decision.status).toBe(403)
+  })
+
+  it('set-once bind: a second authorize + approve for the SAME client reuses the bound profile end-to-end', async () => {
+    handle = await startHttpServer(realConsentResources(), { port: 0 })
+    const client = await registerClient(handle.port)
+
+    async function authorizeAndApprove(state: string): Promise<{ status: number; location: URL }> {
+      const { challenge } = pkce()
+      const query = new URLSearchParams({
+        response_type: 'code',
+        client_id: client.client_id as string,
+        redirect_uri: REDIRECT,
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        state,
+      }).toString()
+      const rendered = await rawRequest(handle!.port, `/authorize?${query}`)
+      const { requestId, csrfToken } = parseConsentPage(rendered.body)
+      const decision = await rawRequest(handle!.port, '/authorize/decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          request_id: requestId,
+          csrf_token: csrfToken,
+          state,
+          decision: 'approve',
+          profile_id: 'test-agent',
+        }).toString(),
+      })
+      return { status: decision.status, location: new URL(decision.headers.location!) }
+    }
+
+    const first = await authorizeAndApprove('bind-state-1')
+    expect(first.status).toBe(302)
+    expect(first.location.searchParams.get('code')).toBeTruthy()
+    expect(store.getClient(client.client_id as string)?.boundProfileId).toBe('test-agent')
+
+    // A different `requestedProfileHint` never reaches the wire (WS2's
+    // `authorize()` never trusts a client-supplied hint as identity — it is
+    // always `undefined` on the built `ConsentRequest`); what CAN vary here is
+    // the human's own choice on the SECOND consent page, which must still
+    // resolve to the already-bound profile.
+    const second = await authorizeAndApprove('bind-state-2')
+    expect(second.status).toBe(302)
+    expect(second.location.searchParams.get('code')).toBeTruthy()
+    expect(second.location.searchParams.get('error')).toBeNull()
+    expect(store.getClient(client.client_id as string)?.boundProfileId).toBe('test-agent')
   })
 })
