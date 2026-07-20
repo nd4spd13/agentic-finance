@@ -690,7 +690,15 @@ async function computeClaudeDesktopMerge(selectedAgentId: string | undefined): P
   // loopback-HTTP architecture that entry is a bare `mcp-remote` proxy (see
   // claude-desktop-config.ts). It is instead persisted to `config.agent_id`
   // by the connect handler below and injected into the supervised child's
-  // `CLAD_AGENT_ID`, which is what actually serves Claude Desktop's calls.
+  // `CLAD_AGENT_ID`. D5.3 Wave 6: that env var is now VESTIGIAL for what it
+  // used to decide — it no longer "actually serves Claude Desktop's calls";
+  // per-connection identity is chosen at the OAuth consent screen instead
+  // (`resolvePrincipal` in `server-core.ts`; see `claude-desktop-config.ts`'s
+  // CONSTRAINTS doc comment for the full explanation). Still resolved and
+  // written here so the selector keeps doing the one thing it still can: pick
+  // and persist a real, policy-valid `config.agent_id` value (used for the
+  // status panel's policy-validity check — see `agent-resolution.ts`), not
+  // because it still routes any Claude Desktop tool call.
   // Falling back to the CURRENTLY CONFIGURED id (not just the policy default)
   // when the user hasn't picked one this session keeps the selector showing
   // the identity that's really in force. `''` (the "not chosen yet" sentinel)
@@ -735,14 +743,17 @@ ipcMain.handle(IPC_CHANNELS.claudeDesktopConnect, async (_event, agentId?: strin
     const { merged, resolution } = await computeClaudeDesktopMerge(agentId)
     writeClaudeDesktopConfig(configPath, merged)
 
-    // Persist the picked identity and make it real. The written entry carries
-    // no `CLAD_AGENT_ID` (it's an `mcp-remote` proxy), so the ONLY thing that
-    // makes the selector functional is storing it here and restarting the
-    // supervised child — that child is what serves Claude Desktop's calls, and
-    // it asserts its agent id from env at spawn time. Skipping the restart
-    // would leave the old identity running until the next app launch while the
-    // UI claimed the new one, which is the exact silent-mismatch failure mode
-    // this change fixes.
+    // Persist the picked identity and restart the child so it re-asserts
+    // `CLAD_AGENT_ID` from the new value right away rather than leaving the
+    // old one running until the next app launch. D5.3 Wave 6: this env var no
+    // longer decides what identity a real Claude Desktop tool call runs
+    // under (that's the OAuth consent screen's job now — see
+    // `claude-desktop-config.ts`'s CONSTRAINTS doc comment: `resolvePrincipal`
+    // only reads it on the `!authRequired` branch, which this child's
+    // always-true `authRequired` never takes) — it's kept fresh anyway
+    // because `resolveSupervisedAgentId` still validates it against the
+    // policy and that's still what the status panel's policy-validity
+    // warning is computed against.
     const config = loadConfig()
     if (config.agent_id !== resolution.agentId) {
       saveConfig({ ...config, agent_id: resolution.agentId })

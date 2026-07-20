@@ -43,6 +43,26 @@
  * mechanism, and the inline comment at the assignment for the
  * config-beats-inherited-env precedence decision.
  *
+ * D5.3 Wave 6 (the flag flip, `.claude/plans/d5.3/SEQUENCING.md` PR 8): sets
+ * `CLAD_MCP_AUTH=oauth` for the `'http'` transport — the ONLY transport this
+ * function's one real caller (`mcp-server-manager.ts`) ever spawns with, so
+ * this is the single exposure point that turns the supervised child's
+ * loopback server from the interim unauthenticated posture into the real
+ * D5.3 OAuth resource server (`http-app.ts`'s `mcpAuthRouter` +
+ * `requireBearerAuth`). Scoped to the `'http'` branch (not unconditional)
+ * for the same reason `CLAD_MCP_TRANSPORT`/`CLAD_MCP_HTTP_PORT` are: a
+ * hypothetical stdio caller of this function shouldn't newly start requiring
+ * a passphrase it has no reason to expect.
+ *
+ * Turning the flag on has a second, non-optional consequence traced in
+ * `server-core.ts`'s `loadOAuthResources`: it boot-throws unless
+ * `CLAD_TOKEN_PASSPHRASE` is ALSO set, for every provider — including
+ * `'dummy'`, which needs no passphrase of its own (`provider-factory.ts`'s
+ * `createProvider`). Before this change, `CLAD_TOKEN_PASSPHRASE` was only
+ * ever threaded through for `'plaid'`/`'simplefin'` (see the two branches
+ * below); `secrets.oauthPassphrase` (new) is what closes that gap for
+ * `'dummy'` — see its own doc comment on `McpSpawnSecrets`.
+ *
  * Pure object construction — no `electron` import, safe to unit-test.
  */
 
@@ -65,6 +85,25 @@ export interface McpSpawnSecrets {
   plaid?: PlaidSpawnSecrets
   /** Only consulted when `config.provider === 'simplefin'`. */
   simplefin?: SimpleFinSpawnSecrets
+  /**
+   * D5.3 Wave 6 (the flag flip): the token-store passphrase for
+   * `CLAD_TOKEN_PASSPHRASE`, consulted for the `'http'` transport regardless
+   * of `config.provider` — the OAuth resource server's `SqliteGrantStore`
+   * (`server-core.ts`'s `loadOAuthResources`) always needs it once
+   * `CLAD_MCP_AUTH=oauth` is set below, including for the `'dummy'`
+   * provider, which needs no passphrase of its own. Always the SAME
+   * already-resolved passphrase `getActiveTokenStorePassphrase()` in
+   * `main/index.ts` returns — the exact value `plaid.passphrase`/
+   * `simplefin.passphrase` above also carry when THOSE are set (mirrored,
+   * not layered: setting both `oauthPassphrase` and `plaid`/`simplefin` is
+   * expected and harmless — see the assignment order below). Callers MUST
+   * supply this whenever they spawn with `transport: 'http'` — the real
+   * `McpServerManager` always resolves the passphrase before spawning
+   * (`mcp-server-manager.ts`'s `spawnAndConnect`) and fails fast with a
+   * clear `crashed` status if it can't, rather than spawning a child that
+   * would boot-throw.
+   */
+  oauthPassphrase?: string
 }
 
 /**
@@ -96,9 +135,11 @@ export function buildServerEnv(
     // D5.3 WS2 S2-S3 (#80): the SqliteGrantStore path the supervised child's
     // server-core.ts opens when CLAD_MCP_AUTH=oauth (loadOAuthProvider).
     // Forwarded unconditionally, mirroring CLAD_SIMPLEFIN_DB/CLAD_PLAID_DB
-    // above — CLAD_MCP_AUTH itself is NOT set here (that's the Wave-6 flip),
-    // so this is inert today, exactly like the other provider DB paths are
-    // for a provider that isn't active.
+    // above. D5.3 Wave 6: CLAD_MCP_AUTH=oauth IS now set below for the
+    // 'http' transport, so this path is live (not inert) for the child this
+    // function's real caller (`mcp-server-manager.ts`) actually spawns —
+    // still forwarded unconditionally for a stdio caller, exactly like the
+    // other provider DB paths are for a provider that isn't active.
     CLAD_GRANT_DB: config.grant_db,
     // The spawned child is always the Electron binary run as plain Node
     // (see mcp-server-path.ts's doc comment) — never a system `node`.
@@ -136,6 +177,27 @@ export function buildServerEnv(
   if (transportOpts?.transport === 'http') {
     env.CLAD_MCP_TRANSPORT = 'http'
     env.CLAD_MCP_HTTP_PORT = String(transportOpts.httpPort ?? '')
+
+    // D5.3 Wave 6 — THE FLAG FLIP. Turns on the real OAuth resource server
+    // (`http-app.ts`'s `mcpAuthRouter` + `requireBearerAuth` in front of
+    // `/mcp`) for the supervised child. Assigned unconditionally here, so it
+    // ALWAYS wins over anything already in `process.env` — same
+    // config-beats-inherited-env precedence as `CLAD_AGENT_ID` above, except
+    // there is no "off" case to preserve: unlike `agent_id`, which stays
+    // unset until the user picks one, this transport is ALWAYS authenticated
+    // from here on, so there is nothing for an inherited `CLAD_MCP_AUTH` to
+    // meaningfully override even if a shell happened to export one.
+    env.CLAD_MCP_AUTH = 'oauth'
+
+    // See `McpSpawnSecrets.oauthPassphrase`'s doc comment: the grant store
+    // needs `CLAD_TOKEN_PASSPHRASE` regardless of provider once the line
+    // above is in effect. Assigned BEFORE the provider-specific blocks below
+    // so a matching `plaid`/`simplefin` secret (the identical value in
+    // practice) still "wins" the assignment with no observable difference —
+    // this is belt-and-suspenders, not a real precedence conflict.
+    if (secrets?.oauthPassphrase) {
+      env.CLAD_TOKEN_PASSPHRASE = secrets.oauthPassphrase
+    }
   }
 
   if (config.provider === 'plaid' && secrets?.plaid) {

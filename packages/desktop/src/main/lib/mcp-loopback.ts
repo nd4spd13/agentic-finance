@@ -1,8 +1,9 @@
 /**
  * Loopback address/port helpers for the desktop app's supervised HTTP MCP
  * child (D5.3 WS1 interim fix). Shared by:
- *   - `mcp-server-manager.ts` — spawns the child on this port and connects its
- *     readiness/health `Client` to this URL over HTTP.
+ *   - `mcp-server-manager.ts` — spawns the child on this port and probes this
+ *     URL over HTTP for readiness (an unauthenticated `fetch` post-D5.3 Wave
+ *     6 — see that file's READINESS & CRASH DETECTION doc comment).
  *   - `claude-desktop-config.ts` — writes an `mcp-remote` entry pointing at
  *     this URL so Claude Desktop reaches the already-unlocked child.
  *

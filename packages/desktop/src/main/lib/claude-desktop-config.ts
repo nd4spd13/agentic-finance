@@ -36,24 +36,45 @@
  *   - The loopback server only works WHILE the Clad desktop app is running —
  *     the child is app-supervised. Claude Desktop tool calls fail cleanly if
  *     Clad isn't running.
- *   - The loopback port is UNAUTHENTICATED for now (accepted interim risk;
- *     closed by D5.3 OAuth).
- *   - Agent identity is the supervised child's single env-asserted id, so the
- *     entry itself carries no `CLAD_AGENT_ID` (mcp-remote cannot set the
- *     identity of an already-running child). The connect UI's agent selector
- *     is NOT informational: it persists the pick to `config.agent_id` and
- *     restarts that child so it re-asserts the new identity (see
- *     `config.ts`'s `agent_id`, `mcp-server-env.ts`, and the
- *     `claudeDesktopConnect` handler in `main/index.ts`). An earlier version
- *     of this comment claimed the selector was informational — it was, for
- *     one release, and that is exactly the v0.5.0 regression: the child ran
- *     as the hardcoded `'default-agent'` and denied every call made against
- *     any policy that didn't happen to define that name.
- *   - Because that identity belongs to the PROCESS, every MCP client reaching
- *     the loopback server shares it — Claude Desktop and Claude Code
- *     connected simultaneously are one and the same agent to the policy
- *     engine. Per-connection authenticated identity is D5.3 (WS3):
- *     `.claude/plans/D5.3-authenticated-agent-identity-plan.md`.
+ *   - D5.3 Wave 6 (the flag flip, `.claude/plans/d5.3/SEQUENCING.md` PR 8):
+ *     the loopback port is now a REAL OAuth 2.1 resource server
+ *     (`CLAD_MCP_AUTH=oauth`, always set for this child — `mcp-server-env.ts`)
+ *     — it is NOT unauthenticated anymore. `mcp-remote` transparently runs
+ *     the OAuth dance on Claude Desktop's behalf: its first tool call after
+ *     connecting (and its first call after any revoke) gets a 401, which
+ *     `mcp-remote` turns into dynamic client registration + an `/authorize`
+ *     round trip that opens a one-time browser consent page
+ *     (`@clad/mcp-server`'s `oauth/consent-http.ts`) — no config change and
+ *     no re-running "Connect to Claude Desktop" required. An earlier version
+ *     of this comment described this port as "unauthenticated for now" —
+ *     that was the pre-D5.3 interim posture; superseded.
+ *   - Per-connection authenticated identity (D5.3 WS3) is now live: the
+ *     profile a client's calls actually run as is chosen by a HUMAN, on that
+ *     browser consent page, per OAuth grant — not by this file, not by
+ *     `CLAD_AGENT_ID`. Claude Desktop and Claude Code connected
+ *     simultaneously each get their OWN bound profile now, resolved
+ *     per-request from the verified token (`server-core.ts`'s
+ *     `resolvePrincipal`) — they are no longer "one and the same agent to
+ *     the policy engine", which used to be the accepted limitation here.
+ *   - Consequence for THIS file: agent identity is still the supervised
+ *     child's single env-asserted `CLAD_AGENT_ID` (the entry itself still
+ *     carries none — mcp-remote cannot set the identity of an
+ *     already-running child, and doesn't need to), and the connect UI's
+ *     agent selector still WRITES it (persists the pick to `config.agent_id`
+ *     and restarts the child — see `config.ts`'s `agent_id`,
+ *     `mcp-server-env.ts`, and the `claudeDesktopConnect` handler in
+ *     `main/index.ts`) — but that env var is now VESTIGIAL for what it
+ *     actually decides: `resolvePrincipal` reads `resources.agentId` ONLY on
+ *     the `!resources.authRequired` branch. This child's `authRequired` is
+ *     unconditionally true as of Wave 6, so that branch never runs for it —
+ *     every request either carries a verified OAuth profile or is rejected
+ *     outright, full stop. `CLAD_AGENT_ID` is dead code for this child's
+ *     tool-call handling, not merely a fallback that got harder to reach.
+ *     This supersedes the v0.5.0 regression note this comment used to end
+ *     on ("the selector is NOT informational" — true of the config WRITE,
+ *     no longer true of what a real client's tool calls run as). See
+ *     `ConnectClaudeDesktop.tsx`'s doc comment for the UI-facing version of
+ *     this, and `.claude/plans/d5.3/WS4-consent-revocation-ui.md` §3.
  *
  * Every function here is a pure, DI'd operation over an explicit
  * `configPath` string (or plain objects) — no `electron` import, and no

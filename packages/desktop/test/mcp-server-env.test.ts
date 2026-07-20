@@ -257,4 +257,126 @@ describe('buildServerEnv', () => {
       expect(productionEnv.CLAD_PLAID_DB).toBe(effectivePlaidDbPath(productionConfig, 'production'))
     })
   })
+
+  /**
+   * D5.3 Wave 6 — THE FLAG FLIP. `CLAD_MCP_AUTH=oauth` is now set
+   * unconditionally for the `'http'` transport (the only transport the real
+   * caller, `mcp-server-manager.ts`, ever uses), which makes
+   * `server-core.ts`'s `loadOAuthResources` a MANDATORY, boot-throwing
+   * dependency: it requires `CLAD_GRANT_DB` (already forwarded
+   * unconditionally — see 'always forwards CLAD_GRANT_DB' above) AND
+   * `CLAD_TOKEN_PASSPHRASE`, for EVERY provider including 'dummy' (which
+   * needs no passphrase for its own provider construction). The env-invariant
+   * test below is the one that would have caught the v0.5.0-style regression
+   * this flip risks repeating: it asserts a REAL `buildServerEnv` call's
+   * output — the exact object `mcp-server-manager.ts` hands to `spawn()` —
+   * contains every variable `loadOAuthResources`/`loadServerResources`
+   * (`server-core.ts`) read at boot, for the 'dummy' provider specifically
+   * (the case with no other secret path to accidentally carry the
+   * passphrase along for free).
+   */
+  describe('D5.3 Wave 6 — the flag flip (CLAD_MCP_AUTH)', () => {
+    it('sets CLAD_MCP_AUTH=oauth for the http transport', () => {
+      const config = { ...defaultConfig(), provider: 'dummy' as const }
+
+      const env = buildServerEnv(config, { oauthPassphrase: 'p' }, { transport: 'http', httpPort: 8765 })
+
+      expect(env.CLAD_MCP_AUTH).toBe('oauth')
+    })
+
+    it('does NOT set CLAD_MCP_AUTH by default (no transportOpts) or for stdio — only the real http-spawning caller opts in', () => {
+      const config = { ...defaultConfig(), provider: 'dummy' as const }
+
+      expect(buildServerEnv(config).CLAD_MCP_AUTH).toBeUndefined()
+      expect(buildServerEnv(config, undefined, { transport: 'stdio' }).CLAD_MCP_AUTH).toBeUndefined()
+    })
+
+    it('ALWAYS wins over an inherited CLAD_MCP_AUTH from process.env for the http transport (config-beats-inherited-env, same precedent as CLAD_AGENT_ID)', () => {
+      const prev = process.env.CLAD_MCP_AUTH
+      process.env.CLAD_MCP_AUTH = 'off'
+      try {
+        const config = { ...defaultConfig(), provider: 'dummy' as const }
+
+        const env = buildServerEnv(config, { oauthPassphrase: 'p' }, { transport: 'http', httpPort: 8765 })
+
+        expect(env.CLAD_MCP_AUTH).toBe('oauth')
+      } finally {
+        if (prev === undefined) delete process.env.CLAD_MCP_AUTH
+        else process.env.CLAD_MCP_AUTH = prev
+      }
+    })
+
+    it('sets CLAD_TOKEN_PASSPHRASE from secrets.oauthPassphrase for the DUMMY provider on the http transport (the gap plaid/simplefin secrets never covered)', () => {
+      const config = { ...defaultConfig(), provider: 'dummy' as const }
+
+      const env = buildServerEnv(config, { oauthPassphrase: 'grant-store-p' }, { transport: 'http', httpPort: 8765 })
+
+      expect(env.CLAD_TOKEN_PASSPHRASE).toBe('grant-store-p')
+    })
+
+    it('omits CLAD_TOKEN_PASSPHRASE for the http transport when no oauthPassphrase (or provider secret) is supplied — defensive, callers should pre-flight this', () => {
+      const config = { ...defaultConfig(), provider: 'dummy' as const }
+
+      const env = buildServerEnv(config, undefined, { transport: 'http', httpPort: 8765 })
+
+      expect(env.CLAD_TOKEN_PASSPHRASE).toBeUndefined()
+    })
+
+    it("a matching provider secret's passphrase (plaid/simplefin) still wins CLAD_TOKEN_PASSPHRASE over oauthPassphrase when both are supplied — same value in practice, belt-and-suspenders precedence", () => {
+      const config = { ...defaultConfig(), provider: 'simplefin' as const }
+
+      const env = buildServerEnv(
+        config,
+        { oauthPassphrase: 'p', simplefin: { passphrase: 'p' } },
+        { transport: 'http', httpPort: 8765 }
+      )
+
+      expect(env.CLAD_TOKEN_PASSPHRASE).toBe('p')
+    })
+
+    /**
+     * THE env-invariant test (task item 1): a REAL `buildServerEnv` call for
+     * the 'dummy' provider — the case with no other reason to carry a
+     * passphrase — over the 'http' transport must produce an env object
+     * containing every variable `loadOAuthResources`/`loadServerResources`
+     * read at boot. Fails loudly (a missing/undefined assertion) if any of
+     * these regress, rather than only surfacing as a live child boot-throw
+     * that a v0.5.0-style QA gap could miss.
+     */
+    it('the flag-on child env from a real buildServerEnv call contains everything loadOAuthResources/boot requires (dummy provider)', () => {
+      const config: CladConfig = {
+        ...defaultConfig(),
+        provider: 'dummy',
+        agent_id: 'analyst',
+      }
+
+      const env = buildServerEnv(config, { oauthPassphrase: 'grant-store-passphrase' }, {
+        transport: 'http',
+        httpPort: 8765,
+      })
+
+      // server-core.ts's loadOAuthResources boot-throw requires exactly these two:
+      expect(env.CLAD_MCP_AUTH).toBe('oauth')
+      expect(env.CLAD_GRANT_DB).toBe(config.grant_db)
+      expect(env.CLAD_TOKEN_PASSPHRASE).toBe('grant-store-passphrase')
+      // loadServerResources' other boot-time reads (policy path, provider,
+      // audit/approval DB paths) — unaffected by the flag, but a boot-throw
+      // upstream of loadOAuthResources would mask an env gap here too, so
+      // pin them in the SAME test as the flag-on invariants.
+      expect(env.CLAD_POLICY_PATH).toBe(config.policy_path)
+      expect(env.CLAD_AUDIT_DB).toBe(config.audit_db)
+      expect(env.CLAD_APPROVAL_DB).toBe(config.approval_db)
+      expect(env.CLAD_PROVIDER).toBe('dummy')
+      // Runtime dependency after boot (provider-factory.ts's real-provider
+      // gate reads CLAD_MCP_TRANSPORT too; 'dummy' itself needs no secret).
+      expect(env.CLAD_MCP_TRANSPORT).toBe('http')
+      expect(env.CLAD_MCP_HTTP_PORT).toBe('8765')
+      // Per-request identity fallback (server-core.ts's resolvePrincipal) —
+      // still forwarded even though Wave 6 makes it vestigial for THIS
+      // transport (see mcp-server-manager.ts's doc comment); asserted here
+      // so a regression in the unrelated agent_id assignment can't silently
+      // hide behind this test's "everything's here" framing.
+      expect(env.CLAD_AGENT_ID).toBe('analyst')
+    })
+  })
 })

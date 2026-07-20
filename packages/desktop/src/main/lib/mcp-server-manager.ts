@@ -7,18 +7,16 @@
  * loopback **HTTP** mode (`CLAD_MCP_TRANSPORT=http`), not stdio. The manager
  * therefore spawns the child process itself (`child_process.spawn`) with the
  * passphrase/provider env already injected (`buildServerEnv` with the
- * `http` transport option), then connects a persistent `@modelcontextprotocol/
- * sdk` `Client` over `StreamableHTTPClientTransport` to
- * `http://127.0.0.1:<port>/mcp` as the readiness gate and liveness signal.
+ * `http` transport option).
  *
  * Why HTTP: unlike a `StdioServerTransport` (which can only usefully serve one
  * client for its process lifetime — closing the verifying client's transport
  * terminates the child), an HTTP server serves many clients concurrently. So
- * the manager's own readiness `Client` AND Claude Desktop's `mcp-remote`
- * client can both be connected to the same already-unlocked child at once —
- * which is the whole point of the fix (real provider data reaches Claude
- * Desktop with zero secrets in any config file; see `claude-desktop-config.ts`
- * and `@clad/mcp-server`'s `http-transport.ts`).
+ * the manager's own readiness probe AND Claude Desktop's `mcp-remote` client
+ * can both reach the same already-unlocked child — which is the whole point
+ * of the fix (real provider data reaches Claude Desktop with zero secrets in
+ * any config file; see `claude-desktop-config.ts` and `@clad/mcp-server`'s
+ * `http-transport.ts`).
  *
  * AGENT IDENTITY (v0.5.0 regression fix): because Claude Desktop's calls are
  * now served by THIS child rather than by a server Claude Desktop spawned
@@ -36,10 +34,45 @@
  * indistinguishable to the policy engine. Per-connection authenticated
  * identity is D5.3's WS3 (`.claude/plans/D5.3-authenticated-agent-identity-plan.md`).
  *
- * Crash detection: driven off the child process's `exit`/`error` events
- * (direct and reliable), with the HTTP transport's `onclose` as a secondary
- * signal. Readiness: a real `tools/list` round trip over HTTP, retried until
- * the child has bound its port or a timeout elapses.
+ * READINESS & CRASH DETECTION (rewritten D5.3 Wave 6 — the flag flip):
+ * before Wave 6, readiness opened a persistent, UNAUTHENTICATED
+ * `@modelcontextprotocol/sdk` `Client`/`StreamableHTTPClientTransport`
+ * session to the child and called `listTools()`; that session's `onclose`
+ * doubled as a secondary crash signal, and its `listTools()` result
+ * populated `McpProcessStatus.tools`. Wave 6 sets `CLAD_MCP_AUTH=oauth`
+ * unconditionally for this transport (`buildServerEnv`), which mounts
+ * `requireBearerAuth` in front of `/mcp` (`http-app.ts`) — an unauthenticated
+ * MCP session can no longer be opened AT ALL, by design, including this
+ * manager's own. Minting the manager a real OAuth grant would mean either a
+ * synthetic client polluting the human-facing Connected-clients list (WS4
+ * §4) or a new internal-token-bootstrap mechanism neither WS2 nor WS4 spec'd
+ * — both out of scope for a flag flip. Instead:
+ *  - Readiness (`waitForHttpReadiness`) is now a plain, unauthenticated
+ *    `fetch` against `/mcp`. ANY HTTP response (401 once oauth is on, same
+ *    as before if it's ever off) proves the child is up, bound to the port,
+ *    passed the loopback-Host guard, AND successfully constructed its OAuth
+ *    resources (`loadOAuthResources` — exactly the code path that
+ *    boot-throws on a missing env var) — a STRONGER boot proof than the old
+ *    authenticated round trip, which never touched that code path at all. A
+ *    thrown `fetch` (connection refused) means the port isn't bound yet —
+ *    the same "not ready, retry" case the old code handled.
+ *  - `McpProcessStatus.tools` is populated from `SUPERVISED_CHILD_TOOL_NAMES`
+ *    below (a literal copy of `@clad/mcp-server`'s `server-core.ts`'s fixed
+ *    `tools` export — never policy/provider/agent-dependent, so a static
+ *    list loses no fidelity; mirrors the existing "duplicate a small
+ *    constant, keep it in sync" precedent `mcp-loopback.ts` already uses for
+ *    `DEFAULT_MCP_HTTP_PORT` rather than statically importing the whole
+ *    `@clad/mcp-server` provider/tool graph into the Electron main bundle).
+ *  - The `onclose` secondary crash signal is RETIRED (it required the same
+ *    persistent authenticated session that no longer exists). Crash
+ *    detection is now solely the child process's own `exit`/`error` events —
+ *    already documented as the "direct and reliable" PRIMARY signal below,
+ *    unaffected by any of this.
+ *
+ * Crash detection: the child process's `exit`/`error` events. Readiness: an
+ * unauthenticated HTTP probe against `/mcp`, retried until the child has
+ * bound its port or a timeout elapses (see READINESS & CRASH DETECTION
+ * above).
  *
  * State machine: stopped -> starting -> running -> stopping -> stopped, with
  * an unexpected exit from 'starting' or 'running' going to 'crashed'
@@ -52,14 +85,28 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { resolveMcpServerEntry } from './mcp-server-path.js'
 import { buildServerEnv, type McpSpawnSecrets } from './mcp-server-env.js'
 import { resolveMcpHttpPort, mcpLoopbackUrl } from './mcp-loopback.js'
 import { resolveSupervisedAgentId } from './agent-resolution.js'
 import { getCladCore } from './clad-core.js'
 import type { CladConfig } from './config.js'
+
+/**
+ * Mirror of `@clad/mcp-server`'s `server-core.ts` `tools` export's name list
+ * — keep in sync. Process-constant (never varies by policy, provider, or
+ * agent), so this loses no fidelity versus the pre-Wave-6 live `listTools()`
+ * call it replaces as the source of `McpProcessStatus.tools` (see this
+ * file's READINESS & CRASH DETECTION doc comment above for why a live call
+ * is no longer possible).
+ */
+export const SUPERVISED_CHILD_TOOL_NAMES: readonly string[] = [
+  'clad_get_balances',
+  'clad_get_transactions',
+  'clad_safe_to_spend',
+  'clad_request_action',
+  'clad_audit_log',
+]
 
 export type McpServerState = 'stopped' | 'starting' | 'running' | 'stopping' | 'crashed'
 
@@ -117,8 +164,6 @@ function sleep(ms: number): Promise<void> {
 
 export class McpServerManager {
   private state: McpServerState = 'stopped'
-  private client: Client | null = null
-  private transport: StreamableHTTPClientTransport | null = null
   private child: ChildProcess | null = null
   private tools: string[] = []
   private lastError: string | undefined
@@ -227,26 +272,34 @@ export class McpServerManager {
 
     const config = this.deps.loadConfig()
 
-    let secrets: McpSpawnSecrets | undefined
+    // D5.3 Wave 6: CLAD_MCP_AUTH=oauth is now ALWAYS set for this child
+    // (`buildServerEnv`'s 'http' branch), and `server-core.ts`'s
+    // `loadOAuthResources` boot-throws without `CLAD_TOKEN_PASSPHRASE`
+    // regardless of `config.provider` — including 'dummy', which needs no
+    // passphrase of its own for its OWN provider construction. Resolved
+    // once, up front, for every provider branch below, so a 'dummy'-provider
+    // spawn with no passphrase yet fails fast with a clear status HERE
+    // (mirroring the existing plaid/simplefin pre-flight checks) instead of
+    // silently spawning a child that boot-throws inside `loadOAuthResources`.
+    const passphrase = this.deps.getActivePassphrase()
+    if (!passphrase) {
+      this.lastError =
+        'The token-store passphrase is not set yet — finish the migration/setup prompt first.'
+      this.setState('crashed')
+      return
+    }
+
+    let secrets: McpSpawnSecrets = { oauthPassphrase: passphrase }
     if (config.provider === 'plaid') {
       const creds = this.deps.loadPlaidCredentials()
-      const passphrase = this.deps.getActivePassphrase()
-      if (!creds || !passphrase) {
-        this.lastError =
-          'Plaid provider selected but credentials or the token-store passphrase are not set yet. Add them in Settings.'
+      if (!creds) {
+        this.lastError = 'Plaid provider selected but credentials are not set yet. Add them in Settings.'
         this.setState('crashed')
         return
       }
-      secrets = { plaid: { ...creds, passphrase } }
+      secrets = { ...secrets, plaid: { ...creds, passphrase } }
     } else if (config.provider === 'simplefin') {
-      const passphrase = this.deps.getActivePassphrase()
-      if (!passphrase) {
-        this.lastError =
-          'SimpleFIN provider selected but the token-store passphrase is not set yet. Finish the migration/setup prompt first.'
-        this.setState('crashed')
-        return
-      }
-      secrets = { simplefin: { passphrase } }
+      secrets = { ...secrets, simplefin: { passphrase } }
     }
 
     // Resolve the identity against the policy as it is RIGHT NOW, every
@@ -301,29 +354,17 @@ export class McpServerManager {
     const url = new URL(mcpLoopbackUrl(port))
 
     try {
-      const { client, transport } = await this.connectWithReadinessRetry(url, () => child.exitCode !== null)
-      const { tools } = await client.listTools()
+      await this.waitForHttpReadiness(url, () => child.exitCode !== null)
 
       if (attemptId !== this.currentAttemptId) {
-        // A stop()/newer start() superseded this attempt while connect()
-        // was in flight. Tear down what we just connected and leave
-        // whatever state the superseding call already established alone.
-        await client.close().catch(() => undefined)
-        await transport.close().catch(() => undefined)
+        // A stop()/newer start() superseded this attempt while the readiness
+        // probe was in flight. Leave whatever state the superseding call
+        // already established alone.
         child.kill()
         return
       }
 
-      // Secondary crash signal: if the HTTP session drops (e.g. the child dies
-      // and the SSE stream closes) treat it like an unexpected exit. The
-      // child 'exit' handler above is the primary signal; the attemptId +
-      // state guards in handleUnexpectedClose make a double-fire harmless.
-      transport.onclose = () => this.handleUnexpectedClose(attemptId)
-      transport.onerror = () => undefined // swallow transient SSE errors; crash detection is exit-driven
-
-      this.client = client
-      this.transport = transport
-      this.tools = tools.map((t) => t.name)
+      this.tools = [...SUPERVISED_CHILD_TOOL_NAMES]
       this.upSince = Date.now()
       this.setState('running')
     } catch (err) {
@@ -334,8 +375,6 @@ export class McpServerManager {
       this.lastError = redactSecrets(
         `${err instanceof Error ? err.message : String(err)} | stderr: ${stderrBuf.slice(-500)}`
       )
-      this.client = null
-      this.transport = null
       try {
         child.kill()
       } catch {
@@ -349,29 +388,27 @@ export class McpServerManager {
   }
 
   /**
-   * Retries the HTTP readiness connection while the freshly-spawned child is
-   * still binding its loopback port. A fresh `Client`/transport pair is used
-   * per attempt (a transport that failed to connect isn't reusable). Aborts
-   * early if the child exits before it ever listens.
+   * Retries an UNAUTHENTICATED `fetch` against `/mcp` while the freshly-
+   * spawned child is still binding its loopback port. See this file's
+   * READINESS & CRASH DETECTION doc comment (top of file) for why this is no
+   * longer an authenticated MCP `Client` session: ANY HTTP response (401
+   * once `CLAD_MCP_AUTH=oauth` is set, which it always is post-Wave-6) means
+   * the child is up, bound, and its OAuth resources constructed without
+   * throwing — `fetch` itself throwing means the port isn't bound yet.
+   * Aborts early if the child exits before it ever listens.
    */
-  private async connectWithReadinessRetry(
-    url: URL,
-    childHasExited: () => boolean
-  ): Promise<{ client: Client; transport: StreamableHTTPClientTransport }> {
+  private async waitForHttpReadiness(url: URL, childHasExited: () => boolean): Promise<void> {
     const deadline = Date.now() + READINESS_TIMEOUT_MS
     let lastErr: unknown
     while (Date.now() < deadline) {
       if (childHasExited()) throw new Error('MCP server process exited before it began listening.')
 
-      const transport = new StreamableHTTPClientTransport(url)
-      const client = new Client({ name: 'clad-desktop', version: '0.1.0' }, { capabilities: {} })
       try {
-        await client.connect(transport)
-        return { client, transport }
+        const res = await fetch(url)
+        await res.text().catch(() => undefined) // drain the small JSON body; status is irrelevant, see doc comment above
+        return
       } catch (err) {
         lastErr = err
-        await client.close().catch(() => undefined)
-        await transport.close().catch(() => undefined)
         await sleep(READINESS_POLL_INTERVAL_MS)
       }
     }
@@ -386,8 +423,6 @@ export class McpServerManager {
     if (this.expectedStop) return
     if (this.state === 'crashed' || this.state === 'stopped' || this.state === 'stopping') return
 
-    this.client = null
-    this.transport = null
     this.child = null
     this.runningAgentId = null
     this.lastError = this.lastError ?? 'The MCP server process exited unexpectedly.'
@@ -416,22 +451,10 @@ export class McpServerManager {
 
   private async teardown(): Promise<void> {
     try {
-      await this.client?.close()
-    } catch {
-      // best-effort
-    }
-    try {
-      await this.transport?.close()
-    } catch {
-      // best-effort
-    }
-    try {
       this.child?.kill()
     } catch {
       // best-effort
     }
-    this.client = null
-    this.transport = null
     this.child = null
     this.tools = []
     this.runningAgentId = null

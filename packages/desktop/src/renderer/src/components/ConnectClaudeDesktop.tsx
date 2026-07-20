@@ -13,20 +13,42 @@ import * as s from '../styles.js'
  * at all, and `main/lib/claude-desktop-path.ts` for the per-platform path
  * lookup.
  *
- * THE AGENT SELECTOR IS FUNCTIONAL (v0.5.0 regression fix). Confirming does
- * two things: writes the proxy entry, and persists the picked agent to
- * `config.agent_id`, which the desktop app's supervised MCP child then
- * asserts as its `CLAD_AGENT_ID` (restarting if the identity changed). That
- * child is what actually serves Claude Desktop's tool calls, so the pick is
- * what the policy engine evaluates them against. For one release the pick was
- * merely informational and the child ran as a hardcoded `'default-agent'` —
- * denying every call under any policy lacking that exact name. Picking a new
- * agent re-fetches the preview so the dialog always reflects the current
- * selection.
+ * D5.3 Wave 6 (the flag flip): connecting no longer determines what identity
+ * Claude Desktop's tool calls run under. The loopback server is now a real
+ * OAuth 2.1 resource server (`CLAD_MCP_AUTH=oauth`, always on for this
+ * child); `mcp-remote` transparently completes the OAuth dance on Claude
+ * Desktop's behalf the first time it calls a tool (and again after a
+ * revoke), popping a ONE-TIME browser consent page where a human picks the
+ * profile for THAT connection. See `.claude/plans/d5.3/WS4-consent-revocation-ui.md`
+ * §3 and `main/lib/claude-desktop-config.ts`'s CONSTRAINTS doc comment for
+ * the full mechanism.
  *
- * Known limitation until D5.3/WS3: this is a single PROCESS-level identity
- * shared by every MCP client connected through the loopback server, not a
- * per-client one — hence the note rendered next to the selector.
+ * THE AGENT SELECTOR BELOW IS NOW VESTIGIAL for that purpose (superseding the
+ * "THE AGENT SELECTOR IS FUNCTIONAL" v0.5.0-regression-fix note this comment
+ * used to lead with). Confirming still does exactly what it always did —
+ * writes the proxy entry, persists the picked agent to `config.agent_id`,
+ * and restarts the supervised child so it re-asserts that `CLAD_AGENT_ID` —
+ * but `resolvePrincipal` (`server-core.ts`) reads `resources.agentId`
+ * (`CLAD_AGENT_ID`) ONLY on the branch where `resources.authRequired` is
+ * false. This child's `authRequired` is now unconditionally TRUE (Wave 6),
+ * so that branch never runs for it at all: every request either carries a
+ * verified OAuth profile or is rejected outright (`UnauthenticatedError` /
+ * the transport's 401), full stop — `CLAD_AGENT_ID` is dead code for this
+ * child's tool-call handling, not a fallback that merely got harder to
+ * reach. No real Claude Desktop tool call is evaluated against this pick
+ * anymore — the profile a connection actually runs as is chosen once, per
+ * client, on the browser consent page. Kept functional (not removed)
+ * because `resolveSupervisedAgentId`/`agent-resolution.ts` still validates
+ * this pick against the policy and surfaces the result as the status
+ * panel's policy-validity warning; the copy below says so rather than let
+ * the selector imply it still controls Claude Desktop specifically.
+ *
+ * Per-connection authenticated identity (D5.3 WS3) is now live, so the old
+ * "single PROCESS-level identity shared by every MCP client" limitation this
+ * comment used to describe no longer holds — Claude Desktop and Claude Code
+ * connected at once each get their own bound profile. See the Connect tab's
+ * "Connected clients" section (`ConnectedClients.tsx`) to see and revoke
+ * individual connections.
  */
 export default function ConnectClaudeDesktop(): JSX.Element {
   const [preview, setPreview] = useState<ClaudeDesktopConnectPreview | null>(null)
@@ -64,7 +86,7 @@ export default function ConnectClaudeDesktop(): JSX.Element {
       setResult({
         ok: res.ok,
         text: res.ok
-          ? 'Connected. Restart Claude Desktop to load the clad tools.'
+          ? 'Connected. Restart Claude Desktop to load the clad tools — it will prompt you to approve access in your browser the first time it calls one.'
           : res.error ?? 'Failed to connect.',
       })
       if (res.ok) {
@@ -86,6 +108,12 @@ export default function ConnectClaudeDesktop(): JSX.Element {
         connected accounts — and Plaid credentials and the token-store passphrase never leave this app&apos;s
         keychain-backed storage or get written to another app&apos;s plaintext config file. Clad has to be running
         for Claude Desktop&apos;s tool calls to work.
+      </p>
+      <p style={s.mutedText}>
+        After connecting, Claude Desktop will prompt you to <strong>approve access in your browser</strong> the
+        first time it calls a tool — a one-time consent screen where you pick which profile that connection gets.
+        Each connection gets its own identity this way; manage or revoke them afterward in the Connect tab&apos;s
+        &quot;Connected clients&quot; section.
       </p>
 
       {loadError && <p style={s.errorText}>{loadError}</p>}
@@ -118,7 +146,7 @@ export default function ConnectClaudeDesktop(): JSX.Element {
           {preview.availableAgentIds.length > 1 && (
             <>
               <label style={s.label} htmlFor="claude-desktop-agent">
-                Run Claude Desktop&apos;s copy as agent
+                Fallback agent (does not control Claude Desktop&apos;s tool calls — see below)
               </label>
               <select
                 id="claude-desktop-agent"
@@ -138,15 +166,16 @@ export default function ConnectClaudeDesktop(): JSX.Element {
 
           {preview.availableAgentIds.length === 1 && (
             <p style={s.mutedText}>
-              Will run as the policy&apos;s only agent: <code>{preview.resolvedAgentId}</code>
+              Policy&apos;s only agent: <code>{preview.resolvedAgentId}</code>
             </p>
           )}
 
           {preview.availableAgentIds.length > 0 && (
             <p style={s.mutedText}>
-              Tool calls are evaluated against this agent&apos;s permissions in your policy. This identity applies to
-              Clad&apos;s local MCP server as a whole, so every connected client (including Claude Code) shares it —
-              per-client identities are coming in a later release.
+              This no longer controls Claude Desktop&apos;s tool calls. Claude Desktop&apos;s calls run as whichever
+              profile you approve on the browser consent screen when it first connects — each connection gets its
+              own, chosen there. This picker only sets Clad&apos;s own fallback agent (used elsewhere, e.g. by the
+              status panel&apos;s policy check) and is kept here so you can still see/change it.
             </p>
           )}
 
