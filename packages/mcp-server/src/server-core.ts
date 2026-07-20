@@ -27,12 +27,15 @@ import {
   ApprovalQueue,
   redactSecrets,
   SqliteGrantStore,
+  LocalConsentTrustProvider,
   type PolicyConfig,
   type FinancialDataProvider,
 } from '@clad/core'
 import type { ToolContext, ToolDefinition } from './types.js'
 import { createProvider } from './provider-factory.js'
 import { CladOAuthProvider } from './oauth/provider.js'
+import { mintScopesForProfile, scopeSensitivity } from './oauth/scope-minter.js'
+import { denyingConsent } from './oauth/consent.js'
 
 // Import all tool handlers
 import * as getBalances from './tools/clad_get_balances.js'
@@ -196,8 +199,16 @@ export interface ServerResources {
  * falling back to an unkeyed or default store — an operator who opts into
  * `CLAD_MCP_AUTH=oauth` without also providing a grant-store path and
  * passphrase gets a boot failure, never a silently-keyless OAuth server.
+ *
+ * D5.3 Wave 4 (WS2 S4-S6 / WS7): the provider is now wired with the REAL
+ * scope-minting `TrustProvider` (`LocalConsentTrustProvider` injected with
+ * `mintScopesForProfile`/`scopeSensitivity`) and a `PolicyConfig`. The consent
+ * step defaults to `denyingConsent` — the mcp-server child has no way to render
+ * the WS4 desktop consent window (Wave 5), so `/authorize` safely dead-ends in
+ * an `access_denied` redirect until that screen exists, rather than minting a
+ * grant with no human in the loop.
  */
-export function loadOAuthProvider(authRequired: boolean): CladOAuthProvider | undefined {
+export function loadOAuthProvider(authRequired: boolean, policy: PolicyConfig): CladOAuthProvider | undefined {
   if (!authRequired) return undefined
 
   const dbPath = process.env.CLAD_GRANT_DB
@@ -223,7 +234,8 @@ export function loadOAuthProvider(authRequired: boolean): CladOAuthProvider | un
   // discipline) on a wrong passphrase — propagate so the server fails fast
   // instead of serving with a broken store.
   const store = new SqliteGrantStore({ dbPath: dbPath as string, passphrase: passphrase as string })
-  return new CladOAuthProvider({ store })
+  const trust = new LocalConsentTrustProvider(policy, mintScopesForProfile, scopeSensitivity)
+  return new CladOAuthProvider({ store, policy, trust, requestConsent: denyingConsent })
 }
 
 /**
@@ -271,11 +283,12 @@ export async function loadServerResources(): Promise<ServerResources> {
   const provider = await createProvider({ transport, authRequired })
   const auditLogger = new AuditLogger(auditDbPath)
   const approvalQueue = new ApprovalQueue(approvalDbPath)
-  // D5.3 WS2 S2-S3: constructs the OAuth resource-server provider iff
+  // D5.3 WS2 S2-S6: constructs the OAuth resource-server provider iff
   // authRequired — throws at boot (never runs keyless) if CLAD_GRANT_DB /
   // CLAD_TOKEN_PASSPHRASE are missing. Undefined, and nothing constructed,
-  // when the flag is off (today's default).
-  const oauth = loadOAuthProvider(authRequired)
+  // when the flag is off (today's default). Wave 4 passes `policy` so the
+  // provider's trust/scope-minting is real.
+  const oauth = loadOAuthProvider(authRequired, policy)
 
   // Validate agent ID exists in policy; warn to stderr (not stdout — MCP protocol)
   if (!(agentId in policy.agents)) {

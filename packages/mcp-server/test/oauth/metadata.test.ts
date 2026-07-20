@@ -20,9 +20,18 @@ import {
   OAuthProtectedResourceMetadataSchema,
   OAuthMetadataSchema,
 } from '@modelcontextprotocol/sdk/shared/auth.js'
-import { AuditLogger, ApprovalQueue, DummyDataProvider, SqliteGrantStore, type PolicyConfig } from '@clad/core'
+import {
+  AuditLogger,
+  ApprovalQueue,
+  DummyDataProvider,
+  SqliteGrantStore,
+  LocalConsentTrustProvider,
+  type PolicyConfig,
+} from '@clad/core'
 import { startHttpServer, type HttpServerHandle } from '../../src/http-transport.js'
 import { CladOAuthProvider } from '../../src/oauth/provider.js'
+import { mintScopesForProfile, scopeSensitivity } from '../../src/oauth/scope-minter.js'
+import { denyingConsent } from '../../src/oauth/consent.js'
 import { CLAD_SCOPES } from '../../src/oauth/scopes.js'
 import type { ServerResources } from '../../src/server-core.js'
 
@@ -73,7 +82,13 @@ function baseResources(overrides: Partial<ServerResources> = {}): ServerResource
 /** Builds `ServerResources` with a REAL, temp-file-backed OAuth provider (`resources.oauth` set). */
 function oauthResources(): ServerResources {
   store = new SqliteGrantStore({ dbPath: join(dir, 'grants.sqlite'), passphrase: 'metadata-test-passphrase' })
-  return baseResources({ authRequired: true, oauth: new CladOAuthProvider({ store }) })
+  const oauth = new CladOAuthProvider({
+    store,
+    policy: POLICY,
+    trust: new LocalConsentTrustProvider(POLICY, mintScopesForProfile, scopeSensitivity),
+    requestConsent: denyingConsent,
+  })
+  return baseResources({ authRequired: true, oauth })
 }
 
 describe('GET /.well-known/oauth-protected-resource/mcp (RFC 9728) — served when the flag is on', () => {

@@ -35,7 +35,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { redactSecrets } from './redact.js'
 import { encrypt, decrypt, type EncryptedPayload } from './crypto.js'
 import { openDatabaseKey } from './key-meta.js'
@@ -126,6 +126,20 @@ export interface GrantStore {
   registerClient(c: RegisterClientInput): StoredClient
   getClient(clientId: string): StoredClient | undefined
   bindClientProfile(clientId: string, profileId: string): void // at consent, once
+  /**
+   * Constant-time verification of a confidential client's secret at `/token`
+   * (D5.3 WS2 S5 — the "landmine #1" secret-verification path). `getClient`
+   * deliberately never returns the secret, so the SDK's own
+   * `authenticateClient` middleware is a no-op for confidential clients; this
+   * method is the real check. The comparison happens ENTIRELY inside the store
+   * (the only holder of the AES key) so the plaintext secret never leaves this
+   * boundary. Returns `true` iff a secret is on file for `clientId` and
+   * `candidate` matches it; `false` for an unknown client, a client with no
+   * secret on file, an absent `candidate`, or any mismatch. Public clients
+   * (`token_endpoint_auth_method: 'none'`) are authenticated by PKCE alone and
+   * must NOT be routed through this method.
+   */
+  verifyClientSecret(clientId: string, candidate: string | undefined): boolean
   // grants
   createGrant(g: Omit<StoredGrant, 'grantId' | 'createdAt'>): StoredGrant
   getGrant(grantId: string): StoredGrant | undefined
@@ -135,6 +149,17 @@ export interface GrantStore {
   // auth codes
   putAuthCode(a: StoredAuthCode): void
   consumeAuthCode(code: string): StoredAuthCode | undefined // single-use
+  /**
+   * Non-consuming peek at a stored auth code by its raw value (D5.3 WS2 S5).
+   * Returns the code's public metadata (crucially its S256 `codeChallenge`)
+   * WITHOUT marking it consumed, so `CladOAuthProvider.challengeForAuthorizationCode`
+   * can hand the challenge to the SDK's PKCE verifier while `consumeAuthCode`
+   * remains the SOLE single-use gate (called later, in
+   * `exchangeAuthorizationCode`). Returns `undefined` only when no row exists;
+   * expiry / already-consumed are NOT filtered here — that is
+   * `consumeAuthCode`'s job, so a replay of a consumed code still fails there.
+   */
+  getAuthCode(code: string): StoredAuthCode | undefined
   // tokens
   putToken(t: StoredToken): void
   getToken(rawToken: string): StoredToken | undefined // hashes then looks up; filters expired
@@ -373,6 +398,42 @@ export class SqliteGrantStore implements GrantStore {
       .run(profileId, clientId)
   }
 
+  verifyClientSecret(clientId: string, candidate: string | undefined): boolean {
+    // Fail closed on a missing candidate before touching the store.
+    if (candidate === undefined) return false
+
+    const row = this.db
+      .prepare(
+        `SELECT client_secret_ciphertext, client_secret_iv, client_secret_auth_tag
+           FROM clients WHERE client_id = ?`
+      )
+      .get(clientId) as
+      | {
+          client_secret_ciphertext: Uint8Array | null
+          client_secret_iv: Uint8Array | null
+          client_secret_auth_tag: Uint8Array | null
+        }
+      | undefined
+
+    if (row === undefined) return false
+
+    const stored = this.decryptOrUndefined({
+      ciphertext: row.client_secret_ciphertext,
+      iv: row.client_secret_iv,
+      auth_tag: row.client_secret_auth_tag,
+    })
+    // No secret on file: a public client must be authenticated by PKCE, never
+    // routed here — refuse rather than silently accept.
+    if (stored === undefined) return false
+
+    // Constant-time compare over fixed-length SHA-256 digests, so neither the
+    // secret's length nor its content leaks through comparison timing. The
+    // plaintext secret never leaves this method.
+    const a = createHash('sha256').update(stored, 'utf8').digest()
+    const b = createHash('sha256').update(candidate, 'utf8').digest()
+    return timingSafeEqual(a, b)
+  }
+
   // ---- grants -----------------------------------------------------------
 
   createGrant(g: Omit<StoredGrant, 'grantId' | 'createdAt'>): StoredGrant {
@@ -476,6 +537,25 @@ export class SqliteGrantStore implements GrantStore {
         a.expiresAt,
         a.consumedAt ?? null
       )
+  }
+
+  getAuthCode(code: string): StoredAuthCode | undefined {
+    // Pure, non-consuming peek — never marks `consumed_at`. Returns the row's
+    // public metadata as-is (including a possibly-consumed / expired code), so
+    // `consumeAuthCode` stays the single-use gate. Echoes the caller-supplied
+    // raw `code` back; the hash is never returned.
+    const row = this.db
+      .prepare('SELECT * FROM auth_codes WHERE code_hash = ?')
+      .get(this.hash(code)) as AuthCodeRow | undefined
+    if (row === undefined) return undefined
+    return {
+      code,
+      grantId: row.grant_id,
+      codeChallenge: row.code_challenge,
+      redirectUri: row.redirect_uri,
+      expiresAt: row.expires_at,
+      consumedAt: row.consumed_at ?? undefined,
+    }
   }
 
   consumeAuthCode(code: string): StoredAuthCode | undefined {
