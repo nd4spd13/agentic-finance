@@ -73,6 +73,17 @@ function parseConsentPage(html: string): { requestId: string; csrfToken: string 
   return { requestId, csrfToken }
 }
 
+/**
+ * v0.7.1 fix #5: `POST /authorize/decision` responds 200 with an interstitial
+ * page (`consent-http.ts`'s `renderDecisionInterstitial`) that
+ * `window.location.replace()`s to the final redirect URL, instead of a raw
+ * `302`/`Location` header. Pulls that URL back out for assertions.
+ */
+function parseInterstitialRedirect(html: string): URL | undefined {
+  const match = /window\.location\.replace\("([^"]*)"\)/.exec(html)
+  return match ? new URL(match[1]) : undefined
+}
+
 /** Raw `node:http` request so a cross-origin 302 `Location` (`OAUTH_REDIRECT`) can be read without `fetch`'s opaque-redirect handling — same technique `oauth-flow.test.ts` uses. */
 function rawRequest(
   port: number,
@@ -142,10 +153,11 @@ async function obtainAccessToken(port: number, profileId: string): Promise<strin
       profile_id: profileId,
     }).toString(),
   })
-  if (decision.status !== 302 || !decision.headers.location) {
-    throw new Error(`POST /authorize/decision did not redirect (status ${decision.status}): ${decision.body}`)
+  // Fix #5: 200 interstitial embedding the redirect URL, not a raw 302.
+  const location = decision.status === 200 ? parseInterstitialRedirect(decision.body) : undefined
+  if (!location) {
+    throw new Error(`POST /authorize/decision did not return the expected interstitial (status ${decision.status}): ${decision.body}`)
   }
-  const location = new URL(decision.headers.location)
   const code = location.searchParams.get('code')
   if (!code) {
     throw new Error(`/authorize/decision redirect carried no code (error=${location.searchParams.get('error')})`)

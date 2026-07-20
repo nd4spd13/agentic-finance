@@ -85,6 +85,7 @@ import { claudeDesktopConfigPath } from './lib/claude-desktop-path.js'
 import { resolveClaudeDesktopAgentId } from './lib/agent-resolution.js'
 import {
   buildCladMcpServerEntry,
+  mcpRemoteConfigDir,
   isClaudeDesktopInstalled,
   readExistingConfig,
   mergeCladEntry,
@@ -704,7 +705,11 @@ async function computeClaudeDesktopMerge(selectedAgentId: string | undefined): P
   // the identity that's really in force. `''` (the "not chosen yet" sentinel)
   // is falsy, so it resolves to the policy default like an absent pick.
   const resolution = await resolveClaudeDesktopAgentId(config.policy_path, selectedAgentId ?? config.agent_id)
-  const cladEntry = buildCladMcpServerEntry(process.execPath, resolveMcpHttpPort())
+  const cladEntry = buildCladMcpServerEntry(
+    process.execPath,
+    resolveMcpHttpPort(),
+    mcpRemoteConfigDir(app.getPath('userData'))
+  )
   const merged = mergeCladEntry(existing, cladEntry)
   return { configPath, existing, merged, cladEntry, resolution }
 }

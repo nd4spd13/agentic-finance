@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   buildCladMcpServerEntry,
+  mcpRemoteConfigDir,
   isClaudeDesktopInstalled,
   readExistingConfig,
   mergeCladEntry,
@@ -33,35 +34,68 @@ afterEach(() => {
   }
 })
 
+const FAKE_MCP_REMOTE_CONFIG_DIR = '/fake/userData/mcp-remote/claude-desktop'
+
+describe('mcpRemoteConfigDir', () => {
+  it('scopes the per-app mcp-remote state directory under userData/mcp-remote/claude-desktop', () => {
+    expect(mcpRemoteConfigDir('/Users/x/Library/Application Support/Clad')).toBe(
+      '/Users/x/Library/Application Support/Clad/mcp-remote/claude-desktop'
+    )
+  })
+})
+
 describe('buildCladMcpServerEntry', () => {
-  it('builds an mcp-remote invocation targeting the loopback HTTP URL, with only ELECTRON_RUN_AS_NODE in env', () => {
-    const entry = buildCladMcpServerEntry('/fake/Clad.app/Contents/MacOS/Clad', DEFAULT_MCP_HTTP_PORT)
+  it('builds an mcp-remote invocation targeting the loopback HTTP URL, with ELECTRON_RUN_AS_NODE + MCP_REMOTE_CONFIG_DIR in env', () => {
+    const entry = buildCladMcpServerEntry(
+      '/fake/Clad.app/Contents/MacOS/Clad',
+      DEFAULT_MCP_HTTP_PORT,
+      FAKE_MCP_REMOTE_CONFIG_DIR
+    )
 
     expect(entry.command).toBe('/fake/Clad.app/Contents/MacOS/Clad')
     // args = [absolute mcp-remote proxy entry, loopback MCP URL]
     expect(entry.args).toHaveLength(2)
     expect(entry.args[0]).toMatch(/mcp-remote[/\\]dist[/\\]proxy\.js$/)
     expect(entry.args[1]).toBe(`http://127.0.0.1:${DEFAULT_MCP_HTTP_PORT}/mcp`)
-    expect(entry.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
+    expect(entry.env).toEqual({
+      ELECTRON_RUN_AS_NODE: '1',
+      MCP_REMOTE_CONFIG_DIR: FAKE_MCP_REMOTE_CONFIG_DIR,
+    })
   })
 
   it('uses the given port in the loopback URL', () => {
-    const entry = buildCladMcpServerEntry('/fake/exec', 51234)
+    const entry = buildCladMcpServerEntry('/fake/exec', 51234, FAKE_MCP_REMOTE_CONFIG_DIR)
 
     expect(entry.args[1]).toBe('http://127.0.0.1:51234/mcp')
+  })
+
+  /**
+   * v0.7.1 fix #6 (QA finding (b) — Claude Code silently reused Claude
+   * Desktop's approved connection with no browser auth): the entry must
+   * carry its OWN `MCP_REMOTE_CONFIG_DIR`, distinct from whatever directory
+   * any other `mcp-remote` invocation against the same loopback URL uses —
+   * see `claude-desktop-config.ts`'s module doc for the full mechanism
+   * (mcp-remote keys its DCR client identity + tokens + callback-port
+   * coordination lockfile off this directory).
+   */
+  it('carries its own MCP_REMOTE_CONFIG_DIR scoped under the given userData path', () => {
+    const entry = buildCladMcpServerEntry('/fake/exec', DEFAULT_MCP_HTTP_PORT, mcpRemoteConfigDir('/fake/userData'))
+
+    expect(entry.env.MCP_REMOTE_CONFIG_DIR).toBe('/fake/userData/mcp-remote/claude-desktop')
   })
 
   /**
    * The entry must NEVER carry a secret or a provider selection — Claude
    * Desktop's config is plaintext, and the loopback child (not this proxy)
    * owns the passphrase/provider. This is the core of the "no secret in any
-   * config file" property of the fix.
+   * config file" property of the fix. `MCP_REMOTE_CONFIG_DIR` is a plain
+   * directory path — no secret material — so it's exempt from this list.
    */
   it('never includes any CLAD_* env var, secret, or CLAD_PROVIDER', () => {
-    const entry = buildCladMcpServerEntry('/fake/exec', DEFAULT_MCP_HTTP_PORT)
+    const entry = buildCladMcpServerEntry('/fake/exec', DEFAULT_MCP_HTTP_PORT, FAKE_MCP_REMOTE_CONFIG_DIR)
 
-    const keys = Object.keys(entry.env)
-    expect(keys).toEqual(['ELECTRON_RUN_AS_NODE'])
+    const keys = Object.keys(entry.env).sort()
+    expect(keys).toEqual(['ELECTRON_RUN_AS_NODE', 'MCP_REMOTE_CONFIG_DIR'])
     expect(keys).not.toContain('CLAD_PROVIDER')
     expect(keys).not.toContain('CLAD_AGENT_ID')
     expect(keys).not.toContain('PLAID_CLIENT_ID')
@@ -209,7 +243,7 @@ describe('writeConfig + full merge round trip', () => {
 
     expect(isClaudeDesktopInstalled(configPath)).toBe(true)
     const existing = readExistingConfig(configPath)
-    const cladEntry = buildCladMcpServerEntry('/new/exec', DEFAULT_MCP_HTTP_PORT)
+    const cladEntry = buildCladMcpServerEntry('/new/exec', DEFAULT_MCP_HTTP_PORT, FAKE_MCP_REMOTE_CONFIG_DIR)
     expect(isAlreadyConnected(existing, cladEntry)).toBe(false)
 
     const merged = mergeCladEntry(existing, cladEntry)

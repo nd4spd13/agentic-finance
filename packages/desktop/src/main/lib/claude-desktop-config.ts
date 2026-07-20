@@ -83,10 +83,34 @@
  * constraint ("do NOT write to the user's REAL Claude Desktop config during
  * testing"). `src/main/index.ts` is the only place that calls
  * `claudeDesktopConfigPath(app.getPath('appData'))` to get the real path.
+ *
+ * v0.7.1 fix #6 (live-QA finding (b)): `mcp-remote` keys its DCR client
+ * identity, tokens, and OAuth callback-port coordination lockfile off
+ * `MCP_REMOTE_CONFIG_DIR` (defaulting to `~/.mcp-auth` when unset — see
+ * `mcp-remote`'s `getConfigDir()`). Before this fix, EVERY `mcp-remote`
+ * invocation against this app's loopback server shared that one default
+ * directory regardless of which host app spawned it, so Claude Desktop and
+ * Claude Code (or any two clients pointed at the same loopback URL) silently
+ * shared a single DCR client_id and token set — the second app's
+ * `mcp-remote` found the first app's still-valid lockfile/tokens
+ * (`coordination.ts`'s `checkLockfile`/`isLockValid`) and skipped its own
+ * browser auth entirely, riding on Claude Desktop's already-approved
+ * connection with no visible consent step. `buildCladMcpServerEntry` now
+ * sets `MCP_REMOTE_CONFIG_DIR` to a directory scoped under Electron's own
+ * `userData` (via `mcpRemoteConfigDir`), so Claude Desktop's connection gets
+ * its own client identity, tokens, and callback coordination. See
+ * `getting-started.md`'s "Connecting other MCP clients" section for the
+ * matching guidance when wiring up Claude Code (or another
+ * `mcp-remote`-based client) against the SAME loopback URL: it needs a
+ * DIFFERENT directory (e.g. `.../mcp-remote/claude-code`) for the identical
+ * reason. NOTE for the release notes: this changes the written config
+ * entry, so an existing Claude Desktop connection re-authenticates ONCE the
+ * next time it calls a tool after upgrading (a new `mcp-remote` identity
+ * means no cached token under the new directory).
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { resolveMcpRemoteEntry } from './mcp-server-path.js'
 import { mcpLoopbackUrl } from './mcp-loopback.js'
 
@@ -94,6 +118,18 @@ export interface McpServerEntry {
   command: string
   args: string[]
   env: Record<string, string>
+}
+
+/**
+ * The per-app `mcp-remote` state directory for Claude Desktop's connection —
+ * see this module's doc comment (v0.7.1 fix #6) for why this needs to be
+ * distinct from any other app's `mcp-remote` invocation against the same
+ * loopback URL. `userDataDir` is Electron's own `app.getPath('userData')`,
+ * threaded in (not read here) to keep this a pure function like the rest of
+ * this file.
+ */
+export function mcpRemoteConfigDir(userDataDir: string): string {
+  return join(userDataDir, 'mcp-remote', 'claude-desktop')
 }
 
 /**
@@ -107,14 +143,21 @@ export interface McpServerEntry {
  * `ELECTRON_RUN_AS_NODE`, exactly as `mcp-server-manager.ts` spawns its own
  * child) or a fake path in tests. `port` is the loopback port the supervised
  * child listens on — callers pass `resolveMcpHttpPort()` so the URL matches
- * what the manager actually binds.
+ * what the manager actually binds. `mcpRemoteConfigDir` is this connection's
+ * OWN `mcp-remote` state directory (see `mcpRemoteConfigDir()` above) —
+ * callers pass `mcpRemoteConfigDir(app.getPath('userData'))`.
  *
  * Note the entry carries NO `CLAD_*` env vars and NO secrets: the loopback
  * child (not this proxy) owns the policy path, provider selection, and
- * passphrase. mcp-remote only needs `ELECTRON_RUN_AS_NODE` so the Electron
- * binary runs it as plain Node.
+ * passphrase. `mcp-remote` needs `ELECTRON_RUN_AS_NODE` so the Electron
+ * binary runs it as plain Node, and `MCP_REMOTE_CONFIG_DIR` (v0.7.1 fix #6)
+ * so it gets its own client identity instead of sharing one with whatever
+ * else invokes `mcp-remote` against this same loopback URL. Both are plain
+ * `env` map entries — the SAME shape Claude Desktop already has to honor for
+ * `ELECTRON_RUN_AS_NODE` to work at all today, so no new plumbing is needed
+ * on Claude Desktop's side for this to take effect.
  */
-export function buildCladMcpServerEntry(execPath: string, port: number): McpServerEntry {
+export function buildCladMcpServerEntry(execPath: string, port: number, mcpRemoteConfigDirPath: string): McpServerEntry {
   return {
     command: execPath,
     args: [resolveMcpRemoteEntry(), mcpLoopbackUrl(port)],
@@ -123,6 +166,9 @@ export function buildCladMcpServerEntry(execPath: string, port: number): McpServ
       // system `node`, since a packaged app cannot assume the end user has
       // Node installed at all (S0.4 finding).
       ELECTRON_RUN_AS_NODE: '1',
+      // v0.7.1 fix #6: this connection's own mcp-remote identity/token/
+      // callback-coordination directory — see module doc comment.
+      MCP_REMOTE_CONFIG_DIR: mcpRemoteConfigDirPath,
     },
   }
 }

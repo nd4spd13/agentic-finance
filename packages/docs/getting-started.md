@@ -246,6 +246,28 @@ Restart your MCP client after editing the config.
 `clad serve` is a stdio transport — your MCP client launches it automatically as a subprocess. `clad start` is for running a background daemon (not used for MCP).
 :::
 
+### Connecting other MCP clients to the Clad desktop app
+
+The sections above spawn `clad serve` directly — a separate process per client, with no desktop app involved. If you're instead running the **Clad desktop app** and used its "Connect to Claude Desktop" button, that entry works differently: it points Claude Desktop at an `mcp-remote` proxy in front of the desktop app's own loopback OAuth server (`http://127.0.0.1:<port>/mcp`), so a human approves each connecting client once, in the browser, and picks which profile it runs as.
+
+To connect a SECOND client (e.g. Claude Code) to that SAME running desktop app instead of spawning its own `clad serve`, point it at the same loopback URL through `mcp-remote` too — but give it a **different** `MCP_REMOTE_CONFIG_DIR` than Claude Desktop's. `mcp-remote` keys its client registration, tokens, and OAuth callback-port coordination off that directory; two clients sharing one directory silently share ONE identity (whichever one authenticated first), so the second client never sees its own consent screen. Example for `~/.claude/.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "clad": {
+      "command": "/usr/local/bin/node",
+      "args": ["/absolute/path/to/mcp-remote/dist/proxy.js", "http://127.0.0.1:8765/mcp"],
+      "env": {
+        "MCP_REMOTE_CONFIG_DIR": "/absolute/path/to/a/claude-code-only/directory"
+      }
+    }
+  }
+}
+```
+
+Any directory works as long as it's exclusively Claude Code's — e.g. `~/.mcp-auth-claude-code` — the important part is that it's NOT the directory Claude Desktop's own entry uses (that one lives under the desktop app's own `userData` folder and isn't meant to be reused). The desktop app must be running for the loopback server to answer; the first tool call opens a one-time browser consent screen for THIS client, independent of any other client's approval.
+
 ### Multi-agent setup
 
 If your policy defines multiple agents with different permission profiles, pin each MCP server entry to a specific agent using `--agent-id`:
