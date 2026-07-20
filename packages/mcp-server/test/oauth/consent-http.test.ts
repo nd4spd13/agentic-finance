@@ -35,8 +35,17 @@ const POLICY: PolicyConfig = {
       permissions: { accounts: { visible: ['checking'], balance: true }, transactions: { read: true } },
     },
     spender: {
+      // WS4 §5 scope-label coverage: gives this profile all four CLAD_SCOPES
+      // (accounts, transactions, spending, audit) so the render test below
+      // can assert every SCOPE_LABELS entry actually appears on the page,
+      // not just the three the original fixture happened to mint.
       description: 'action-bearing spender',
-      permissions: { accounts: { visible: ['checking'], balance: true }, spending: {} },
+      permissions: {
+        accounts: { visible: ['checking'], balance: true },
+        transactions: { read: true },
+        spending: {},
+        audit: {},
+      },
     },
   },
 }
@@ -160,9 +169,13 @@ describe('consentFn — renders the consent page', () => {
     expect(html).toContain('as reported by the client')
     expect(html).toContain('analyst')
     expect(html).toContain('spender')
+    // WS4 §5: every one of the four CLAD_SCOPES entries has a human-readable
+    // SCOPE_LABELS entry, proven end-to-end through the real rendered page
+    // (not just a lookup-table unit check) — `spender` above mints all four.
     expect(html).toContain('Read account balances')
     expect(html).toContain('Read transactions')
     expect(html).toContain('Request spending actions')
+    expect(html).toContain('Read the audit log')
     // No token, code, secret, or passphrase has been minted yet at render
     // time — assert none leaked in regardless.
     expect(html).not.toContain(SECRET_PASSPHRASE)

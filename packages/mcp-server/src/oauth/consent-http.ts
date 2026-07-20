@@ -67,7 +67,16 @@ import type { ConsentFn, ConsentRequest } from './consent.js'
 /** How long a rendered consent page stays valid before it 404s (5 minutes — ample for a human, short enough to bound memory). */
 const DEFAULT_PENDING_TTL_MS = 5 * 60 * 1000
 
-/** Light-touch, display-only labels for the WS4 §2.2 "read balances, read transactions..." style copy. Falls back to the raw scope string for anything unlisted. */
+/**
+ * Light-touch, display-only labels for the WS4 §2.2 "read balances, read
+ * transactions..." style copy. Falls back to the raw scope string for
+ * anything unlisted. WS4 §5 "scope-label polish": covers every entry in
+ * `CLAD_SCOPES` (`scopes.ts`) — kept a plain hardcoded map (no per-profile
+ * dynamic values like the exact lookback-days/dollar-cap the parent plan's
+ * example copy shows, since those vary by policy and this map doesn't have
+ * policy in scope); coverage across all four is asserted end-to-end in
+ * `test/oauth/consent-http.test.ts`'s render test, not just here.
+ */
 const SCOPE_LABELS: Record<string, string> = {
   'clad:accounts.read': 'Read account balances',
   'clad:transactions.read': 'Read transactions',
