@@ -159,6 +159,18 @@ function decide(body: Record<string, string>): Promise<Response> {
   })
 }
 
+/**
+ * v0.7.1 fix #5: `POST /authorize/decision` responds 200 with a Clad-branded
+ * interstitial page instead of a raw 302 — the final redirect URL (code or
+ * error, unchanged) is embedded in a `window.location.replace(...)` call
+ * rather than a `Location` header. Pulls it back out for assertions.
+ */
+function extractInterstitialRedirectUrl(html: string): string {
+  const match = /window\.location\.replace\("([^"]*)"\)/.exec(html)
+  expect(match).toBeTruthy()
+  return match![1]
+}
+
 describe('consentFn — renders the consent page', () => {
   it('lists every available profile and its scope preview, labels the client name as reported, and leaks no secret', async () => {
     const { app } = buildTestApp()
@@ -220,7 +232,7 @@ describe('consentFn — renders the consent page', () => {
 })
 
 describe('POST /authorize/decision — approve', () => {
-  it('valid CSRF token + state + eligible profile -> redirects to redirect_uri with code + state, and the client is bound', async () => {
+  it('valid CSRF token + state + eligible profile -> 200 interstitial embedding redirect_uri with code + state, and the client is bound', async () => {
     const { app, client } = buildTestApp()
     await listen(app)
     const { requestId, csrfToken } = await renderPage()
@@ -233,8 +245,10 @@ describe('POST /authorize/decision — approve', () => {
       profile_id: 'analyst',
     })
 
-    expect(res.status).toBe(302)
-    const location = new URL(res.headers.get('location')!)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    const redirectUrl = extractInterstitialRedirectUrl(html)
+    const location = new URL(redirectUrl)
     expect(location.origin + location.pathname).toBe(REDIRECT)
     expect(location.searchParams.get('state')).toBe('state-abc')
     expect(location.searchParams.get('code')).toBeTruthy()
@@ -254,13 +268,14 @@ describe('POST /authorize/decision — approve', () => {
       decision: 'approve',
       profile_id: 'analyst',
     })
-    const code = new URL(res.headers.get('location')!).searchParams.get('code')!
+    const html = await res.text()
+    const code = new URL(extractInterstitialRedirectUrl(html)).searchParams.get('code')!
     const stored = store.getAuthCode(code)
     expect(stored?.codeChallenge).toBe('test-challenge')
     expect(stored?.redirectUri).toBe(REDIRECT)
   })
 
-  it('rejects a profile the trust assessment did not deem eligible -> access_denied, no grant', async () => {
+  it('rejects a profile the trust assessment did not deem eligible -> access_denied interstitial, no grant', async () => {
     const { app, client } = buildTestApp()
     await listen(app)
     const { requestId, csrfToken } = await renderPage()
@@ -272,14 +287,15 @@ describe('POST /authorize/decision — approve', () => {
       decision: 'approve',
       profile_id: 'not-a-real-profile',
     })
-    expect(res.status).toBe(302)
-    expect(new URL(res.headers.get('location')!).searchParams.get('error')).toBe('access_denied')
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(new URL(extractInterstitialRedirectUrl(html)).searchParams.get('error')).toBe('access_denied')
     expect(store.getClient(client.client_id)?.boundProfileId).toBeUndefined()
   })
 })
 
 describe('POST /authorize/decision — deny', () => {
-  it('redirects with error=access_denied and binds/creates nothing', async () => {
+  it('200 interstitial embedding error=access_denied and binds/creates nothing', async () => {
     const { app, client } = buildTestApp()
     await listen(app)
     const { requestId, csrfToken } = await renderPage()
@@ -290,8 +306,10 @@ describe('POST /authorize/decision — deny', () => {
       state: 'state-abc',
       decision: 'deny',
     })
-    expect(res.status).toBe(302)
-    const location = new URL(res.headers.get('location')!)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('Denied')
+    const location = new URL(extractInterstitialRedirectUrl(html))
     expect(location.searchParams.get('error')).toBe('access_denied')
     expect(location.searchParams.get('state')).toBe('state-abc')
     expect(location.searchParams.get('code')).toBeNull()
@@ -351,7 +369,7 @@ describe('POST /authorize/decision — CSRF + state protection', () => {
       decision: 'approve',
       profile_id: 'analyst',
     })
-    expect(first.status).toBe(302)
+    expect(first.status).toBe(200)
 
     const replay = await decide({
       request_id: requestId,
@@ -410,8 +428,9 @@ describe('pending-request expiry', () => {
       decision: 'approve',
       profile_id: 'analyst',
     })
-    expect(res.status).toBe(302)
-    expect(new URL(res.headers.get('location')!).searchParams.get('code')).toBeTruthy()
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(new URL(extractInterstitialRedirectUrl(html)).searchParams.get('code')).toBeTruthy()
   })
 })
 
@@ -431,7 +450,10 @@ describe('set-once bind re-check on approval (acceptance #1, shared with `finali
     expect(store.getClient(client.client_id)?.boundProfileId).toBe('analyst')
 
     // Re-authorize the SAME already-bound client, approving the SAME profile.
+    // Fix #2: this second render is now LOCKED to 'analyst' (the existing
+    // binding) — posting 'analyst' is exactly what the locked form submits.
     const second = await renderPage()
+    expect(second.html).toContain('previously approved as')
     const res = await decide({
       request_id: second.requestId,
       csrf_token: second.csrfToken,
@@ -439,8 +461,9 @@ describe('set-once bind re-check on approval (acceptance #1, shared with `finali
       decision: 'approve',
       profile_id: 'analyst',
     })
-    expect(res.status).toBe(302)
-    expect(new URL(res.headers.get('location')!).searchParams.get('code')).toBeTruthy()
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(new URL(extractInterstitialRedirectUrl(html)).searchParams.get('code')).toBeTruthy()
     expect(store.getClient(client.client_id)?.boundProfileId).toBe('analyst')
   })
 
@@ -463,12 +486,287 @@ describe('set-once bind re-check on approval (acceptance #1, shared with `finali
       request_id: second.requestId,
       csrf_token: second.csrfToken,
       state: 'state-abc',
+      // The rendered form's radio for 'spender' is disabled (fix #2 lock), but
+      // the server-side set-once check is what actually matters — post it
+      // directly to prove the refusal is enforced server-side, not merely
+      // client-side by the disabled attribute.
       decision: 'approve',
       profile_id: 'spender', // different from the already-bound 'analyst'
     })
-    expect(res.status).toBe(302)
-    expect(new URL(res.headers.get('location')!).searchParams.get('error')).toBe('access_denied')
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(new URL(extractInterstitialRedirectUrl(html)).searchParams.get('error')).toBe('access_denied')
     // The binding is untouched — still 'analyst', never rebound to 'spender'.
     expect(store.getClient(client.client_id)?.boundProfileId).toBe('analyst')
+  })
+})
+
+describe('v0.7.1 fix #2 — consent page honors an existing binding', () => {
+  it('a client with an existing (eligible) binding renders that profile preselected and LOCKED; other profiles stay visible but disabled', async () => {
+    const { app, client } = buildTestApp()
+    await listen(app)
+
+    const first = await renderPage()
+    await decide({
+      request_id: first.requestId,
+      csrf_token: first.csrfToken,
+      state: 'state-abc',
+      decision: 'approve',
+      profile_id: 'analyst',
+    })
+    expect(store.getClient(client.client_id)?.boundProfileId).toBe('analyst')
+
+    const { html } = await renderPage()
+    expect(html).toContain('previously approved as')
+    expect(html).toContain('Revoke it in')
+
+    const analystInput = /<input type="radio" name="profile_id" value="analyst"([^>]*)>/.exec(html)?.[1] ?? ''
+    expect(analystInput).toContain('checked')
+    expect(analystInput).not.toContain('disabled')
+
+    const spenderInput = /<input type="radio" name="profile_id" value="spender"([^>]*)>/.exec(html)?.[1] ?? ''
+    expect(spenderInput).toContain('disabled')
+    expect(spenderInput).not.toContain(' checked')
+  })
+
+  it('a bound profile that is no longer eligible renders a dead-end message instead of an error redirect', async () => {
+    const { app, client } = buildTestApp()
+    await listen(app)
+    // Simulate a policy edit that removed this client's bound profile from
+    // eligibility: bind directly at the store level to a profile outside
+    // ASSESSMENT.eligibleProfiles (['analyst', 'spender']).
+    store.bindClientProfile(client.client_id, 'ghost-profile')
+
+    const res = await fetch(`${baseUrl}/test-authorize`)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html.toLowerCase()).toContain('ghost-profile')
+    expect(html.toLowerCase()).toContain('revoke')
+    // No form is rendered — there is no valid choice this page could submit.
+    expect(html).not.toContain('<form')
+  })
+})
+
+describe('v0.7.1 fix #3 — stale consent pages self-expire', () => {
+  it('a new authorize for the same client supersedes the older pending request: the old requestId 404s, the new one is approvable', async () => {
+    const { app } = buildTestApp()
+    await listen(app)
+
+    const first = await renderPage()
+    const second = await renderPage() // same client -> supersedes `first`
+
+    const oldDecision = await decide({
+      request_id: first.requestId,
+      csrf_token: first.csrfToken,
+      state: 'state-abc',
+      decision: 'approve',
+      profile_id: 'analyst',
+    })
+    expect(oldDecision.status).toBe(404)
+
+    const newDecision = await decide({
+      request_id: second.requestId,
+      csrf_token: second.csrfToken,
+      state: 'state-abc',
+      decision: 'approve',
+      profile_id: 'analyst',
+    })
+    expect(newDecision.status).toBe(200)
+    const html = await newDecision.text()
+    expect(html).toContain('Approved')
+  })
+
+  it('the rendered page embeds a poll script targeting /authorize/pending-status with its own state', async () => {
+    const { app } = buildTestApp()
+    await listen(app)
+    const { html } = await renderPage()
+
+    expect(html).toContain('/authorize/pending-status')
+    expect(html).toContain('state-abc')
+    expect(html).toContain('superseded by a newer one')
+  })
+
+  it('GET /authorize/pending-status reports pending for a live request and gone for an unknown one (and when state is omitted)', async () => {
+    const { app } = buildTestApp()
+    await listen(app)
+    await renderPage() // state fixed to 'state-abc' by buildTestApp's params
+
+    const live = await fetch(`${baseUrl}/authorize/pending-status?state=state-abc`)
+    expect(live.status).toBe(200)
+    expect(await live.json()).toEqual({ status: 'pending' })
+
+    const unknown = await fetch(`${baseUrl}/authorize/pending-status?state=never-issued`)
+    expect(await unknown.json()).toEqual({ status: 'gone' })
+
+    const missing = await fetch(`${baseUrl}/authorize/pending-status`)
+    expect(await missing.json()).toEqual({ status: 'gone' })
+  })
+
+  it('GET /authorize/pending-status flips to gone once a client\'s request is superseded by a newer authorize', async () => {
+    const trust = new LocalConsentTrustProvider(POLICY, mintScopesForProfile, scopeSensitivity)
+    const { consentFn, decisionRouter } = createHttpConsent({ store, trust, policy: POLICY })
+    const client = registerClient()
+    let state = 'poll-state-old'
+
+    const app = express()
+    app.get('/test-authorize', (req, res) => {
+      const params: AuthorizationParams = { codeChallenge: 'c', redirectUri: REDIRECT, state }
+      void consentFn(consentRequestFor(client), { res, client, params, assessment: ASSESSMENT })
+    })
+    app.use(decisionRouter)
+    await listen(app)
+
+    await renderPage() // pending under state 'poll-state-old'
+    expect(await (await fetch(`${baseUrl}/authorize/pending-status?state=poll-state-old`)).json()).toEqual({
+      status: 'pending',
+    })
+
+    state = 'poll-state-new'
+    await renderPage() // same client -> supersedes the 'poll-state-old' entry
+
+    expect(await (await fetch(`${baseUrl}/authorize/pending-status?state=poll-state-old`)).json()).toEqual({
+      status: 'gone',
+    })
+    expect(await (await fetch(`${baseUrl}/authorize/pending-status?state=poll-state-new`)).json()).toEqual({
+      status: 'pending',
+    })
+  })
+})
+
+describe('v0.7.1 fix #4 — deny sticks (cooldown)', () => {
+  it('a retry within the cooldown window gets an IMMEDIATE access_denied redirect — no consent screen is rendered', async () => {
+    let t = Date.now()
+    const { app } = buildTestApp({ now: () => t })
+    await listen(app)
+
+    const first = await renderPage()
+    const denyRes = await decide({
+      request_id: first.requestId,
+      csrf_token: first.csrfToken,
+      state: 'state-abc',
+      decision: 'deny',
+    })
+    expect(denyRes.status).toBe(200)
+
+    t += 1_000 // 1s later, well within the 90s cooldown
+    const retry = await fetch(`${baseUrl}/test-authorize`, { redirect: 'manual' })
+    expect(retry.status).toBe(302)
+    const location = new URL(retry.headers.get('location')!)
+    expect(location.searchParams.get('error')).toBe('access_denied')
+  })
+
+  it('after the cooldown window elapses, the consent screen renders normally again', async () => {
+    let t = Date.now()
+    const { app } = buildTestApp({ now: () => t })
+    await listen(app)
+
+    const first = await renderPage()
+    await decide({
+      request_id: first.requestId,
+      csrf_token: first.csrfToken,
+      state: 'state-abc',
+      decision: 'deny',
+    })
+
+    t += 91_000 // just past DENY_COOLDOWN_MS (90s)
+    const retry = await fetch(`${baseUrl}/test-authorize`)
+    expect(retry.status).toBe(200)
+    const html = await retry.text()
+    expect(html).toContain('Choose which profile')
+  })
+
+  it('an approve clears the deny cooldown for that client — a fresh authorize right after is not gated', async () => {
+    let t = Date.now()
+    const { app, client } = buildTestApp({ now: () => t })
+    await listen(app)
+
+    const first = await renderPage()
+    await decide({
+      request_id: first.requestId,
+      csrf_token: first.csrfToken,
+      state: 'state-abc',
+      decision: 'deny',
+    })
+
+    t += 91_000 // past cooldown — a fresh consent screen can render again
+    const second = await renderPage()
+    const approveRes = await decide({
+      request_id: second.requestId,
+      csrf_token: second.csrfToken,
+      state: 'state-abc',
+      decision: 'approve',
+      profile_id: 'analyst',
+    })
+    expect(approveRes.status).toBe(200)
+    expect(store.getClient(client.client_id)?.boundProfileId).toBe('analyst')
+
+    // Immediately after the approve (same clock tick), the client is bound —
+    // a fresh authorize renders the (locked) consent page, not an
+    // access_denied redirect, proving the earlier deny entry was cleared.
+    const third = await fetch(`${baseUrl}/test-authorize`, { redirect: 'manual' })
+    expect(third.status).toBe(200)
+  })
+})
+
+describe('v0.7.1 fix #5 — decision-result interstitial', () => {
+  it('approve: 200 html containing the exact redirect URL once, no-referrer + no-store headers, and a replay still 404s', async () => {
+    const { app } = buildTestApp()
+    await listen(app)
+    const { requestId, csrfToken } = await renderPage()
+
+    const res = await decide({
+      request_id: requestId,
+      csrf_token: csrfToken,
+      state: 'state-abc',
+      decision: 'approve',
+      profile_id: 'analyst',
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toMatch(/html/)
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(res.headers.get('cache-control')).toBe('no-store')
+
+    const html = await res.text()
+    expect(html).toContain('Approved')
+    const redirectUrl = extractInterstitialRedirectUrl(html)
+    const url = new URL(redirectUrl)
+    expect(url.origin + url.pathname).toBe(REDIRECT)
+    expect(url.searchParams.get('code')).toBeTruthy()
+    expect(url.searchParams.get('state')).toBe('state-abc')
+    // The visible fallback link carries the SAME URL too.
+    expect(html).toContain(`href="${url.href.replace(/&/g, '&amp;')}"`)
+
+    // Single-use: the code was minted exactly once — replaying the SAME
+    // decision request 404s rather than minting (or returning) a second one.
+    const replay = await decide({
+      request_id: requestId,
+      csrf_token: csrfToken,
+      state: 'state-abc',
+      decision: 'approve',
+      profile_id: 'analyst',
+    })
+    expect(replay.status).toBe(404)
+  })
+
+  it('deny: 200 html containing the exact access_denied redirect URL, with the same security headers', async () => {
+    const { app } = buildTestApp()
+    await listen(app)
+    const { requestId, csrfToken } = await renderPage()
+
+    const res = await decide({
+      request_id: requestId,
+      csrf_token: csrfToken,
+      state: 'state-abc',
+      decision: 'deny',
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(res.headers.get('cache-control')).toBe('no-store')
+
+    const html = await res.text()
+    expect(html).toContain('Denied')
+    const url = new URL(extractInterstitialRedirectUrl(html))
+    expect(url.searchParams.get('error')).toBe('access_denied')
+    expect(url.searchParams.get('state')).toBe('state-abc')
   })
 })

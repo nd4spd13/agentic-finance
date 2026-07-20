@@ -130,6 +130,17 @@ function parseConsentPage(html: string): { requestId: string; csrfToken: string 
   return { requestId, csrfToken }
 }
 
+/**
+ * v0.7.1 fix #5: `POST /authorize/decision` responds 200 with an interstitial
+ * page that `window.location.replace()`s to the final redirect URL, instead
+ * of a raw `302`/`Location` header. Pulls that URL back out for assertions.
+ */
+function parseInterstitialRedirect(html: string): URL {
+  const match = /window\.location\.replace\("([^"]*)"\)/.exec(html)
+  if (!match) throw new Error('decision interstitial did not embed a redirect URL')
+  return new URL(match[1])
+}
+
 function pkce(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString('base64url')
   const challenge = createHash('sha256').update(verifier).digest('base64url')
@@ -555,8 +566,10 @@ describe('real interactive consent screen (D5.3 WS4 S3)', () => {
         profile_id: 'test-agent',
       }).toString(),
     })
-    expect(decision.status).toBe(302)
-    const location = new URL(decision.headers.location!)
+    // Fix #5: 200 interstitial (not a raw 302) — the redirect URL is embedded
+    // client-side, unchanged from what the old 302's Location header carried.
+    expect(decision.status).toBe(200)
+    const location = parseInterstitialRedirect(decision.body)
     expect(location.searchParams.get('state')).toBe('approve-state')
     const code = location.searchParams.get('code')
     expect(code).toBeTruthy()
@@ -604,8 +617,9 @@ describe('real interactive consent screen (D5.3 WS4 S3)', () => {
         decision: 'deny',
       }).toString(),
     })
-    expect(decision.status).toBe(302)
-    const location = new URL(decision.headers.location!)
+    // Fix #5: 200 interstitial embedding the access_denied redirect.
+    expect(decision.status).toBe(200)
+    const location = parseInterstitialRedirect(decision.body)
     expect(location.searchParams.get('error')).toBe('access_denied')
     expect(location.searchParams.get('code')).toBeNull()
   })
@@ -667,11 +681,12 @@ describe('real interactive consent screen (D5.3 WS4 S3)', () => {
           profile_id: 'test-agent',
         }).toString(),
       })
-      return { status: decision.status, location: new URL(decision.headers.location!) }
+      // Fix #5: 200 interstitial, not a raw 302 — extract the embedded redirect.
+      return { status: decision.status, location: parseInterstitialRedirect(decision.body) }
     }
 
     const first = await authorizeAndApprove('bind-state-1')
-    expect(first.status).toBe(302)
+    expect(first.status).toBe(200)
     expect(first.location.searchParams.get('code')).toBeTruthy()
     expect(store.getClient(client.client_id as string)?.boundProfileId).toBe('test-agent')
 
@@ -681,7 +696,7 @@ describe('real interactive consent screen (D5.3 WS4 S3)', () => {
     // the human's own choice on the SECOND consent page, which must still
     // resolve to the already-bound profile.
     const second = await authorizeAndApprove('bind-state-2')
-    expect(second.status).toBe(302)
+    expect(second.status).toBe(200)
     expect(second.location.searchParams.get('code')).toBeTruthy()
     expect(second.location.searchParams.get('error')).toBeNull()
     expect(store.getClient(client.client_id as string)?.boundProfileId).toBe('test-agent')

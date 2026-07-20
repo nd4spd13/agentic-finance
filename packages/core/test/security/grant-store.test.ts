@@ -369,6 +369,10 @@ describe('SqliteGrantStore — expiry filtering and purge', () => {
 })
 
 describe('SqliteGrantStore — client->profile binding is set-once', () => {
+  // NOTE (v0.7.1 fix #1): set-once still holds for a plain rebind attempt —
+  // see this block's tests. The ONLY new escape hatch is `revokeGrant`
+  // clearing the binding once no unrevoked grant remains for the client (its
+  // own describe block above), which is a distinct, human-revoke-gated path.
   it('rejects a second bind to a different profile, allows an idempotent re-bind', () => {
     const store = open()
     const client = store.registerClient(
@@ -403,6 +407,90 @@ describe('SqliteGrantStore — client->profile binding is set-once', () => {
     expect(message).not.toContain('profile-alpha')
     expect(message).not.toContain('profile-beta')
     expect(message).not.toContain(SAMPLE_CLIENT_SECRET)
+    store.close()
+  })
+})
+
+describe('SqliteGrantStore — revoke clears the client->profile binding (v0.7.1 fix #1)', () => {
+  it('revoking a client\'s ONLY grant clears bound_profile_id, allowing a rebind to a different profile', () => {
+    const store = open()
+    const client = store.registerClient(
+      sampleClientInput({ clientName: undefined, clientSecret: undefined })
+    )
+    store.bindClientProfile(client.clientId, 'analyst')
+    const grant = store.createGrant(sampleGrantInput(client.clientId, { profileId: 'analyst' }))
+    expect(store.getClient(client.clientId)?.boundProfileId).toBe('analyst')
+
+    store.revokeGrant(grant.grantId)
+
+    // Binding is cleared — the next consent is a genuinely fresh choice.
+    expect(store.getClient(client.clientId)?.boundProfileId).toBeUndefined()
+    expect(() => store.bindClientProfile(client.clientId, 'finance-agent')).not.toThrow()
+    expect(store.getClient(client.clientId)?.boundProfileId).toBe('finance-agent')
+    store.close()
+  })
+
+  it('rebind WITHOUT a revoke is still refused (set-once immutability is untouched by this fix)', () => {
+    const store = open()
+    const client = store.registerClient(
+      sampleClientInput({ clientName: undefined, clientSecret: undefined })
+    )
+    store.bindClientProfile(client.clientId, 'analyst')
+    store.createGrant(sampleGrantInput(client.clientId, { profileId: 'analyst' }))
+
+    // No revoke happened — a straight rebind attempt must still be rejected.
+    expect(() => store.bindClientProfile(client.clientId, 'finance-agent')).toThrow()
+    expect(store.getClient(client.clientId)?.boundProfileId).toBe('analyst')
+    store.close()
+  })
+
+  it('a client with MULTIPLE grants keeps its binding until the LAST unrevoked grant is revoked', () => {
+    const store = open()
+    const client = store.registerClient(
+      sampleClientInput({ clientName: undefined, clientSecret: undefined })
+    )
+    store.bindClientProfile(client.clientId, 'analyst')
+    // Two grants for the SAME client+profile (e.g. re-authorized after a
+    // refresh-token expiry) — cardinality is one client -> many grants.
+    const first = store.createGrant(sampleGrantInput(client.clientId, { profileId: 'analyst' }))
+    const second = store.createGrant(sampleGrantInput(client.clientId, { profileId: 'analyst' }))
+
+    store.revokeGrant(first.grantId)
+    // One unrevoked grant (`second`) still exists for this client — binding stays.
+    expect(store.getClient(client.clientId)?.boundProfileId).toBe('analyst')
+    expect(() => store.bindClientProfile(client.clientId, 'finance-agent')).toThrow()
+
+    store.revokeGrant(second.grantId)
+    // Now the LAST unrevoked grant is gone — binding clears.
+    expect(store.getClient(client.clientId)?.boundProfileId).toBeUndefined()
+    expect(() => store.bindClientProfile(client.clientId, 'finance-agent')).not.toThrow()
+    store.close()
+  })
+
+  it('revoking an already-revoked grant is a harmless no-op for the binding', () => {
+    const store = open()
+    const client = store.registerClient(
+      sampleClientInput({ clientName: undefined, clientSecret: undefined })
+    )
+    store.bindClientProfile(client.clientId, 'analyst')
+    const grant = store.createGrant(sampleGrantInput(client.clientId, { profileId: 'analyst' }))
+    store.revokeGrant(grant.grantId)
+    expect(store.getClient(client.clientId)?.boundProfileId).toBeUndefined()
+
+    // Second revoke of the same (already-revoked) grant: still a no-op, no throw.
+    expect(() => store.revokeGrant(grant.grantId)).not.toThrow()
+    expect(store.getClient(client.clientId)?.boundProfileId).toBeUndefined()
+    store.close()
+  })
+
+  it('revoking an unknown grantId does not throw and touches no binding', () => {
+    const store = open()
+    const client = store.registerClient(
+      sampleClientInput({ clientName: undefined, clientSecret: undefined })
+    )
+    store.bindClientProfile(client.clientId, 'analyst')
+    expect(() => store.revokeGrant('not-a-real-grant-id')).not.toThrow()
+    expect(store.getClient(client.clientId)?.boundProfileId).toBe('analyst')
     store.close()
   })
 })

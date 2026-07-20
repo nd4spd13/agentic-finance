@@ -56,7 +56,12 @@ export interface StoredClient {
   // clientSecret stored ENCRYPTED (see RegisterClientInput); never returned in any view.
   clientSecretExpiresAt?: number
   clientIdIssuedAt: number
-  /** Binding is set at consent and immutable thereafter (acceptance #1). */
+  /**
+   * Binding is set at consent and immutable thereafter (acceptance #1) —
+   * EXCEPT that `revokeGrant` clears it back to `undefined` once the client
+   * has no unrevoked grants left (v0.7.1 fix #1), so a human revoke + a fresh
+   * human consent can re-bind this client to a different profile.
+   */
   boundProfileId?: string
   createdAt: string
 }
@@ -145,7 +150,16 @@ export interface GrantStore {
   getGrant(grantId: string): StoredGrant | undefined
   listGrants(): GrantMeta[] // WS4: display-safe, no secrets
   touchGrant(grantId: string, at: string): void // lastUsedAt
-  revokeGrant(grantId: string): void // cascade: delete tokens + codes
+  /**
+   * Cascade: revoke the grant, delete its tokens + codes, AND — v0.7.1 QA fix
+   * #1 — clear the client's `bound_profile_id` IFF this was the client's LAST
+   * unrevoked grant. See the implementation's doc comment for the full
+   * rationale; in short: a human-initiated revoke is the trust anchor that
+   * makes it safe to let the NEXT consent choose a profile again, without
+   * weakening the set-once rule's actual purpose (stopping a CLIENT from
+   * silently escalating its own profile without a human back in the loop).
+   */
+  revokeGrant(grantId: string): void
   // auth codes
   putAuthCode(a: StoredAuthCode): void
   consumeAuthCode(code: string): StoredAuthCode | undefined // single-use
@@ -509,14 +523,59 @@ export class SqliteGrantStore implements GrantStore {
     this.db.prepare('UPDATE grants SET last_used_at = ? WHERE grant_id = ?').run(at, grantId)
   }
 
+  /**
+   * v0.7.1 live-QA fix #1 (defect (a) — a client approved as `analyst` could
+   * NEVER later be approved as `finance-agent`, even after the user revoked
+   * the grant, because `bindClientProfile`'s set-once rule (line ~397 below)
+   * kept referring to the OLD binding forever).
+   *
+   * Cardinality check first: `grants.client_id` carries NO uniqueness
+   * constraint — `finalizeApprovedAuthorization` (`provider.ts`) calls
+   * `createGrant` on EVERY approved authorization, including a client
+   * re-authorizing a profile it's already bound to (e.g. after its refresh
+   * token expired), so one `client_id` can accumulate several grant rows over
+   * time. That means "revoke this grant" and "this client has no more active
+   * grants" are DIFFERENT conditions, and only the second one is safe to treat
+   * as "the human is done with this client for now."
+   *
+   * Rationale for WHY clearing the binding here still respects acceptance
+   * #1's set-once intent rather than undermining it: the set-once rule exists
+   * to stop the CLIENT itself from silently walking its own binding to a
+   * higher-trust profile (e.g. by simply re-hitting `/authorize` with a
+   * different `profile_id` and hoping nobody notices) — it is a defence
+   * against an UNSUPERVISED rebind. Revocation is the opposite: it is a
+   * HUMAN, in the Connected-clients UI, deliberately and explicitly ending
+   * this client's current authorization. That explicit human action is
+   * exactly the same kind of trust anchor that originally created the
+   * binding (human consent), so letting it clear the binding — once no other
+   * unrevoked grant still relies on it — does not open any new silent
+   * escalation path; the next bind still requires a fresh, real consent
+   * screen, not a client-supplied parameter.
+   */
   revokeGrant(grantId: string): void {
     const now = new Date().toISOString()
     // Mark the grant revoked (kept for WS4's list) and cascade-delete its live
     // credentials, so the next `getToken`/`verifyAccessToken` fails closed.
     this.tx(() => {
+      const owner = this.db
+        .prepare('SELECT client_id FROM grants WHERE grant_id = ?')
+        .get(grantId) as { client_id: string } | undefined
+
       this.db.prepare('UPDATE grants SET revoked_at = ? WHERE grant_id = ?').run(now, grantId)
       this.db.prepare('DELETE FROM tokens WHERE grant_id = ?').run(grantId)
       this.db.prepare('DELETE FROM auth_codes WHERE grant_id = ?').run(grantId)
+
+      if (owner === undefined) return // unknown grantId: no-op, matches the pre-existing convention
+
+      const remaining = this.db
+        .prepare('SELECT COUNT(*) AS n FROM grants WHERE client_id = ? AND revoked_at IS NULL')
+        .get(owner.client_id) as { n: number }
+      if (remaining.n === 0) {
+        // Last unrevoked grant for this client is gone — clear the binding so
+        // the NEXT human consent is a genuinely fresh profile choice, instead
+        // of being refused by the now-orphaned set-once binding forever.
+        this.db.prepare('UPDATE clients SET bound_profile_id = NULL WHERE client_id = ?').run(owner.client_id)
+      }
     })
   }
 
