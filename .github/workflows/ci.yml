@@ -1,0 +1,80 @@
+name: CI
+
+# Build + lint + test on every push and PR. Runs on ubuntu-latest rather than
+# the macos-14 runner `release.yml` needs: nothing under test is macOS-bound —
+# the SQLite stores use Node 22's built-in `node:sqlite` (no native build step)
+# and the desktop tests inject a `FakeSafeStorage` instead of touching the real
+# Electron `safeStorage`/Keychain.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref — the newest push is the one that matters.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Explicit build step so a compile break is reported as a build failure
+      # rather than surfacing later as a confusing test failure. `pnpm test` is
+      # independently safe to run on a cold clone (its `pretest` builds first);
+      # this just re-runs an already-warm, incremental build.
+      - name: Build workspace packages
+        run: pnpm -r build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Production dependencies only. Dev tooling (eslint 8, vite/postcss,
+      # electron-builder) carries advisories that never reach a shipped
+      # artifact; gating the build on those would train us to ignore the job.
+      # Dependabot still opens PRs for the dev side on its weekly schedule.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level low
