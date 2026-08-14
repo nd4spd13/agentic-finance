@@ -10,23 +10,32 @@
     "test:watch": "vitest",
     "test:integration": "pnpm --filter @clad/plaid-adapter test:integration",
     "lint": "eslint packages --ext .ts",
-    "format": "prettier --write packages"
+    "format": "prettier --write packages",
+    "pretest": "pnpm -r build"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "electron", "electron-winstaller"],
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "electron",
+      "electron-winstaller"
+    ],
     "overrides": {
-      "hono@<4.12.25": ">=4.12.25",
-      "@hono/node-server@<1.19.13": ">=1.19.13",
-      "fast-uri@<3.1.2": ">=3.1.2",
-      "ip-address@<10.1.1": ">=10.1.1",
-      "qs@<6.15.2": ">=6.15.2"
+      "hono@<4.12.34": ">=4.12.34",
+      "@hono/node-server@<1.20.6": ">=1.20.6",
+      "@hono/node-server@>=2.0.0 <2.0.10": ">=2.0.10",
+      "body-parser@<2.3.0": ">=2.3.0",
+      "fast-uri@<4.1.2": ">=4.1.2",
+      "ip-address@<10.3.1": ">=10.3.1",
+      "qs@<6.15.2": ">=6.15.2",
+      "nanoid@<5.1.16": ">=5.1.16",
+      "undici@<7.29.0": ">=7.29.0"
     }
   },
   "devDependencies": {
-    "pnpm": "^10.34.4",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.57.0",
+    "pnpm": "^10.34.4",
     "prettier": "^3.2.5",
     "typescript": "^5.4.5",
     "vitest": "^3.2.6"
