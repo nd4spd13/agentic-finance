@@ -32,7 +32,7 @@
     "plaid": "^43.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "vitest": "^3.2.6"
+    "@types/node": "^26.2.0",
+    "vitest": "^4.1.10"
   }
 }
