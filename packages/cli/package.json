@@ -24,14 +24,14 @@
     "@clad/core": "workspace:*",
     "@clad/plaid-adapter": "workspace:*",
     "@clad/simplefin-adapter": "workspace:*",
-    "commander": "^12.1.0",
-    "express": "^4.19.2",
-    "open": "^10.1.0",
-    "plaid": "^43.0.0",
-    "yaml": "^2.4.5"
+    "commander": "^15.0.0",
+    "express": "^5.2.1",
+    "open": "^11.0.1",
+    "plaid": "^45.0.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
     "typescript": "^5.4.0",
     "vitest": "^3.2.6"
