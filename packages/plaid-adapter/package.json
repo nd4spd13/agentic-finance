@@ -28,8 +28,8 @@
   },
   "dependencies": {
     "@clad/core": "workspace:*",
-    "axios": "^1.7.4",
-    "plaid": "^43.0.0"
+    "axios": "^1.19.0",
+    "plaid": "^46.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
