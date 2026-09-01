@@ -35,7 +35,7 @@
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.57.0",
-    "pnpm": "^10.34.4",
+    "pnpm": "^10.34.5",
     "prettier": "^3.2.5",
     "typescript": "^5.4.5",
     "vitest": "^3.2.6"
