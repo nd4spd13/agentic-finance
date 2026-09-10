@@ -45,6 +45,6 @@
     "electron-vite": "^5.0.0",
     "typescript": "^5.4.5",
     "vite": "^6.0.0",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.11"
   }
 }
