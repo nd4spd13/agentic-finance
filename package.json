@@ -32,12 +32,12 @@
     }
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0",
-    "eslint": "^8.57.0",
-    "pnpm": "^10.34.4",
-    "prettier": "^3.2.5",
-    "typescript": "^5.4.5",
-    "vitest": "^3.2.6"
+    "@typescript-eslint/eslint-plugin": "^8.71.2",
+    "@typescript-eslint/parser": "^8.71.2",
+    "eslint": "^10.13.0",
+    "pnpm": "^12.14.0",
+    "prettier": "^3.9.10",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
   }
 }
