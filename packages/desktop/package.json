@@ -36,15 +36,15 @@
     "yaml": "^2.4.5"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.6.5",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
-    "electron": "^43.1.0",
-    "electron-builder": "^26.0.0",
-    "electron-vite": "^5.0.0",
-    "typescript": "^5.4.5",
-    "vite": "^6.0.0",
-    "vitest": "^3.2.6"
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   }
 }
